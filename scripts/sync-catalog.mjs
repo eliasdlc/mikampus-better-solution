@@ -22,6 +22,7 @@ import { fetchAdvisement, savePensum } from '../src/peoplesoft/advisement.js';
 //   node scripts/sync-catalog.mjs --pensum             # los subjects de tu pensum
 //   node scripts/sync-catalog.mjs --pensum --pendientes  # solo lo que te falta
 //   node scripts/sync-catalog.mjs --subjects           # solo refrescar la lista
+//   node scripts/sync-catalog.mjs --solo-titulos LET   # títulos, sin barrer secciones
 //   SYNC_TERM=1930 node scripts/sync-catalog.mjs ICC
 
 const TERM = process.env.SYNC_TERM || process.env.TARGET_TERM || '1930';
@@ -31,6 +32,11 @@ const args = process.argv.slice(2);
 const onlySubjects = args.includes('--subjects');
 const fromPensum = args.includes('--pensum');
 const soloPendientes = args.includes('--pendientes');
+// El barrido de secciones es lo caro (~20 min por subject). Un subject que ya
+// entró de refilón en el sweep de otro —LET vive dentro de "ET" porque la
+// búsqueda es contains— tiene las secciones completas y solo le faltan los
+// títulos, que son una sola pantalla.
+const soloTitulos = args.includes('--solo-titulos');
 let requested = args.filter((a) => !a.startsWith('--')).map((s) => s.toUpperCase());
 
 const { browser, page } = await loginToPeopleSoft({ headless: true });
@@ -79,6 +85,7 @@ try {
     try {
       const { saved: titles } = await syncSubjectTitles(page, { subject });
       console.log(`  títulos: ${titles} materias`);
+      if (soloTitulos) continue;
 
       // Sin título, la materia igual queda buscable por código: las secciones no
       // dependen del paso anterior, solo se ven mejor con él.
