@@ -2,6 +2,8 @@ import { CLASS_SEARCH_URL } from './constants.js';
 import { db, logSync } from '../db.js';
 import { scrapedSectionSchema, normalizeSeatStatus } from '../shared/schemas.ts';
 import { parseMeetings } from '../shared/meetings.ts';
+import { splitCourseCode, courseCodeToString } from '../shared/courseCode.ts';
+import { knownSubjects } from './browseCatalog.js';
 
 // ── Capa de escritura en DB ────────────────────────────────────────────────
 // Estas funciones son las que persisten lo que el scraper valida con Zod.
@@ -36,10 +38,10 @@ const recordSeatsStmt = db.prepare(`
 
 // El class search NO devuelve el título de la materia (el recon lo confirmó:
 // el header de cada grupo viene como "ICC     ICC321 - " con el título vacío).
-// Por eso `courses` es el diccionario código→título de la app, y se llena por
-// otras vías (seed, mySchedule, notas). La regla acá: un barrido de catálogo
-// jamás puede pisar un título real con un placeholder. Si no sabemos el
-// nombre todavía, el código hace de título hasta que alguien lo complete.
+// Los títulos los trae el Browse Catalog (browseCatalog.js), que escribe en
+// esta misma tabla. La regla acá: un barrido de catálogo jamás puede pisar un
+// título real con un placeholder. Si el título no llegó todavía, el código
+// hace de título hasta que el sync de títulos lo complete.
 function resolveTitle(courseCode, scrapedTitle) {
   if (scrapedTitle) return scrapedTitle;
   const known = db.prepare('SELECT title FROM courses WHERE code = ?').get(courseCode);
@@ -147,7 +149,9 @@ export function readCatalog(term) {
 //   3. Los resultados se agrupan por materia en un div GROUPBOX2$N que envuelve
 //      sus secciones; el número de sección NO se puede sacar de la fila (la
 //      fila solo dice "101-LEC"), sale del header del grupo.
-//   4. El header no trae título ni créditos → title va null (ver resolveTitle).
+//   4. El header no trae título ni créditos → title va null. El título sale de
+//      la otra pantalla del catálogo (browseCatalog.js); las dos se unen por el
+//      código canónico, de ahí que ambas usen shared/courseCode.ts.
 //
 // Sigue siendo caro: cada trozo es una navegación completa (~20s). Es un sync
 // de fondo, no algo que dispare la UI (riesgo #2 del plan) → throttle.
@@ -175,10 +179,12 @@ export function extractSearchResults() {
 
   const courses = [];
   for (const anchor of document.querySelectorAll('a[id^="SSR_CLSRSLT_WRK_GROUPBOX2$"]')) {
-    // "ICC     ICC321 - Título". El subject se repite dentro del catalog_nbr
-    // ("ICC321"), y lo dejamos fuera para que el código canónico sea "ICC-321".
+    // "ICC     ICC321 - Título": subject, código y (a veces) título. El código
+    // se devuelve crudo — partirlo es trabajo de splitCourseCode, en node, con
+    // la misma regla que usa el Browse Catalog. La regex de antes exigía
+    // dígitos ahí y descartaba en silencio materias reales como "ICC 1ICC473 -".
     const label = strip(anchor.parentElement);
-    const m = label.match(/^([A-Z]{2,4})\s+\1?(\d{2,4}[A-Z]?)\s*-\s*(.*)$/);
+    const m = label.match(/^([A-Z]{2,4})\s+(\S+)\s*-\s*(.*)$/);
     if (!m) continue;
 
     const container = anchor.closest('div[id^="win0divSSR_CLSRSLT_WRK_GROUPBOX2$"]');
@@ -210,8 +216,8 @@ export function extractSearchResults() {
     }
 
     courses.push({
-      subject: m[1],
-      catalogNbr: m[2],
+      subjectFromHeader: m[1],
+      rawNbr: m[2],
       titleFromPortal: m[3].trim() || null,
       sections,
     });
@@ -264,14 +270,24 @@ async function searchByPrefix(page, { term, career, prefix }) {
 // Convierte lo extraído en filas validadas y las persiste.
 function persist(courses, { term, career }) {
   let saved = 0;
+  const subjects = knownSubjects();
   for (const course of courses) {
+    const code = splitCourseCode(course.rawNbr, {
+      subjectHint: course.subjectFromHeader,
+      knownSubjects: subjects,
+    });
+    if (!code) {
+      // Sin código no hay con qué unir esta materia a su título ni al carrito.
+      console.warn(`Materia sin código legible, descartada: "${course.subjectFromHeader} ${course.rawNbr}"`);
+      continue;
+    }
     for (const s of course.sections) {
       // "101-LEC Ordinaria" → section "101", component "LEC".
       const cell = s.classNameCell.match(/^(\S+?)-(\S+)/);
       const parsed = scrapedSectionSchema.safeParse({
-        courseCode: `${course.subject}-${course.catalogNbr}`,
-        subject: course.subject,
-        catalogNbr: course.catalogNbr,
+        courseCode: courseCodeToString(code),
+        subject: code.subject,
+        catalogNbr: code.catalogNbr,
         title: course.titleFromPortal,
         career,
         term,
@@ -289,7 +305,7 @@ function persist(courses, { term, career }) {
         saved++;
       } else {
         // Zod gritando acá = selector roto, no dato raro. Que se vea.
-        console.warn(`Sección descartada (${course.subject}-${course.catalogNbr} / ${s.classNbr}):`,
+        console.warn(`Sección descartada (${courseCodeToString(code)} / ${s.classNbr}):`,
           parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', '));
       }
     }

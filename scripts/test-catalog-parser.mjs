@@ -3,6 +3,12 @@ import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { extractSearchResults } from '../src/peoplesoft/catalog.js';
 import { parseMeetings } from '../src/shared/meetings.ts';
+import { splitCourseCode, courseCodeToString } from '../src/shared/courseCode.ts';
+
+// El header del class search da subject y código crudo; el código canónico sale
+// de la misma regla que usa el Browse Catalog (ver scripts/test-course-code.mjs).
+const codeOf = (c) =>
+  courseCodeToString(splitCourseCode(c.rawNbr, { subjectHint: c.subjectFromHeader, knownSubjects: ['ICC', 'ITE'] }));
 
 // Corre el parser del class search contra HTML real volcado por el recon, sin
 // tocar el portal. Es la red de seguridad de los selectores: si PeopleSoft
@@ -14,7 +20,12 @@ const FIXTURES = {
     assert.equal(r.exceeds, false, 'ICC3 no debería exceder el límite');
     assert.equal(r.courses.length, 4, '4 materias');
     assert.deepEqual(
-      r.courses.map((c) => `${c.subject}-${c.catalogNbr}`),
+      r.courses.map((c) => c.rawNbr),
+      ['ICC321', 'ICC331', 'ICC341', 'ICC342'],
+      'el extractor devuelve el código crudo del header'
+    );
+    assert.deepEqual(
+      r.courses.map(codeOf),
       ['ICC-321', 'ICC-331', 'ICC-341', 'ICC-342'],
       'el subject se quita del catalog_nbr ("ICC321" → 321)'
     );
