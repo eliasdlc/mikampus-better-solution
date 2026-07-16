@@ -33,9 +33,21 @@ Sin catálogo real todavía, sembrá datos de prueba para ver la búsqueda: `nod
 ## Verificación (gate de cada fase)
 
 ```bash
+npm test                                         # parsers + DB + grid + ICS, sin tocar el portal
 npm run build && node scripts/check-budget.mjs   # bundle inicial < 250KB gz
 node scripts/bench-search.mjs                    # keystroke → resultados < 16ms
-node scripts/smoke.mjs                            # screenshots a 390/768/1440px
+npm run smoke                                    # screenshots a 390/768/1440px + falla si hay desborde horizontal
+```
+
+`npm test` corre los parsers contra HTML real volcado del portal y guardado en
+`fixtures/` (sin tokens ni datos personales — ver `scripts/make-fixture.mjs`).
+Es la red de los selectores: PeopleSoft cambia IDs entre parches y esto falla
+antes que un barrido en vivo. Para regenerar un fixture:
+
+```bash
+npm run recon:catalog                            # RECON_PREFIX=ICC3 acota la búsqueda
+npm run recon:schedule
+node scripts/make-fixture.mjs screenshots/recon-schedule-list.html
 ```
 
 ## Cómo funciona por dentro
@@ -46,10 +58,20 @@ node scripts/smoke.mjs                            # screenshots a 390/768/1440px
 - `src/peoplesoft/enroll.js` — corre el asistente de inscripción (Step 1→2→3) sobre todo el carrito y reporta éxito/error por materia.
 - `src/peoplesoft/classSearch.js` — busca clases por término/carrera/código y las agrega al carrito, incluyendo los pasos intermedios que PeopleSoft pida (sección relacionada, preferencias de inscripción).
 - `src/scheduler.js` — programación a hora fija + watcher periódico, con notificaciones de escritorio (`notify-send`).
-- `src/peoplesoft/catalog.js` — lee/escribe el catálogo en SQLite y (recon pendiente) barre el class search de un término. `GET /api/catalog` lo sirve cacheado con ETag.
-- `src/db.js` — SQLite (`node:sqlite`): catálogo, secciones, snapshots de cupo, planes, notas, holds y `sync_log`.
+- `src/peoplesoft/catalog.js` — lee/escribe el catálogo en SQLite y barre el class search de un término. `GET /api/catalog` lo sirve cacheado con ETag. El portal corta en 50 secciones por búsqueda y no pagina, así que el barrido trocea por prefijo de `catalog_nbr` y subdivide cuando un trozo excede.
+- `src/peoplesoft/mySchedule.js` — horario inscrito. `GET /api/my-schedule` lo sirve desde SQLite (no dispara scraping); el refresh en vivo es `POST /api/my-schedule/sync`. Ojo: `/api/schedule` es otra cosa, el scheduler de inscripción.
+- `src/db.js` — SQLite (`node:sqlite`): catálogo, secciones, snapshots de cupo, inscripciones, planes, notas, holds y `sync_log`.
 - `src/server.js` — API REST, SSE de actividad en vivo, y sirve la SPA compilada (`public/dist`) con fallback de ruteo.
-- `web/` — la SPA React (rutas, componentes transversales `CourseChip`/`SeatBadge`/`StalenessTag`/`LiveOpBanner`, sistema de diseño).
+- `web/` — la SPA React (rutas, componentes transversales `CourseChip`/`SeatBadge`/`StalenessTag`/`LiveOpBanner`/`WeeklyGrid`, sistema de diseño).
+
+### De dónde sale el nombre de cada materia
+
+El class search **no devuelve el título ni los créditos** de la materia: su
+header viene como `ICC     ICC321 - ` con el título vacío. Por eso la tabla
+`courses` es el diccionario código→título de la app, y lo llenan otras fuentes
+(hoy Mi Horario, que sí los trae; mañana notas y avance). La regla que sostiene
+todo esto: **un barrido de catálogo nunca puede pisar un título real con un
+placeholder** — está cubierto por `scripts/test-catalog-db.mjs`.
 
 ## Riesgos a tener en cuenta
 
