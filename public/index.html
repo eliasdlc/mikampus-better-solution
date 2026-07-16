@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PUCMM Autoenroll</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>PUCMM Autoenroll</h1>
+    <span id="conn-indicator" class="badge badge-off">desconectado</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Buscar materias para agregar al carrito</h2>
+      <div class="row">
+        <select id="search-term"></select>
+        <select id="search-career"></select>
+        <input type="text" id="search-course-nbr" placeholder="Código exacto, ej. ICC321" />
+        <button id="search-btn">Buscar</button>
+      </div>
+      <table id="search-results-table" hidden>
+        <thead>
+          <tr><th>Clase</th><th>Sección</th><th>Instructor</th><th>Estado</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="search-status" class="muted">Elegí término, carrera y el código exacto de la materia.</p>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Carrito de inscripción</h2>
+        <button id="refresh-cart">Actualizar</button>
+      </div>
+      <table id="cart-table">
+        <thead>
+          <tr><th>Materia</th><th>Estado</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="cart-empty" class="muted" hidden>Sin datos todavía — dale a Actualizar.</p>
+    </section>
+
+    <section class="card">
+      <h2>Hora fija de pre-matrícula</h2>
+      <div class="row">
+        <input type="datetime-local" id="schedule-input" />
+        <button id="schedule-btn">Programar</button>
+        <button id="cancel-schedule-btn" class="secondary">Cancelar</button>
+      </div>
+      <p id="schedule-status" class="muted">Sin hora programada.</p>
+    </section>
+
+    <section class="card">
+      <h2>Watcher de cupos</h2>
+      <div class="row">
+        <label class="switch">
+          <input type="checkbox" id="watcher-toggle" />
+          <span class="slider"></span>
+        </label>
+        <label for="watcher-interval">Intervalo (segundos)</label>
+        <input type="number" id="watcher-interval" min="30" step="5" value="45" />
+      </div>
+      <p id="watcher-status" class="muted">Desactivado.</p>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Actividad</h2>
+        <button id="clear-log" class="secondary">Limpiar</button>
+      </div>
+      <div id="log"></div>
+    </section>
+
+    <section class="card">
+      <button id="enroll-now-btn" class="primary full-width">Inscribir ahora (manual)</button>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
