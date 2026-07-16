@@ -8,6 +8,7 @@ import { getSearchFormOptions, searchClasses, addClassToCart } from './peoplesof
 import { readCatalog } from './peoplesoft/catalog.js';
 import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
 import { db, lastSync } from './db.js';
+import * as plans from './plans.js';
 import * as scheduler from './scheduler.js';
 
 // El término por defecto sale del .env, que es el que ya usa el resto de la app.
@@ -128,6 +129,81 @@ app.post('/api/search/add', async (req, res) => {
       return { ok: true };
     });
     res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Planes ──────────────────────────────────────────────────────────────────
+// CRUD puro sobre SQLite (<10ms): nada de esto toca el portal. La única
+// operación viva de un plan es mandarlo al carrito (más abajo).
+// Los errores de src/plans.js son de datos del usuario (plan inexistente,
+// materia duplicada, sección de otro término) → 400 con el mensaje tal cual.
+
+app.get('/api/plans', (req, res) => {
+  res.json({ plans: plans.listPlans() });
+});
+
+app.post('/api/plans', (req, res) => {
+  try {
+    res.json(plans.createPlan(req.body ?? {}));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/plans/:id', (req, res) => {
+  try {
+    res.json(plans.readPlan(Number(req.params.id)));
+  } catch (err) {
+    res.status(404).json({ error: err.message });
+  }
+});
+
+app.patch('/api/plans/:id', (req, res) => {
+  try {
+    res.json(plans.updatePlan(Number(req.params.id), req.body ?? {}));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/plans/:id', (req, res) => {
+  try {
+    plans.deletePlan(Number(req.params.id));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/plans/:id/duplicate', (req, res) => {
+  try {
+    res.json(plans.duplicatePlan(Number(req.params.id)));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/plans/:id/items', (req, res) => {
+  try {
+    res.json(plans.addPlanItem(Number(req.params.id), req.body ?? {}));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch('/api/plans/:id/items/:itemId', (req, res) => {
+  try {
+    res.json(plans.updatePlanItem(Number(req.params.id), Number(req.params.itemId), req.body ?? {}));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/plans/:id/items/:itemId', (req, res) => {
+  try {
+    res.json(plans.removePlanItem(Number(req.params.id), Number(req.params.itemId)));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

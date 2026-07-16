@@ -170,6 +170,65 @@ export const scheduleResponseSchema = z.object({
 });
 export type ScheduleResponse = z.infer<typeof scheduleResponseSchema>;
 
+// ── Planes de ciclo ──────────────────────────────────────────────────────────
+// Un plan junta materias de un término. 'desired' = sin grupo elegido (chip
+// punteado, sin bloque en el grid); 'planned' = con sección concreta. El
+// estado lo dicta la presencia de sección — lo garantiza src/plans.js.
+
+export const planItemStatusSchema = z.enum(['desired', 'planned']);
+
+export const planItemSchema = z.object({
+  id: z.number().int(),
+  courseId: z.number().int(),
+  code: z.string(),
+  title: z.string(),
+  credits: z.number().nullable(),
+  // career y catalogNbr viajan porque "enviar al carrito" los necesita para
+  // reconstruir la búsqueda en el portal (POST /api/search/add).
+  career: z.string().nullable(),
+  catalogNbr: z.string(),
+  status: planItemStatusSchema,
+  note: z.string().nullable(),
+  locked: z.boolean(),
+  section: catalogSectionSchema.nullable(),
+});
+export type PlanItem = z.infer<typeof planItemSchema>;
+
+export const planSummarySchema = z.object({
+  id: z.number().int(),
+  term: z.string(),
+  name: z.string(),
+  itemCount: z.number().int(),
+  credits: z.number(),
+  updatedAt: z.string(),
+});
+export type PlanSummary = z.infer<typeof planSummarySchema>;
+
+export const planDetailSchema = z.object({
+  id: z.number().int(),
+  term: z.string(),
+  name: z.string(),
+  updatedAt: z.string(),
+  items: z.array(planItemSchema),
+});
+export type PlanDetail = z.infer<typeof planDetailSchema>;
+
+// Resultado de mandar un plan al carrito, materia por materia (agregada ✓ /
+// ya estaba / falló ✗ y por qué).
+export const planToCartResultSchema = z.object({
+  results: z.array(
+    z.object({
+      itemId: z.number().int(),
+      code: z.string(),
+      title: z.string(),
+      ok: z.boolean(),
+      alreadyInCart: z.boolean().default(false),
+      error: z.string().nullable().default(null),
+    })
+  ),
+});
+export type PlanToCartResult = z.infer<typeof planToCartResultSchema>;
+
 // Carrito real (GET /api/cart), enriquecido: además del label crudo del portal,
 // el código canónico (color estable + cruce con el catálogo), el título del
 // diccionario local, el horario parseado (para proyectar el carrito en el
