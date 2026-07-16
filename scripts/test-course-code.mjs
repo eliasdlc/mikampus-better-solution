@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { splitCourseCode, courseCodeToString } from '../src/shared/courseCode.ts';
+import { splitCourseCode, courseCodeToString, portalCatalogNbr } from '../src/shared/courseCode.ts';
 
 // Los casos son los del catálogo real de ICC (fixtures/recon-browse-ICC-expanded.html).
 const SUBJECTS = ['ICC', 'ITE', 'MAT', 'FIS'];
@@ -33,6 +33,14 @@ for (const raw of ['ICC223', 'ICCE01', 'ITE326', '1ITE326', '1ICC473']) {
   const desdeClassSearch = splitCourseCode(raw, { knownSubjects: SUBJECTS });
   assert.deepEqual(desdeBrowse, desdeClassSearch, `las dos pantallas coinciden en ${raw}`);
   assert.equal(code(raw, 'ICC'), code(` ${raw.toLowerCase()} `, 'icc'), `espacios y minúsculas dan igual (${raw})`);
+}
+
+// La vuelta al portal: canónico → lo que el formulario del class search espera.
+assert.equal(portalCatalogNbr(split('ICC223', 'ICC')), 'ICC223');
+assert.equal(portalCatalogNbr(split('ICCE01', 'ICC')), 'ICCE01');
+assert.equal(portalCatalogNbr(split('1ITE326', 'ICC')), '1ITE326', 'con dígito, el catalogNbr ya es el código entero');
+for (const raw of ['ICC223', 'ICCE01', 'ITE326', '1ITE326', '1ICC473']) {
+  assert.equal(portalCatalogNbr(split(raw, 'ICC')), raw, `ida y vuelta sin pérdida (${raw})`);
 }
 
 assert.equal(split('', 'ICC'), null, 'campo vacío');

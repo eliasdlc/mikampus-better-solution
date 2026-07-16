@@ -6,6 +6,7 @@ import { withPage, shutdown } from './session.js';
 import { getCartStatus } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readCatalog } from './peoplesoft/catalog.js';
+import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
 import { db, lastSync } from './db.js';
 import * as plans from './plans.js';
@@ -198,6 +199,59 @@ app.delete('/api/plans/:id/items/:itemId', (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// La única operación viva de un plan: mandarlo al carrito real. Recorre los
+// items con grupo elegido y agrega cada sección exacta en el portal, en la
+// misma sesión Playwright (la fila de withPage garantiza que nada se cuele
+// entremedio). El progreso sale por SSE para el LiveOpBanner; el resultado
+// por materia (agregada ✓ / ya estaba / falló ✗ y por qué) va en la
+// respuesta. Un fallo no corta el batch: las demás materias siguen.
+app.post('/api/plans/:id/to-cart', async (req, res) => {
+  let plan;
+  try {
+    plan = plans.readPlan(Number(req.params.id));
+  } catch (err) {
+    return res.status(404).json({ error: err.message });
+  }
+  const items = plan.items.filter((item) => item.section);
+  if (items.length === 0) {
+    return res.status(400).json({ error: 'El plan no tiene materias con grupo elegido' });
+  }
+
+  const results = await withPage(async (page) => {
+    const out = [];
+    for (const item of items) {
+      scheduler.emitEvent({
+        type: 'log',
+        message: `Agregando ${item.title} (${item.code} · ${item.section.classNbr}) al carrito…`,
+      });
+      try {
+        const r = await addExactSectionToCart(page, {
+          term: plan.term,
+          career: item.career ?? 'GRDO',
+          courseNumber: portalCatalogNbr(item),
+          classNbr: item.section.classNbr,
+        });
+        const alreadyInCart = !!r.alreadyInCart;
+        out.push({ itemId: item.id, code: item.code, title: item.title, ok: true, alreadyInCart, error: null });
+        scheduler.emitEvent({
+          type: 'log',
+          message: alreadyInCart ? `${item.title}: ya estaba en el carrito` : `${item.title}: agregada al carrito ✓`,
+        });
+      } catch (err) {
+        out.push({ itemId: item.id, code: item.code, title: item.title, ok: false, alreadyInCart: false, error: err.message });
+        scheduler.emitEvent({ type: 'log', message: `${item.title}: falló — ${err.message}` });
+      }
+    }
+    return out;
+  });
+
+  scheduler.emitEvent({
+    type: 'log',
+    message: `Plan "${plan.name}" enviado: ${results.filter((r) => r.ok).length}/${results.length} materia(s) en el carrito`,
+  });
+  res.json({ results });
 });
 
 app.get('/api/state', (req, res) => {

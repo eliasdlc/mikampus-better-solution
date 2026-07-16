@@ -55,3 +55,13 @@ export function splitCourseCode(
 export function courseCodeToString({ subject, catalogNbr }: CourseCode): string {
   return `${subject}-${catalogNbr}`;
 }
+
+// El inverso para hablar con el portal: el campo "Course Number" del class
+// search espera el código tal como PUCMM lo escribe ("ICC303"), no el canónico
+// ("ICC-303") ni el número pelado ("303" traería ICC303, MAT3031 y cualquier
+// otro que lo contenga, con riesgo de pasarse del límite de 50 secciones).
+// En los códigos con dígito de delante ("1ITE326") el catalogNbr se guardó
+// entero, subject incluido (ver arriba) — ahí no hay nada que anteponer.
+export function portalCatalogNbr({ subject, catalogNbr }: CourseCode): string {
+  return catalogNbr.includes(subject) ? catalogNbr : `${subject}${catalogNbr}`;
+}
