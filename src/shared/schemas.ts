@@ -170,11 +170,26 @@ export const scheduleResponseSchema = z.object({
 });
 export type ScheduleResponse = z.infer<typeof scheduleResponseSchema>;
 
-// Carrito real (endpoint existente /api/cart), tipado para la migración a React.
+// Carrito real (GET /api/cart), enriquecido: además del label crudo del portal,
+// el código canónico (color estable + cruce con el catálogo), el título del
+// diccionario local, el horario parseado (para proyectar el carrito en el
+// WeeklyGrid de /inscripcion) y el estado del cupo ya normalizado.
 export const cartRowSchema = z.object({
   index: z.number().int(),
   classLabel: z.string(),
-  status: z.string().nullable(),
+  // null cuando el label del portal no se pudo partir en código canónico: la
+  // fila se muestra igual con su texto crudo, solo pierde color y título.
+  courseCode: z.string().nullable(),
+  title: z.string(),
+  section: z.string().nullable(),
+  // El label del carrito trae el class number entre paréntesis: es la llave
+  // exacta contra `sections` (term + class_nbr) para cruzar con el catálogo.
+  classNbr: z.string().nullable(),
+  instructor: z.string().nullable(),
+  credits: z.number().nullable(),
+  campus: z.string().nullable(),
+  meetings: z.array(meetingSchema),
+  status: seatStatusSchema.nullable(),
 });
 export type CartRow = z.infer<typeof cartRowSchema>;
 

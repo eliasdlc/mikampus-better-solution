@@ -105,7 +105,7 @@ export function startWatcher(intervalMs = 45000) {
     let openedSomething = false;
     for (const row of rows) {
       const prev = lastStatus.get(row.index);
-      if (prev && prev !== 'Open' && row.status === 'Open') {
+      if (prev && prev !== 'open' && row.status === 'open') {
         openedSomething = true;
       }
       lastStatus.set(row.index, row.status);
