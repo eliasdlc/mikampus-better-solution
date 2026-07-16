@@ -35,6 +35,16 @@ db.exec(`
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- Los subjects que el portal dice que existen (Browse Course Catalog).
+  -- No es una lista decorativa: partir "ICC223" en ICC + 223 necesita saber
+  -- qué prefijos son subjects reales (ver shared/courseCode.ts), y sin esto
+  -- la app tendría que hardcodearlos.
+  CREATE TABLE IF NOT EXISTS subjects (
+    code        TEXT PRIMARY KEY,             -- ej. "ICC"
+    description TEXT,                         -- PUCMM hoy repite el código acá
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS sections (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
