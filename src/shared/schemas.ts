@@ -96,6 +96,80 @@ export const catalogResponseSchema = z.object({
 });
 export type CatalogResponse = z.infer<typeof catalogResponseSchema>;
 
+// ── Mi Horario ─────────────────────────────────────────────────────────────
+// El horario inscrito es, además del horario, la mejor fuente de títulos y
+// créditos que tenemos: el class search no los expone y acá sí vienen.
+
+export const enrollStatusSchema = z.enum(['enrolled', 'dropped', 'waitlisted']);
+export type EnrollStatus = z.infer<typeof enrollStatusSchema>;
+
+// El portal escribe "Enrolled" / "Dropped" / "Waitlisted". Lo desconocido cae
+// a 'enrolled' porque la pantalla solo lista lo que está en tu horario.
+export function normalizeEnrollStatus(raw: string | null | undefined): EnrollStatus {
+  const t = (raw ?? '').trim().toLowerCase();
+  if (t.includes('drop') || t.includes('baja')) return 'dropped';
+  if (t.includes('wait') || t.includes('espera')) return 'waitlisted';
+  return 'enrolled';
+}
+
+// Una sección inscrita, tal como sale del scraper de Mi Horario.
+export const scrapedEnrolledSectionSchema = z.object({
+  classNbr: z.string().min(1),
+  section: z.string().nullable().default(null),
+  component: z.string().nullable().default(null),
+  instructor: z.string().nullable().default(null),
+  meetings: z.array(meetingSchema).default([]),
+  startDate: z.string().nullable().default(null),
+  endDate: z.string().nullable().default(null),
+});
+
+// Una materia inscrita con sus componentes (una LEC y su PRA van juntas).
+export const scrapedEnrollmentSchema = z.object({
+  courseCode: z.string().min(1),
+  subject: z.string().min(1),
+  catalogNbr: z.string().min(1),
+  title: z.string().min(1).nullable().default(null),
+  status: enrollStatusSchema,
+  units: z.number().nullable().default(null),
+  grading: z.string().nullable().default(null),
+  grade: z.string().nullable().default(null),
+  sections: z.array(scrapedEnrolledSectionSchema).min(1),
+});
+export type ScrapedEnrollment = z.infer<typeof scrapedEnrollmentSchema>;
+
+export const scrapedScheduleSchema = z.object({
+  term: z.string().min(1),
+  courses: z.array(scrapedEnrollmentSchema),
+});
+export type ScrapedSchedule = z.infer<typeof scrapedScheduleSchema>;
+
+// Forma con la que el horario viaja al frontend (GET /api/schedule).
+export const scheduleSectionSchema = scrapedEnrolledSectionSchema.extend({
+  id: z.number().int(),
+});
+
+export const scheduleCourseSchema = z.object({
+  id: z.number().int(),
+  code: z.string(),
+  subject: z.string(),
+  catalogNbr: z.string(),
+  title: z.string(),
+  status: enrollStatusSchema,
+  units: z.number().nullable(),
+  grading: z.string().nullable(),
+  grade: z.string().nullable(),
+  sections: z.array(scheduleSectionSchema),
+});
+export type ScheduleCourse = z.infer<typeof scheduleCourseSchema>;
+
+export const scheduleResponseSchema = z.object({
+  term: z.string().nullable(),
+  generatedAt: z.string(),
+  syncedAt: z.string().nullable(),
+  courses: z.array(scheduleCourseSchema),
+});
+export type ScheduleResponse = z.infer<typeof scheduleResponseSchema>;
+
 // Carrito real (endpoint existente /api/cart), tipado para la migración a React.
 export const cartRowSchema = z.object({
   index: z.number().int(),

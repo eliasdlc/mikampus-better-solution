@@ -12,6 +12,10 @@ function emit(event) {
   for (const fn of listeners) fn(event);
 }
 
+// El feed de actividad (SSE) es de toda la app, no solo del scheduler: otras
+// operaciones en vivo (leer el horario, refrescar cupos) también publican acá.
+export const emitEvent = emit;
+
 const state = {
   schedule: null, // { atISO, timer }
   watcher: null, // { intervalMs, timer, lastStatus }
