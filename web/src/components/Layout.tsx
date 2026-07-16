@@ -6,6 +6,8 @@ import { ThemeToggle } from './ThemeToggle.tsx';
 const NAV = [
   { to: '/', label: 'Inicio', end: true },
   { to: '/buscar', label: 'Buscar' },
+  { to: '/planner', label: 'Planner' },
+  { to: '/builder', label: 'Builder' },
   { to: '/horario', label: 'Mi horario' },
   { to: '/inscripcion', label: 'Inscripción' },
 ];
@@ -26,7 +28,9 @@ export function Layout({ children }: { children: ReactNode }) {
           <span className="font-display text-lg font-semibold tracking-tight">mikampus</span>
         </div>
 
-        <nav className="order-3 flex w-full gap-1 md:order-none md:w-auto md:flex-col">
+        {/* flex-wrap: con seis secciones el nav ya no entra en una línea de
+            390px; que baje de línea antes que desbordar la página. */}
+        <nav className="order-3 flex w-full flex-wrap gap-1 md:order-none md:w-auto md:flex-col md:flex-nowrap">
           {NAV.map((item) => (
             <NavLink
               key={item.to}
