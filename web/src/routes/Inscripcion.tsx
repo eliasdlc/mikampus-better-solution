@@ -8,7 +8,6 @@ import {
   setWatcher,
   enrollNow,
 } from '../lib/api.ts';
-import { normalizeSeatStatus } from '../../../src/shared/schemas.ts';
 import { SeatBadge } from '../components/SeatBadge.tsx';
 import { LiveOpBanner } from '../components/LiveOpBanner.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
@@ -68,7 +67,7 @@ export function Inscripcion() {
               {cart.data!.map((row) => (
                 <li key={row.index} className="flex items-center justify-between gap-3 px-4 py-3">
                   <span className="text-sm">{row.classLabel}</span>
-                  <SeatBadge status={normalizeSeatStatus(row.status)} />
+                  {row.status && <SeatBadge status={row.status} />}
                 </li>
               ))}
             </ul>
