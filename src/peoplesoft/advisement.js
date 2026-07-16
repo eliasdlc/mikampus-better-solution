@@ -143,6 +143,36 @@ export async function fetchAdvisement(page) {
   return { ...raw, courses, subjects: subjectsFromAdvisement(courses) };
 }
 
+// El informe lista la misma materia en varios bloques de requisito, así que el
+// pensum trae duplicados por código (en la corrida del 16/7: 98 filas → 84
+// materias). Colapsarlos con "el último gana" es peligroso: una materia ya
+// aprobada puede reaparecer como candidata de una electiva y ahí viene SIN
+// icono de estado, o sea pending. Si esa copia pisa a la aprobada, la app te
+// manda a inscribir algo que ya cursaste — y de paso borra la nota. Entre
+// duplicados gana el estado más avanzado, no el último.
+const STATUS_PRECEDENCE = ['pending', 'planned', 'in_progress', 'taken'];
+
+export function mergeDuplicateCourses(courses) {
+  const byCode = new Map();
+  for (const course of courses) {
+    const seen = byCode.get(course.code);
+    if (!seen) {
+      byCode.set(course.code, { ...course });
+      continue;
+    }
+    if (STATUS_PRECEDENCE.indexOf(course.status) > STATUS_PRECEDENCE.indexOf(seen.status)) {
+      seen.status = course.status;
+    }
+    // La nota y el término los aporta el bloque que la cursó; la copia
+    // candidata los trae vacíos y no puede borrarlos.
+    seen.grade ??= course.grade;
+    seen.takenTerm ??= course.takenTerm;
+    seen.units ??= course.units;
+    seen.title ??= course.title;
+  }
+  return [...byCode.values()];
+}
+
 // Guarda el pensum: qué materias exige la carrera y en qué va el estudiante.
 // Sin `title` acá — el título es del catálogo (browseCatalog) y esta tabla no
 // tiene por qué competir con él.
@@ -158,10 +188,11 @@ const upsertPensumStmt = db.prepare(`
 `);
 
 export function savePensum(courses) {
-  for (const c of courses) {
+  const merged = mergeDuplicateCourses(courses);
+  for (const c of merged) {
     upsertPensumStmt.run(c.code, c.subject, c.catalogNbr, c.units, c.status, c.takenTerm, c.grade);
   }
-  return courses.length;
+  return merged;
 }
 
 export function readPensum() {
