@@ -230,7 +230,7 @@ export function extractSearchResults() {
 }
 
 // Corre UNA búsqueda (un trozo del barrido) y devuelve lo extraído en crudo.
-async function searchByPrefix(page, { term, career, prefix }) {
+async function searchByPrefix(page, { term, career, prefix, campus = null }) {
   await page.goto(CLASS_SEARCH_URL, { waitUntil: 'commit' });
   await page.waitForTimeout(5000);
 
@@ -241,6 +241,14 @@ async function searchByPrefix(page, { term, career, prefix }) {
   frame = await findFrame(page, 'select[name="SSR_CLSRCH_WRK_ACAD_CAREER$2"]');
   await frame.selectOption('select[name="SSR_CLSRCH_WRK_ACAD_CAREER$2"]', career);
   await page.waitForTimeout(4000);
+
+  // El campus se setea SIEMPRE, incluso a "todos" (''): PeopleSoft retiene el
+  // estado del formulario entre navegaciones dentro de la misma sesión, así
+  // que un campus elegido para trocear un código pegajoso filtraría en
+  // silencio todos los trozos siguientes.
+  frame = await findFrame(page, 'select[name="SSR_CLSRCH_WRK_CAMPUS$0"]');
+  await frame.selectOption('select[name="SSR_CLSRCH_WRK_CAMPUS$0"]', campus ?? '');
+  await page.waitForTimeout(3000);
 
   // "C" = contains. Con el prefijo en catalog_nbr, no en el campo subject.
   frame = await findFrame(page, 'select[name="SSR_CLSRCH_WRK_SSR_EXACT_MATCH1$1"]');
@@ -313,24 +321,37 @@ function persist(courses, { term, career }) {
   return saved;
 }
 
+// Los tres campus del select del class search (recon-catalog-ICC.html). Son el
+// segundo eje de troceo: cuando el prefijo ya es un código completo (a ART107
+// no se le puede agregar otro dígito porque ART1070 no existe), la única forma
+// de partir sus >50 secciones es pedirlas campus por campus.
+const CAMPUSES = ['CSTI', 'CSTA', 'CVIR'];
+
 // Barre un subject (ej. "ICC") de un término/carrera y persiste sus secciones.
 // Si un trozo excede el límite de 50 del portal, lo subdivide agregando un
-// dígito al prefijo ("ICC" → "ICC0".."ICC9") y reintenta cada uno. maxDepth
-// corta la recursión: si a los 3 dígitos extra sigue excediendo, es que el
-// supuesto sobre el formato del catalog_nbr no aplica a este subject y hay que
-// mirarlo a mano en vez de seguir golpeando el portal.
+// dígito al prefijo ("ICC" → "ICC0".."ICC9") y reintenta cada uno. Cuando los
+// dígitos se agotan (maxDepth), el prefijo es de hecho un código completo con
+// demasiadas secciones y se trocea por campus. Si aun así un campus excede,
+// se reporta como skipped: no queda ningún eje más y hay que mirarlo a mano.
 export async function syncCatalogSubject(page, { term, career, subject, throttleMs = 1500, maxDepth = 3 }) {
   let saved = 0;
   const skipped = [];
 
-  const sweep = async (prefix, depth) => {
-    const { exceeds, courses } = await searchByPrefix(page, { term, career, prefix });
+  const sweep = async (prefix, depth, campus = null) => {
+    const { exceeds, courses } = await searchByPrefix(page, { term, career, prefix, campus });
     if (!exceeds) {
       saved += persist(courses, { term, career });
       return;
     }
+    if (campus) {
+      skipped.push(`${prefix}@${campus}`);
+      return;
+    }
     if (depth >= maxDepth) {
-      skipped.push(prefix);
+      for (const c of CAMPUSES) {
+        await page.waitForTimeout(throttleMs);
+        await sweep(prefix, depth, c);
+      }
       return;
     }
     for (let digit = 0; digit <= 9; digit++) {
