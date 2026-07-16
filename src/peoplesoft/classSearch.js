@@ -105,13 +105,50 @@ export async function searchClasses(page, { term, career, courseNumber }) {
   });
 }
 
+// Agrega una sección EXACTA al carrito. Vuelve a correr la búsqueda para
+// reconstruir el estado de la página de resultados y ahí mismo clickear
+// "Select" — así no depende de que nada más (el watcher, otra pestaña) haya
+// navegado la sesión compartida entremedio de dos llamadas separadas.
+export async function addExactSectionToCart(
+  page,
+  { term, career, courseNumber, classNbr, relatedClassNbr = null }
+) {
+  const rows = await searchClasses(page, { term, career, courseNumber });
+  const row = rows.find((r) => r.classNbr === classNbr);
+  if (!row) throw new Error('No se encontró esa clase en los resultados de búsqueda');
+  if (row.inCart) return { alreadyInCart: true };
+  await addClassToCart(page, row.index, { relatedClassNbr });
+  return { ok: true };
+}
+
+// Busca el radio de la sección relacionada exacta en el paso "Select" del
+// wizard. Recon en fixtures/recon-related-sections.html: cada fila trae su
+// class number en SSR_CLS_TBL_R1_RELATE_CLASS_NBR$N al lado del radio. El
+// radio se ubica por contención DOM (la celda → su <tr> → su radio), nunca
+// por índice: el patrón de ids de los radios de grilla de PeopleSoft varía
+// y el índice de fila no es confiable entre redibujados.
+// Corre dentro del browser vía evaluate() — testeable contra el fixture.
+export function findRelatedSectionRadio(relatedClassNbr) {
+  for (const el of document.querySelectorAll('[id^="SSR_CLS_TBL_R1_RELATE_CLASS_NBR$"]')) {
+    if (!/^SSR_CLS_TBL_R1_RELATE_CLASS_NBR\$\d+$/.test(el.id)) continue;
+    if (el.textContent.trim() !== relatedClassNbr) continue;
+    const radio = el.closest('tr')?.querySelector('input.PSRADIOBUTTON[type="radio"]');
+    if (radio) return radio.id;
+  }
+  return null;
+}
+
 // PeopleSoft intercala pasos variables entre "Select" y que la clase quede
 // realmente en el carrito (sección relacionada obligatoria, preferencias de
 // inscripción) según la materia. En vez de mapear cada combinación posible,
 // se hace click en "Select" y después en cada "Next" que vaya apareciendo,
-// marcando la primera opción disponible si el paso pide elegir una sección,
 // hasta que no quede ningún "Next" — eso indica que ya se agregó.
-export async function addClassToCart(page, index) {
+//
+// Cuando el paso pide elegir una sección relacionada (práctico/lab), se marca
+// la que la UI eligió (`relatedClassNbr`); sin elección explícita, o si esa
+// sección no aparece, cae a la primera disponible — el comportamiento de
+// siempre, para que un practico lleno no deje la materia fuera del carrito.
+export async function addClassToCart(page, index, { relatedClassNbr = null } = {}) {
   let frame = await findFrame(page, `input[name="SSR_PB_SELECT$${index}"]`);
   await frame.click(`input[name="SSR_PB_SELECT$${index}"]`);
   await page.waitForTimeout(5000);
@@ -121,10 +158,21 @@ export async function addClassToCart(page, index) {
 
     const radios = frame.locator('input.PSRADIOBUTTON[type="radio"]');
     if ((await radios.count()) > 0) {
-      const anyChecked = await frame.locator('input.PSRADIOBUTTON[type="radio"]:checked').count();
-      if (anyChecked === 0) {
-        await radios.first().check();
-        await page.waitForTimeout(1000);
+      const wantedId = relatedClassNbr
+        ? await frame.evaluate(findRelatedSectionRadio, relatedClassNbr)
+        : null;
+      if (wantedId) {
+        const wanted = frame.locator(`[id="${wantedId}"]`);
+        if (!(await wanted.isChecked())) {
+          await wanted.check();
+          await page.waitForTimeout(1000);
+        }
+      } else {
+        const anyChecked = await frame.locator('input.PSRADIOBUTTON[type="radio"]:checked').count();
+        if (anyChecked === 0) {
+          await radios.first().check();
+          await page.waitForTimeout(1000);
+        }
       }
     }
 

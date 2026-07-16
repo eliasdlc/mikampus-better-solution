@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { withPage, shutdown } from './session.js';
 import { getCartStatus } from './peoplesoft/cart.js';
-import { getSearchFormOptions, searchClasses, addClassToCart } from './peoplesoft/classSearch.js';
+import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readCatalog } from './peoplesoft/catalog.js';
 import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
 import { db, lastSync } from './db.js';
@@ -110,24 +110,15 @@ app.post('/api/search', async (req, res) => {
   }
 });
 
-// Vuelve a correr la búsqueda para reconstruir el estado exacto de la
-// página de resultados y ahí mismo clickear "Select" — así no depende de
-// que nada más (el watcher, otra pestaña) haya navegado la sesión
-// compartida entremedio de dos llamadas separadas.
 app.post('/api/search/add', async (req, res) => {
-  const { term, career, courseNumber, classNbr } = req.body;
+  const { term, career, courseNumber, classNbr, relatedClassNbr } = req.body;
   if (!term || !career || !courseNumber || !classNbr) {
     return res.status(400).json({ error: 'Faltan term, career, courseNumber o classNbr' });
   }
   try {
-    const result = await withPage(async (page) => {
-      const rows = await searchClasses(page, { term, career, courseNumber });
-      const row = rows.find((r) => r.classNbr === classNbr);
-      if (!row) throw new Error('No se encontró esa clase en los resultados de búsqueda');
-      if (row.inCart) return { alreadyInCart: true };
-      await addClassToCart(page, row.index);
-      return { ok: true };
-    });
+    const result = await withPage((page) =>
+      addExactSectionToCart(page, { term, career, courseNumber, classNbr, relatedClassNbr })
+    );
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
