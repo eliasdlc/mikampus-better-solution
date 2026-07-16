@@ -5,12 +5,15 @@ import express from 'express';
 import { withPage, shutdown } from './session.js';
 import { getCartStatus } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addClassToCart } from './peoplesoft/classSearch.js';
+import { readCatalog } from './peoplesoft/catalog.js';
+import { db, lastSync } from './db.js';
 import * as scheduler from './scheduler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(express.static(DIST_DIR));
 
 app.get('/api/cart', async (req, res) => {
   try {
@@ -19,6 +22,20 @@ app.get('/api/cart', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Catálogo cacheado desde SQLite (<10ms). El ETag deriva de la última sync y
+// del volumen de secciones: mientras no cambie, el browser recibe 304 y el
+// índice MiniSearch no se reconstruye. El scraping en vivo va por otros
+// endpoints; este solo sirve disco.
+app.get('/api/catalog', (req, res) => {
+  const term = req.query.term ? String(req.query.term) : null;
+  const count = db.prepare('SELECT COUNT(*) AS n FROM sections' + (term ? ' WHERE term = ?' : '')).get(...(term ? [term] : [])).n;
+  const etag = `"cat-${term ?? 'all'}-${count}-${lastSync('catalog', term) ?? '0'}"`;
+  res.set('Cache-Control', 'no-cache');
+  res.set('ETag', etag);
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  res.json(readCatalog(term));
 });
 
 app.post('/api/enroll', async (req, res) => {
@@ -121,6 +138,14 @@ app.get('/api/events', (req, res) => {
     clearInterval(keepAlive);
     unsubscribe();
   });
+});
+
+// Fallback de la SPA: cualquier ruta que no sea /api ni un archivo del build
+// devuelve index.html para que React Router maneje el ruteo del lado del
+// cliente (/buscar, /inscripcion, etc. al recargar).
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(DIST_DIR, 'index.html'));
 });
 
 const PORT = process.env.PORT || 4173;
