@@ -6,7 +6,7 @@ import { withPage, shutdown } from './session.js';
 import { getCartStatus } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addClassToCart } from './peoplesoft/classSearch.js';
 import { readCatalog } from './peoplesoft/catalog.js';
-import { readSchedule, syncSchedule } from './peoplesoft/mySchedule.js';
+import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
 import { db, lastSync } from './db.js';
 import * as scheduler from './scheduler.js';
 
@@ -49,9 +49,12 @@ app.get('/api/catalog', (req, res) => {
 // GET sirve siempre desde SQLite, aunque nunca se haya sincronizado: la UI
 // muestra lo cacheado con su StalenessTag y decide si refrescar. Nunca dispara
 // scraping solo por entrar a la pantalla.
+// El término se resuelve solo: lo pedido explícitamente, si no lo del .env, y
+// si no el último que se haya sincronizado. Sin nada de eso devuelve un horario
+// vacío (no un error): la pantalla ofrece traerlo del portal, y el sync
+// descubre el término activo sin que nadie lo configure.
 app.get('/api/my-schedule', (req, res) => {
-  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM;
-  if (!term) return res.status(400).json({ error: 'Falta el término (?term=1930 o TARGET_TERM en .env)' });
+  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM || latestScheduledTerm();
   res.json(readSchedule(term));
 });
 
