@@ -100,6 +100,23 @@ body {
   border-radius: 4px;
 }
 
+/* El único momento orquestado de la app (plan §3): el bloque aterrizando en
+   el WeeklyGrid al elegir sección en planner/builder. */
+@keyframes block-land {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.block-land {
+  animation: block-land 180ms ease-out;
+}
+
 /* Motion mínimo y funcional; respetar prefers-reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
   *,

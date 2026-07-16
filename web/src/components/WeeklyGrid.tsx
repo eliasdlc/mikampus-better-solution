@@ -21,13 +21,15 @@ const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR
 
 const hourRow = (i: number) => `${i * 4 + 2} / span 4`;
 
-function BlockCard({ block, column }: { block: PlacedBlock; column: number }) {
+function BlockCard({ block, column, animate }: { block: PlacedBlock; column: number; animate: boolean }) {
   const color = courseColor(block.code);
   const clash = block.conflictsWith.length > 0;
 
   return (
     <div
-      className="z-10 m-px overflow-hidden rounded-[var(--radius)] px-1.5 py-1 text-[11px] leading-tight"
+      className={`z-10 m-px overflow-hidden rounded-[var(--radius)] px-1.5 py-1 text-[11px] leading-tight ${
+        block.ghost ? 'opacity-45' : ''
+      } ${animate && !block.ghost ? 'block-land' : ''}`}
       style={{
         gridColumn: column,
         gridRow: `${toGridLine(block.start, START_HOUR, SLOT_MINUTES)} / ${toGridLine(block.end, START_HOUR, SLOT_MINUTES)}`,
@@ -39,6 +41,9 @@ function BlockCard({ block, column }: { block: PlacedBlock; column: number }) {
         // que el hue se lea aun en bloques cortos.
         background: `color-mix(in oklch, ${color} 22%, var(--surface))`,
         borderLeft: `3px solid ${color}`,
+        // El fantasma (preview de hover en el builder) se distingue también
+        // por forma, no solo por opacidad: borde punteado alrededor.
+        border: block.ghost ? `1px dashed ${color}` : undefined,
         // Un choque se raya en rojo: se ve que algo está mal sin leer nada.
         backgroundImage: clash
           ? 'repeating-linear-gradient(45deg, transparent, transparent 5px, color-mix(in oklch, var(--closed) 30%, transparent) 5px, color-mix(in oklch, var(--closed) 30%, transparent) 10px)'
@@ -60,7 +65,11 @@ function BlockCard({ block, column }: { block: PlacedBlock; column: number }) {
   );
 }
 
-export function WeeklyGrid({ blocks }: { blocks: Block[] }) {
+// `animate` prende el único momento orquestado de la app (plan §3): el bloque
+// "aterrizando" al elegir una sección en planner/builder. La animación corre
+// al montar; como la key de cada bloque incluye el classNbr, un swap de
+// sección remonta el bloque y la repite. Off por defecto (horario, carrito).
+export function WeeklyGrid({ blocks, animate = false }: { blocks: Block[]; animate?: boolean }) {
   const byDay = new Map<DayCode, Block[]>(WEEK_DAYS.map((d) => [d, []]));
   for (const block of blocks) byDay.get(block.day)?.push(block);
 
@@ -131,7 +140,7 @@ export function WeeklyGrid({ blocks }: { blocks: Block[] }) {
 
           {days.flatMap((day, i) =>
             layoutDay(byDay.get(day) ?? []).map((block) => (
-              <BlockCard key={block.id} block={block} column={i + 2} />
+              <BlockCard key={block.id} block={block} column={i + 2} animate={animate} />
             ))
           )}
         </div>
