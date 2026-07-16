@@ -3,6 +3,20 @@ import { chromium } from 'playwright';
 
 const SIGNON_URL = 'https://micampus.pucmm.edu.do/psp/cs92pro/?cmd=login&languageCd=ENG';
 
+// Llena un campo y confirma que el valor quedó, reintentando si el JS del
+// portal lo pisó. Limpia antes de escribir para no concatenar sobre lo que el
+// signon haya dejado en el campo durante su inicialización.
+async function fillVerified(page, selector, value, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    await page.locator(selector).click();
+    await page.fill(selector, '');
+    await page.fill(selector, value);
+    if ((await page.inputValue(selector)) === value) return;
+    await page.waitForTimeout(400);
+  }
+  throw new Error(`No se pudo llenar ${selector} de forma estable en el signon`);
+}
+
 export async function loginToPeopleSoft({ headless = true } = {}) {
   const { PUCMM_USERNAME, PUCMM_PASSWORD } = process.env;
   if (!PUCMM_USERNAME || !PUCMM_PASSWORD) {
@@ -14,8 +28,16 @@ export async function loginToPeopleSoft({ headless = true } = {}) {
   const page = await context.newPage();
 
   await page.goto(SIGNON_URL, { waitUntil: 'domcontentloaded' });
-  await page.fill('#userid', PUCMM_USERNAME);
-  await page.fill('#pwd', PUCMM_PASSWORD);
+
+  // El signon corre JS de inicialización al cargar que pisa los campos si se
+  // llenan demasiado pronto: el userid queda concatenado con basura y el pwd
+  // vacío, y el portal rechaza el submit con "User ID and Password are
+  // required". Esperamos a que los campos estén visibles y verificamos el
+  // valor tras llenar, reintentando si el portal lo alteró.
+  await page.waitForSelector('#userid', { state: 'visible' });
+  await page.waitForSelector('#pwd', { state: 'visible' });
+  await fillVerified(page, '#userid', PUCMM_USERNAME);
+  await fillVerified(page, '#pwd', PUCMM_PASSWORD);
   await page.click('input[name="Submit"]');
 
   // PeopleSoft no dispara una sola navegación limpia tras el submit: hace
