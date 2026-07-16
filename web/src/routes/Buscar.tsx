@@ -46,7 +46,8 @@ export function Buscar() {
         <p className="text-closed text-sm">{(catalog.error as Error).message}</p>
       ) : courses.length === 0 ? (
         <p className="text-muted text-sm">
-          El catálogo está vacío. Corré <code className="font-mono">node scripts/seed-catalog.mjs</code> o sincronizá un término.
+          El catálogo está vacío. Traelo del portal con{' '}
+          <code className="font-mono">node scripts/sync-catalog.mjs ICC</code> (unos minutos por materia).
         </p>
       ) : (
         <>

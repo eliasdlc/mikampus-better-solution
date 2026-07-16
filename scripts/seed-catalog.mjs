@@ -1,8 +1,24 @@
 // Siembra un catálogo pequeño pero realista para desarrollar y verificar la UI,
 // la búsqueda MiniSearch y el endpoint sin golpear el portal. NO es data real:
-// se reemplaza en cuanto corra el scraper de verdad contra un término.
-import { saveSection } from '../src/peoplesoft/catalog.js';
-import { scrapedSectionSchema } from '../src/shared/schemas.ts';
+// estas materias no existen. Para llenar el catálogo de verdad es
+// scripts/sync-catalog.mjs.
+//
+// Exige MIKAMPUS_DB: sembrado contra la base real, estas 4 materias inventadas
+// salían en la búsqueda mezcladas con las reales y no había cómo distinguirlas
+// a simple vista.
+//
+//   MIKAMPUS_DB=/tmp/ui.db node scripts/seed-catalog.mjs
+if (!process.env.MIKAMPUS_DB) {
+  console.error(
+    'seed-catalog siembra materias INVENTADAS y solo corre contra una base desechable.\n' +
+      'Usá:  MIKAMPUS_DB=/tmp/ui.db node scripts/seed-catalog.mjs\n' +
+      'Para el catálogo real:  node scripts/sync-catalog.mjs ICC'
+  );
+  process.exit(1);
+}
+
+const { saveSection } = await import('../src/peoplesoft/catalog.js');
+const { scrapedSectionSchema } = await import('../src/shared/schemas.ts');
 
 // Los días van con el código de dos letras de PeopleSoft (Mo/Tu/We…), igual
 // que lo que entrega el scraper real — si el seed usara otro formato, el
