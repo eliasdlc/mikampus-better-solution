@@ -6,6 +6,9 @@
   "scripts": {
     "install-browsers": "playwright install chromium",
     "recon": "node src/recon.js",
+    "recon:catalog": "node src/recon-catalog.js",
+    "seed": "node scripts/seed-catalog.mjs",
+    "test": "node scripts/test-catalog-parser.mjs && node scripts/test-catalog-db.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",

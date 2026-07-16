@@ -1,6 +1,7 @@
 import { CLASS_SEARCH_URL } from './constants.js';
 import { db, logSync } from '../db.js';
 import { scrapedSectionSchema, normalizeSeatStatus } from '../shared/schemas.ts';
+import { parseMeetings } from '../shared/meetings.ts';
 
 // ── Capa de escritura en DB ────────────────────────────────────────────────
 // Estas funciones son las que persisten lo que el scraper valida con Zod.
@@ -33,10 +34,29 @@ const recordSeatsStmt = db.prepare(`
   VALUES (?, ?, ?, ?, ?)
 `);
 
+// El class search NO devuelve el título de la materia (el recon lo confirmó:
+// el header de cada grupo viene como "ICC     ICC321 - " con el título vacío).
+// Por eso `courses` es el diccionario código→título de la app, y se llena por
+// otras vías (seed, mySchedule, notas). La regla acá: un barrido de catálogo
+// jamás puede pisar un título real con un placeholder. Si no sabemos el
+// nombre todavía, el código hace de título hasta que alguien lo complete.
+function resolveTitle(courseCode, scrapedTitle) {
+  if (scrapedTitle) return scrapedTitle;
+  const known = db.prepare('SELECT title FROM courses WHERE code = ?').get(courseCode);
+  return known?.title ?? courseCode;
+}
+
+// Materias cuyo título todavía es el placeholder — las que un backfill en
+// segundo plano debería resolver.
+export function coursesMissingTitle() {
+  return db.prepare('SELECT code FROM courses WHERE title = code ORDER BY code').all().map((r) => r.code);
+}
+
 // Guarda una sección validada (course + section + snapshot de cupo) en una
 // transacción. `s` ya pasó por scrapedSectionSchema.
 export function saveSection(s) {
-  upsertCourseStmt.run(s.courseCode, s.subject, s.catalogNbr, s.title, s.career, s.credits);
+  const title = resolveTitle(s.courseCode, s.title);
+  upsertCourseStmt.run(s.courseCode, s.subject, s.catalogNbr, title, s.career, s.credits);
   const courseId = db.prepare('SELECT id FROM courses WHERE code = ?').get(s.courseCode).id;
   upsertSectionStmt.run(
     courseId,
@@ -115,12 +135,22 @@ export function readCatalog(term) {
 }
 
 // ── Scraper ────────────────────────────────────────────────────────────────
-// RECON PENDIENTE: la navegación reusa el patrón probado de classSearch.js,
-// pero la extracción de créditos, título limpio y patrón de horario depende de
-// IDs que hay que confirmar con un volcado de HTML real antes de la primera
-// corrida en vivo (principio #1: ningún scraper a ciegas). Hasta entonces se
-// prueba la tubería con datos sembrados. No correr un barrido completo sin
-// supervisión: pega muchas requests al portal (riesgo #2 del plan) → throttle.
+// Recon hecho contra HTML real (screenshots/recon-catalog-ICC3.html, ver
+// src/recon-catalog.js). Lo que confirmó, y que manda en el diseño de acá:
+//
+//   1. El portal corta en 50 secciones por búsqueda ("Your search will exceed
+//      the maximum limit of 50 sections") y no pagina: hay que trocear la
+//      consulta hasta que cada trozo entre. De ahí el barrido recursivo.
+//   2. En PUCMM el catalog_nbr incluye el subject ("ICC321"), así que buscar
+//      catalog_nbr *contains* "ICC" trae el subject entero y "ICC3" trae los
+//      ICC3xx. Ese prefijo es la palanca para trocear.
+//   3. Los resultados se agrupan por materia en un div GROUPBOX2$N que envuelve
+//      sus secciones; el número de sección NO se puede sacar de la fila (la
+//      fila solo dice "101-LEC"), sale del header del grupo.
+//   4. El header no trae título ni créditos → title va null (ver resolveTitle).
+//
+// Sigue siendo caro: cada trozo es una navegación completa (~20s). Es un sync
+// de fondo, no algo que dispare la UI (riesgo #2 del plan) → throttle.
 async function findFrame(page, selector, { timeout = 8000 } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
@@ -136,9 +166,65 @@ async function findFrame(page, selector, { timeout = 8000 } = {}) {
   throw new Error(`No se encontró el elemento esperado: ${selector}`);
 }
 
-// Barre un subject (ej. "ICC") de un término/carrera y persiste sus secciones.
-// throttleMs espacia las requests para no golpear el portal en el pico.
-export async function syncCatalogSubject(page, { term, career, subject, throttleMs = 1500 }) {
+// Extrae la grilla de resultados. Se ejecuta dentro del browser vía evaluate(),
+// así que no puede cerrar sobre nada del módulo: todo lo que necesita va acá
+// dentro. A cambio se puede correr contra un HTML volcado sin tocar el portal
+// (scripts/test-catalog-parser.mjs) — que es como se validó.
+export function extractSearchResults() {
+  const strip = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
+
+  const courses = [];
+  for (const anchor of document.querySelectorAll('a[id^="SSR_CLSRSLT_WRK_GROUPBOX2$"]')) {
+    // "ICC     ICC321 - Título". El subject se repite dentro del catalog_nbr
+    // ("ICC321"), y lo dejamos fuera para que el código canónico sea "ICC-321".
+    const label = strip(anchor.parentElement);
+    const m = label.match(/^([A-Z]{2,4})\s+\1?(\d{2,4}[A-Z]?)\s*-\s*(.*)$/);
+    if (!m) continue;
+
+    const container = anchor.closest('div[id^="win0divSSR_CLSRSLT_WRK_GROUPBOX2$"]');
+    const sections = [];
+    if (container) {
+      // Filtrar por id exacto: el selector por prefijo también agarra el
+      // <span id="MTG_CLASS_NBR$span$N"> que envuelve al link y duplicaría
+      // cada fila. Mismo patrón para cualquier otro campo con wrapper $span$.
+      const rows = [...container.querySelectorAll('[id^="MTG_CLASS_NBR$"]')].filter((el) =>
+        /^MTG_CLASS_NBR\$\d+$/.test(el.id)
+      );
+      for (const row of rows) {
+        const i = row.id.split('$')[1];
+        const statusImg = document.querySelector(`[id="win0divDERIVED_CLSRCH_SSR_STATUS_LONG$${i}"] img`);
+        // El estado del cupo solo existe como icono; el alt viene vacío, así
+        // que el dato real es el nombre del gif (PS_CS_STATUS_OPEN_ICN_1.gif).
+        const statusSrc = statusImg ? statusImg.getAttribute('src') ?? '' : '';
+        const statusMatch = statusSrc.match(/STATUS_(OPEN|CLOSED|WAITLIST)/i);
+        sections.push({
+          classNbr: strip(row),
+          // "101-LEC Ordinaria" → sección 101, componente LEC.
+          classNameCell: strip(document.getElementById(`MTG_CLASSNAME$${i}`)),
+          dayTime: strip(document.getElementById(`MTG_DAYTIME$${i}`)),
+          room: strip(document.getElementById(`MTG_ROOM$${i}`)),
+          instructor: strip(document.getElementById(`MTG_INSTR$${i}`)),
+          status: statusMatch ? statusMatch[1] : null,
+        });
+      }
+    }
+
+    courses.push({
+      subject: m[1],
+      catalogNbr: m[2],
+      titleFromPortal: m[3].trim() || null,
+      sections,
+    });
+  }
+
+  return {
+    exceeds: /exceed the maximum limit/i.test(document.body.textContent ?? ''),
+    courses,
+  };
+}
+
+// Corre UNA búsqueda (un trozo del barrido) y devuelve lo extraído en crudo.
+async function searchByPrefix(page, { term, career, prefix }) {
   await page.goto(CLASS_SEARCH_URL, { waitUntil: 'commit' });
   await page.waitForTimeout(5000);
 
@@ -150,11 +236,16 @@ export async function syncCatalogSubject(page, { term, career, subject, throttle
   await frame.selectOption('select[name="SSR_CLSRCH_WRK_ACAD_CAREER$2"]', career);
   await page.waitForTimeout(4000);
 
-  // Buscar por subject dejando el catalog_nbr vacío devuelve todo el subject.
-  frame = await findFrame(page, 'input[name="SSR_CLSRCH_WRK_SUBJECT$0"]', { timeout: 4000 }).catch(() => null);
-  if (frame) await frame.fill('input[name="SSR_CLSRCH_WRK_SUBJECT$0"]', subject).catch(() => {});
-  await page.waitForTimeout(throttleMs);
+  // "C" = contains. Con el prefijo en catalog_nbr, no en el campo subject.
+  frame = await findFrame(page, 'select[name="SSR_CLSRCH_WRK_SSR_EXACT_MATCH1$1"]');
+  await frame.selectOption('select[name="SSR_CLSRCH_WRK_SSR_EXACT_MATCH1$1"]', 'C');
+  await page.waitForTimeout(1000);
 
+  frame = await findFrame(page, 'input[name="SSR_CLSRCH_WRK_CATALOG_NBR$1"]');
+  await frame.fill('input[name="SSR_CLSRCH_WRK_CATALOG_NBR$1"]', prefix);
+  await page.waitForTimeout(1000);
+
+  // Sin esto solo devuelve secciones con cupo — el catálogo las quiere todas.
   frame = await findFrame(page, '[id="SSR_CLSRCH_WRK_SSR_OPEN_ONLY$3"]');
   const openOnly = frame.locator('[id="SSR_CLSRCH_WRK_SSR_OPEN_ONLY$3"]');
   if (await openOnly.isChecked()) {
@@ -164,66 +255,77 @@ export async function syncCatalogSubject(page, { term, career, subject, throttle
 
   frame = await findFrame(page, 'input[value="Search"]');
   await frame.click('input[value="Search"]');
-  await page.waitForTimeout(7000);
+  await page.waitForTimeout(8000);
 
   frame = await findFrame(page, '[id="ICStateNum"]');
-  const exceeds = await frame.locator('text=exceed the maximum limit').count();
-  if (exceeds > 0) {
-    throw new Error(`El subject ${subject} excede el máximo de resultados — hay que paginarlo por catalog_nbr.`);
-  }
+  return frame.evaluate(extractSearchResults);
+}
 
-  // Extracción provisional a partir de los IDs conocidos de la grilla de
-  // resultados (MTG_*). RECON confirmará créditos/título/horario exactos.
-  const raw = await frame.evaluate(() => {
-    const rows = [];
-    for (let i = 0; ; i++) {
-      const nbrEl = document.getElementById(`MTG_CLASS_NBR$${i}`);
-      if (!nbrEl) break;
-      const nameEl = document.getElementById(`MTG_CLASSNAME$${i}`);
-      const roomEl = document.getElementById(`MTG_ROOM$${i}`);
-      const instrEl = document.getElementById(`MTG_INSTR$${i}`);
-      const dayTimeEl = document.getElementById(`MTG_DAYTIME$${i}`);
-      const statusImg = document.querySelector(`#win0divDERIVED_CLSRCH_SSR_STATUS_LONG\\$${i} img`);
-      rows.push({
-        classNbr: nbrEl.textContent.trim(),
-        sectionLabel: nameEl ? nameEl.textContent.trim().replace(/\s+/g, ' ') : '',
-        room: roomEl ? roomEl.textContent.trim() : '',
-        instructor: instrEl ? instrEl.textContent.trim() : '',
-        dayTime: dayTimeEl ? dayTimeEl.textContent.trim().replace(/\s+/g, ' ') : '',
-        statusAlt: statusImg ? statusImg.alt : null,
-      });
-    }
-    return rows;
-  });
-
+// Convierte lo extraído en filas validadas y las persiste.
+function persist(courses, { term, career }) {
   let saved = 0;
-  for (const r of raw) {
-    // sectionLabel de PeopleSoft suele venir como "ICC 303 - 01" o similar;
-    // parseo tolerante, se afina con el recon.
-    const m = r.sectionLabel.match(/^([A-Za-z]{2,4})\s*[- ]?\s*(\d{2,4}[A-Za-z]?)\s*-?\s*(.*)$/);
-    const subjectCode = m ? m[1].toUpperCase() : subject;
-    const catalogNbr = m ? m[2] : '';
-    const section = m ? m[3] : r.sectionLabel;
-    const parsed = scrapedSectionSchema.safeParse({
-      courseCode: `${subjectCode}-${catalogNbr}`,
-      subject: subjectCode,
-      catalogNbr,
-      title: r.sectionLabel || `${subjectCode}-${catalogNbr}`,
-      term,
-      classNbr: r.classNbr,
-      section,
-      instructor: r.instructor || null,
-      meetings: r.dayTime ? [{ days: [r.dayTime], start: null, end: null, room: r.room || null }] : [],
-      seats: r.statusAlt
-        ? { status: normalizeSeatStatus(r.statusAlt), open: null, capacity: null, waitTotal: null }
-        : null,
-    });
-    if (parsed.success) {
-      saveSection(parsed.data);
-      saved++;
+  for (const course of courses) {
+    for (const s of course.sections) {
+      // "101-LEC Ordinaria" → section "101", component "LEC".
+      const cell = s.classNameCell.match(/^(\S+?)-(\S+)/);
+      const parsed = scrapedSectionSchema.safeParse({
+        courseCode: `${course.subject}-${course.catalogNbr}`,
+        subject: course.subject,
+        catalogNbr: course.catalogNbr,
+        title: course.titleFromPortal,
+        career,
+        term,
+        classNbr: s.classNbr,
+        section: cell ? cell[1] : s.classNameCell || null,
+        component: cell ? cell[2] : null,
+        instructor: s.instructor || null,
+        meetings: parseMeetings(s.dayTime, s.room),
+        seats: s.status
+          ? { status: normalizeSeatStatus(s.status), open: null, capacity: null, waitTotal: null }
+          : null,
+      });
+      if (parsed.success) {
+        saveSection(parsed.data);
+        saved++;
+      } else {
+        // Zod gritando acá = selector roto, no dato raro. Que se vea.
+        console.warn(`Sección descartada (${course.subject}-${course.catalogNbr} / ${s.classNbr}):`,
+          parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', '));
+      }
     }
   }
-
-  logSync({ kind: 'catalog', term, status: 'ok', detail: subject, rows: saved });
   return saved;
+}
+
+// Barre un subject (ej. "ICC") de un término/carrera y persiste sus secciones.
+// Si un trozo excede el límite de 50 del portal, lo subdivide agregando un
+// dígito al prefijo ("ICC" → "ICC0".."ICC9") y reintenta cada uno. maxDepth
+// corta la recursión: si a los 3 dígitos extra sigue excediendo, es que el
+// supuesto sobre el formato del catalog_nbr no aplica a este subject y hay que
+// mirarlo a mano en vez de seguir golpeando el portal.
+export async function syncCatalogSubject(page, { term, career, subject, throttleMs = 1500, maxDepth = 3 }) {
+  let saved = 0;
+  const skipped = [];
+
+  const sweep = async (prefix, depth) => {
+    const { exceeds, courses } = await searchByPrefix(page, { term, career, prefix });
+    if (!exceeds) {
+      saved += persist(courses, { term, career });
+      return;
+    }
+    if (depth >= maxDepth) {
+      skipped.push(prefix);
+      return;
+    }
+    for (let digit = 0; digit <= 9; digit++) {
+      await page.waitForTimeout(throttleMs);
+      await sweep(`${prefix}${digit}`, depth + 1);
+    }
+  };
+
+  await sweep(subject, 0);
+
+  const detail = skipped.length ? `${subject} (sin trocear: ${skipped.join(', ')})` : subject;
+  logSync({ kind: 'catalog', term, status: skipped.length ? 'error' : 'ok', detail, rows: saved });
+  return { saved, skipped };
 }

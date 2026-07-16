@@ -3,7 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, '..', 'data', 'mikampus.db');
+// MIKAMPUS_DB deja que los tests corran contra una DB desechable en vez de la
+// real (scripts/test-catalog-db.mjs). En uso normal no se define.
+const DB_PATH = process.env.MIKAMPUS_DB ?? path.join(__dirname, '..', 'data', 'mikampus.db');
 
 // node:sqlite (built-in de Node) en vez de better-sqlite3: API síncrona, un
 // solo archivo, sin compilación nativa. Un server local monousuario no gana

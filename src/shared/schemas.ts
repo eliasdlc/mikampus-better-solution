@@ -21,7 +21,9 @@ export function normalizeSeatStatus(raw: string | null | undefined): SeatStatus 
 }
 
 // Un patrón de reunión de una sección. Los horarios en formato "HH:MM" 24h,
-// días como abreviaturas ("Lu", "Ma"...). room puede faltar (clases sin aula).
+// días con el código de dos letras de PeopleSoft ("Mo", "Tu"...) — se traducen
+// a español en la UI, no acá (ver shared/meetings.ts). room puede faltar: el
+// portal escribe "TBA" cuando el aula no está asignada, y eso se guarda null.
 export const meetingSchema = z.object({
   days: z.array(z.string()).default([]),
   start: z.string().nullable().default(null),
@@ -44,7 +46,10 @@ export const scrapedSectionSchema = z.object({
   courseCode: z.string().min(1),
   subject: z.string().min(1),
   catalogNbr: z.string().min(1),
-  title: z.string().min(1),
+  // Nullable a propósito: el class search no expone el título de la materia,
+  // así que el scraper de catálogo entrega null y la capa de DB conserva el
+  // que ya conozca (ver resolveTitle en peoplesoft/catalog.js).
+  title: z.string().min(1).nullable().default(null),
   career: z.string().nullable().default(null),
   credits: z.number().nullable().default(null),
   term: z.string().min(1),
