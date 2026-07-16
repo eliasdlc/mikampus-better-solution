@@ -71,6 +71,22 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* WeeklyGrid: el ancho mínimo de cada columna de día decide la forma. En
+   mobile un día ocupa casi toda la pantalla y la semana se recorre con snap
+   (carrusel de días). Desde sm el mínimo es 0 para que las seis columnas se
+   repartan el ancho disponible y la semana entre entera: con un mínimo fijo,
+   la grilla desbordaba apenas y quedaba un scroll horizontal de 50px que
+   además arrancaba tapando el lunes. Es responsive por diseño (plan §6). */
+.weekly-grid {
+  --day-min: 68vw;
+}
+
+@media (min-width: 640px) {
+  .weekly-grid {
+    --day-min: 0px;
+  }
+}
+
 /* Densidad tipo herramienta: números tabulares en todo lo que sea dato/código
    para que ICC-303 · 4567, horas y GPAs alineen en columnas. */
 .tabular {
