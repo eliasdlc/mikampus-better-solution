@@ -2,11 +2,19 @@ import {
   appStateSchema,
   cartRowSchema,
   catalogResponseSchema,
+  planDetailSchema,
+  planSummarySchema,
+  planToCartResultSchema,
   scheduleResponseSchema,
+  termInfoSchema,
   type AppState,
   type CartRow,
   type CatalogResponse,
+  type PlanDetail,
+  type PlanSummary,
+  type PlanToCartResult,
   type ScheduleResponse,
+  type TermInfo,
 } from '../../../src/shared/schemas.ts';
 import { z } from 'zod';
 
@@ -72,6 +80,69 @@ export function enrollNow() {
 
 // Reusa el endpoint existente: reabre la búsqueda en vivo y clickea "Select"
 // para esa sección. term/career/courseNumber salen del catálogo cacheado.
-export function addToCart(input: { term: string; career: string; courseNumber: string; classNbr: string }) {
+export function addToCart(input: {
+  term: string;
+  career: string;
+  courseNumber: string;
+  classNbr: string;
+  relatedClassNbr?: string;
+}) {
   return send('/api/search/add', 'POST', input) as Promise<{ ok?: boolean; alreadyInCart?: boolean }>;
+}
+
+// ── Planes ──────────────────────────────────────────────────────────────────
+// CRUD contra SQLite: instantáneo, sin portal. La única operación viva es
+// sendPlanToCart, que tarda segundos por materia y publica su progreso en SSE.
+
+export async function fetchTerms(): Promise<TermInfo[]> {
+  const data = await getJSON('/api/terms');
+  return z.object({ terms: z.array(termInfoSchema) }).parse(data).terms;
+}
+
+export async function fetchPlans(): Promise<PlanSummary[]> {
+  const data = await getJSON('/api/plans');
+  return z.object({ plans: z.array(planSummarySchema) }).parse(data).plans;
+}
+
+export async function fetchPlan(id: number): Promise<PlanDetail> {
+  return planDetailSchema.parse(await getJSON(`/api/plans/${id}`));
+}
+
+export async function createPlan(input: { term: string; name: string }): Promise<PlanDetail> {
+  return planDetailSchema.parse(await send('/api/plans', 'POST', input));
+}
+
+export async function renamePlan(id: number, name: string): Promise<PlanDetail> {
+  return planDetailSchema.parse(await send(`/api/plans/${id}`, 'PATCH', { name }));
+}
+
+export function deletePlan(id: number) {
+  return send(`/api/plans/${id}`, 'DELETE');
+}
+
+export async function duplicatePlan(id: number): Promise<PlanDetail> {
+  return planDetailSchema.parse(await send(`/api/plans/${id}/duplicate`, 'POST'));
+}
+
+export async function addPlanItem(
+  planId: number,
+  input: { courseId: number; sectionId?: number | null; note?: string | null }
+): Promise<PlanDetail> {
+  return planDetailSchema.parse(await send(`/api/plans/${planId}/items`, 'POST', input));
+}
+
+export async function updatePlanItem(
+  planId: number,
+  itemId: number,
+  patch: { sectionId?: number | null; note?: string | null; locked?: boolean }
+): Promise<PlanDetail> {
+  return planDetailSchema.parse(await send(`/api/plans/${planId}/items/${itemId}`, 'PATCH', patch));
+}
+
+export async function removePlanItem(planId: number, itemId: number): Promise<PlanDetail> {
+  return planDetailSchema.parse(await send(`/api/plans/${planId}/items/${itemId}`, 'DELETE'));
+}
+
+export async function sendPlanToCart(planId: number): Promise<PlanToCartResult> {
+  return planToCartResultSchema.parse(await send(`/api/plans/${planId}/to-cart`, 'POST'));
 }
