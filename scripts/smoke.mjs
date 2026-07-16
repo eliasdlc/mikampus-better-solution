@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 const PORT = 4188;
 const BASE = `http://localhost:${PORT}`;
 const OUT = 'screenshots/smoke';
-const ROUTES = ['/', '/buscar', '/inscripcion'];
+const ROUTES = ['/', '/buscar', '/horario', '/inscripcion'];
 const WIDTHS = [390, 768, 1440];
 
 const FIXTURES = {
@@ -35,6 +35,7 @@ function startServer() {
 const server = await startServer();
 mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch();
+const failures = [];
 
 try {
   for (const width of WIDTHS) {
@@ -52,11 +53,27 @@ try {
       await page.waitForTimeout(400);
       const name = `${route === '/' ? 'inicio' : route.slice(1)}-${width}`;
       await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true });
-      console.log(`  ✓ ${name}.png`);
+
+      // La página nunca debe scrollear a lo ancho: si el body desborda, es un
+      // layout roto en ese ancho. Se revisaba a ojo y así se coló un nav que
+      // no entraba en 390px — mejor que falle el gate.
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      if (overflow > 1) {
+        failures.push(`${name}: la página desborda ${overflow}px a lo ancho`);
+        console.log(`  ✗ ${name}.png — desborda ${overflow}px`);
+      } else {
+        console.log(`  ✓ ${name}.png`);
+      }
     }
     await context.close();
   }
-  console.log(`\nScreenshots en ${OUT}/ (3 rutas × 3 anchos)`);
+
+  if (failures.length) {
+    console.error(`\n${failures.length} problema(s) de layout:\n  ${failures.join('\n  ')}`);
+    process.exitCode = 1;
+  } else {
+    console.log(`\nScreenshots en ${OUT}/ (${ROUTES.length} rutas × ${WIDTHS.length} anchos), sin desbordes.`);
+  }
 } finally {
   await browser.close();
   server.kill();
