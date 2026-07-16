@@ -22,7 +22,7 @@ npm start                  # levanta mikampus en http://localhost:4173
 
 Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload: `npm run dev` (Vite en :5173 con proxy de `/api` al backend en :4173, que debe estar corriendo con `npm start`).
 
-Sin catálogo real todavía, sembrá datos de prueba para ver la búsqueda: `node scripts/seed-catalog.mjs`.
+Para que la búsqueda tenga contra qué buscar, llená el catálogo desde el portal: `node scripts/sync-catalog.mjs ICC` (ver [De dónde sale el nombre de cada materia](#de-dónde-sale-el-nombre-de-cada-materia)). Tarda unos minutos por subject y solo hace falta una vez por término. `scripts/seed-catalog.mjs` siembra 4 materias **inventadas** y es solo para probar la UI sin portal — no lo corras contra la base real.
 
 ## Stack
 
@@ -66,12 +66,40 @@ node scripts/make-fixture.mjs screenshots/recon-schedule-list.html
 
 ### De dónde sale el nombre de cada materia
 
-El class search **no devuelve el título ni los créditos** de la materia: su
-header viene como `ICC     ICC321 - ` con el título vacío. Por eso la tabla
-`courses` es el diccionario código→título de la app, y lo llenan otras fuentes
-(hoy Mi Horario, que sí los trae; mañana notas y avance). La regla que sostiene
-todo esto: **un barrido de catálogo nunca puede pisar un título real con un
-placeholder** — está cubierto por `scripts/test-catalog-db.mjs`.
+El catálogo son **dos pantallas del portal**, y ninguna alcanza sola:
+
+- **Class Search** da secciones, horarios y cupos, pero no el título: su header
+  viene como `ICC     ICC321 - ` con el título vacío.
+- **Browse Course Catalog** (`SSS_BROWSE_CATLG`, la pestaña hermana en la misma
+  carpeta) da lo contrario: la lista de subjects y el título de cada materia
+  (`ICC223` → "Bases de Datos"), sin secciones. No tiene el límite de 50 porque
+  lista materias, no secciones.
+
+Las dos escriben en `courses` y se unen por el **código canónico** (`ICC-223`).
+Que ese código salga idéntico de las dos es lo único que hace que el join
+funcione, así que la regla vive en un solo lugar, `src/shared/courseCode.ts`, y
+no dentro de cada parser. No es trivial, porque el catálogo real de PUCMM trae:
+
+| Código    | Qué es                          | Trampa                                              |
+|-----------|---------------------------------|-----------------------------------------------------|
+| `ICC223`  | Bases de Datos                  | el caso normal: el subject va pegado al número      |
+| `ICCE01`  | Electiva de ICC                 | el "número" lleva letras                            |
+| `ITE326`  | Introducción Sistemas Digitales | aparece listado bajo ICC, pero es de ITE            |
+| `1ITE326` | Lab. ITE-326                    | el dígito de delante es **otra materia**, no una variante |
+
+De ahí que el subject se derive del código y nunca del grupo donde apareció, y
+que el dígito de prefijo se conserve: quitarlo fusionaba el lab con su teoría.
+
+La otra regla que sostiene esto: **un barrido de catálogo nunca puede pisar un
+título real con un placeholder** (`scripts/test-catalog-db.mjs`). Si el título
+todavía no llegó, el código hace de título y la materia igual es buscable.
+
+Para llenar el catálogo:
+
+```bash
+node scripts/sync-catalog.mjs --subjects    # la lista de subjects (~3 min)
+node scripts/sync-catalog.mjs ICC MAT       # títulos + secciones de un subject
+```
 
 ## Riesgos a tener en cuenta
 
