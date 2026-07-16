@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchCart,
@@ -8,9 +8,30 @@ import {
   setWatcher,
   enrollNow,
 } from '../lib/api.ts';
+import type { CartRow } from '../../../src/shared/schemas.ts';
+import { sectionToBlocks, type Block } from '../lib/grid.ts';
+import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
+import { CourseChip } from '../components/CourseChip.tsx';
 import { SeatBadge } from '../components/SeatBadge.tsx';
 import { LiveOpBanner } from '../components/LiveOpBanner.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
+
+// El carrito enriquecido trae horario por fila: se proyecta en el WeeklyGrid
+// para ver el horario que estás a punto de inscribir — imposible en micampus.
+function cartBlocks(rows: CartRow[]): Block[] {
+  return rows.flatMap((row) =>
+    sectionToBlocks(
+      { code: row.courseCode ?? row.classLabel, title: row.title },
+      {
+        classNbr: row.classNbr ?? `fila-${row.index}`,
+        section: row.section,
+        component: null,
+        instructor: row.instructor,
+        meetings: row.meetings,
+      }
+    )
+  );
+}
 
 export function Inscripcion() {
   const qc = useQueryClient();
@@ -36,6 +57,8 @@ export function Inscripcion() {
 
   const watcherOn = !!state.data?.watcher;
   const scheduledAt = state.data?.schedule?.atISO;
+  const rows = cart.data ?? [];
+  const blocks = useMemo(() => cartBlocks(rows), [rows]);
 
   return (
     <div className="space-y-6">
@@ -51,42 +74,61 @@ export function Inscripcion() {
 
       <LiveOpBanner active={enroll.isPending} message="Ejecutando inscripción del carrito en PeopleSoft…" />
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-        <section className="border-line bg-surface rounded-[var(--radius)] border">
-          <header className="border-line border-b px-4 py-2.5">
-            <h2 className="text-sm font-medium">Carrito</h2>
-          </header>
-          {cart.isLoading ? (
-            <p className="text-muted p-4 text-sm">Leyendo el carrito…</p>
-          ) : cart.error ? (
-            <p className="text-closed p-4 text-sm">{(cart.error as Error).message}</p>
-          ) : (cart.data ?? []).length === 0 ? (
-            <p className="text-muted p-4 text-sm">El carrito está vacío. Agregá materias desde Buscar.</p>
-          ) : (
-            <ul className="divide-line divide-y">
-              {cart.data!.map((row) => (
-                <li key={row.index} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <span className="text-sm">{row.classLabel}</span>
-                  {row.status && <SeatBadge status={row.status} />}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-6">
+          <section className="border-line bg-surface rounded-[var(--radius)] border">
+            <header className="border-line border-b px-4 py-2.5">
+              <h2 className="text-sm font-medium">Carrito</h2>
+            </header>
+            {cart.isLoading ? (
+              <p className="text-muted p-4 text-sm">Leyendo el carrito…</p>
+            ) : cart.error ? (
+              <p className="text-closed p-4 text-sm">{(cart.error as Error).message}</p>
+            ) : rows.length === 0 ? (
+              <p className="text-muted p-4 text-sm">El carrito está vacío. Agregá materias desde Buscar o mandá un plan.</p>
+            ) : (
+              <ul className="divide-line divide-y">
+                {rows.map((row) => (
+                  <li key={row.index} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3">
+                    <CourseChip
+                      code={row.courseCode ?? row.classLabel}
+                      title={row.title}
+                      classNbr={row.classNbr}
+                      size="sm"
+                    />
+                    <span className="flex items-center gap-3">
+                      <span className="text-muted tabular font-mono text-xs">
+                        {row.meetings
+                          .map((m) => (m.start ? `${m.days.join('')} ${m.start}–${m.end}` : 'TBA'))
+                          .join(' · ') || 'Sin horario'}
+                      </span>
+                      {row.status && <SeatBadge status={row.status} />}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* El horario que este carrito inscribiría, choques incluidos. */}
+          {blocks.length > 0 && <WeeklyGrid blocks={blocks} />}
+        </div>
 
         <aside className="space-y-4">
           <div className="border-line bg-surface space-y-3 rounded-[var(--radius)] border p-4">
             <h2 className="text-sm font-medium">Hora de inscripción</h2>
             {scheduledAt ? (
-              <div className="text-sm">
-                Programada para{' '}
-                <span className="font-medium">{new Date(scheduledAt).toLocaleString('es-DO')}</span>
-                <button
-                  onClick={() => unschedule.mutate()}
-                  className="text-closed ml-2 text-xs underline underline-offset-2"
-                >
-                  cancelar
-                </button>
+              <div className="space-y-2">
+                <Countdown toISO={scheduledAt} />
+                <div className="text-muted text-xs">
+                  {new Date(scheduledAt).toLocaleString('es-DO')}
+                  <button
+                    onClick={() => unschedule.mutate()}
+                    className="text-closed ml-2 underline underline-offset-2"
+                  >
+                    cancelar
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="flex flex-col gap-2">
@@ -144,6 +186,28 @@ export function Inscripcion() {
       </div>
 
       <ActivityFeed />
+    </div>
+  );
+}
+
+// Countdown grande hasta el disparo (plan §5.7): los números expresivos de
+// Bricolage y tabulares para que no bailen al cambiar cada segundo.
+function Countdown({ toISO }: { toISO: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const total = Math.max(0, Math.floor((new Date(toISO).getTime() - now) / 1000));
+  const days = Math.floor(total / 86400);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const clock = `${pad(Math.floor((total % 86400) / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+
+  return (
+    <div className="font-display tabular text-3xl font-semibold tracking-tight">
+      {days > 0 && <span>{days}d </span>}
+      {clock}
     </div>
   );
 }

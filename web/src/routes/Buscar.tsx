@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { fetchCatalog, addToCart } from '../lib/api.ts';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { fetchCatalog, addToCart, fetchPlans, addPlanItem } from '../lib/api.ts';
 import { buildIndex } from '../lib/search.ts';
 import { normalizeSeatStatus, type CatalogCourse, type CatalogSection } from '../../../src/shared/schemas.ts';
 import { portalCatalogNbr } from '../../../src/shared/courseCode.ts';
@@ -60,7 +60,6 @@ export function Buscar() {
                 course={course}
                 open={expanded === course.id}
                 onToggle={() => setExpanded(expanded === course.id ? null : course.id)}
-                term={catalog.data!.term ?? ''}
               />
             ))}
           </ul>
@@ -70,7 +69,7 @@ export function Buscar() {
   );
 }
 
-function CourseRow({ course, open, onToggle, term }: { course: CatalogCourse; open: boolean; onToggle: () => void; term: string }) {
+function CourseRow({ course, open, onToggle }: { course: CatalogCourse; open: boolean; onToggle: () => void }) {
   return (
     <li className="border-line bg-surface rounded-[var(--radius)] border">
       <button onClick={onToggle} className="hover:bg-surface-2 flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-100">
@@ -84,7 +83,7 @@ function CourseRow({ course, open, onToggle, term }: { course: CatalogCourse; op
       {open && (
         <div className="border-line divide-line divide-y border-t">
           {course.sections.map((s) => (
-            <SectionRow key={s.id} section={s} course={course} term={term} />
+            <SectionRow key={s.id} section={s} course={course} />
           ))}
         </div>
       )}
@@ -92,10 +91,17 @@ function CourseRow({ course, open, onToggle, term }: { course: CatalogCourse; op
   );
 }
 
-function SectionRow({ section, course, term }: { section: CatalogSection; course: CatalogCourse; term: string }) {
+function SectionRow({ section, course }: { section: CatalogSection; course: CatalogCourse }) {
+  const qc = useQueryClient();
   const add = useMutation({
     mutationFn: () =>
-      addToCart({ term, career: course.career ?? 'GRDO', courseNumber: portalCatalogNbr(course), classNbr: section.classNbr }),
+      addToCart({
+        term: section.term,
+        career: course.career ?? 'GRDO',
+        courseNumber: portalCatalogNbr(course),
+        classNbr: section.classNbr,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cart'] }),
   });
   const meeting = section.meetings[0];
 
@@ -117,6 +123,7 @@ function SectionRow({ section, course, term }: { section: CatalogSection; course
             <StalenessTag at={section.seatsUpdatedAt} />
           </div>
         )}
+        <AddToPlanButton course={course} section={section} />
         <button
           onClick={() => add.mutate()}
           disabled={add.isPending || add.isSuccess}
@@ -126,6 +133,55 @@ function SectionRow({ section, course, term }: { section: CatalogSection; course
         </button>
       </div>
       {add.isError && <p className="text-closed w-full text-xs">{(add.error as Error).message}</p>}
+    </div>
+  );
+}
+
+// "Agregar a un plan" (plan §5.2): desplegable con los planes existentes; la
+// materia entra con esta sección ya elegida. Los planes se piden una sola vez
+// (cache de TanStack) y solo al abrir el menú.
+function AddToPlanButton({ course, section }: { course: CatalogCourse; section: CatalogSection }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const plansQ = useQuery({ queryKey: ['plans'], queryFn: fetchPlans, enabled: open });
+  const add = useMutation({
+    mutationFn: (planId: number) => addPlanItem(planId, { courseId: course.id, sectionId: section.id }),
+    onSuccess: (_, planId) => {
+      qc.invalidateQueries({ queryKey: ['plans'] });
+      qc.invalidateQueries({ queryKey: ['plan', planId] });
+      setOpen(false);
+    },
+  });
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2.5 py-1 text-xs"
+      >
+        {add.isSuccess ? 'En el plan ✓' : 'Al plan ▾'}
+      </button>
+      {open && (
+        <div className="border-line bg-surface absolute right-0 z-30 mt-1 w-52 rounded-[var(--radius)] border">
+          {plansQ.isLoading ? (
+            <p className="text-muted px-3 py-2 text-xs">Cargando…</p>
+          ) : (plansQ.data ?? []).length === 0 ? (
+            <p className="text-muted px-3 py-2 text-xs">No hay planes: creá uno en Planner.</p>
+          ) : (
+            plansQ.data!.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => add.mutate(p.id)}
+                disabled={add.isPending}
+                className="hover:bg-surface-2 block w-full px-3 py-2 text-left text-xs disabled:opacity-50"
+              >
+                {p.name}
+              </button>
+            ))
+          )}
+          {add.error && <p className="text-closed px-3 py-2 text-xs">{(add.error as Error).message}</p>}
+        </div>
+      )}
     </div>
   );
 }

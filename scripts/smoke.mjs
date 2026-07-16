@@ -9,11 +9,88 @@ import { chromium } from 'playwright';
 const PORT = 4188;
 const BASE = `http://localhost:${PORT}`;
 const OUT = 'screenshots/smoke';
-const ROUTES = ['/', '/buscar', '/horario', '/inscripcion'];
+const ROUTES = ['/', '/buscar', '/planner', '/builder', '/horario', '/inscripcion'];
 const WIDTHS = [390, 768, 1440];
+
+// Un plan de mentira con items en los tres estados (grupo elegido con y sin
+// choque, deseada con nota) para que el screenshot del planner muestre la
+// pantalla de verdad y no un estado vacío.
+const PLAN_DETAIL = {
+  id: 1,
+  term: '1930',
+  name: 'Ago–Dic 2026',
+  updatedAt: '2026-07-16 12:00:00',
+  items: [
+    {
+      id: 1,
+      courseId: 9001,
+      code: 'ICC-303',
+      subject: 'ICC',
+      title: 'Estructuras de Datos',
+      credits: 4,
+      career: 'GRDO',
+      catalogNbr: '303',
+      status: 'planned',
+      note: null,
+      locked: true,
+      section: {
+        id: 91,
+        term: '1930',
+        classNbr: '4567',
+        section: '101',
+        component: 'LEC',
+        instructor: 'M. Pérez',
+        meetings: [{ days: ['Mo', 'We'], start: '10:00', end: '13:00', room: 'A-201' }],
+        seats: { status: 'open', open: 5, capacity: 40, waitTotal: 0 },
+        seatsUpdatedAt: '2026-07-16 10:00:00',
+      },
+    },
+    {
+      id: 2,
+      courseId: 9002,
+      code: 'MAT-241',
+      subject: 'MAT',
+      title: 'Cálculo Vectorial',
+      credits: 4,
+      career: 'GRDO',
+      catalogNbr: '241',
+      status: 'planned',
+      note: null,
+      locked: false,
+      section: {
+        id: 92,
+        term: '1930',
+        classNbr: '6100',
+        section: '102',
+        component: 'LEC',
+        instructor: 'J. Núñez',
+        meetings: [{ days: ['We'], start: '12:00', end: '14:00', room: null }],
+        seats: { status: 'waitlist', open: 0, capacity: 35, waitTotal: 3 },
+        seatsUpdatedAt: '2026-07-16 10:00:00',
+      },
+    },
+    {
+      id: 3,
+      courseId: 9003,
+      code: 'FIS-211',
+      subject: 'FIS',
+      title: 'Física Eléctrica',
+      credits: 4,
+      career: 'GRDO',
+      catalogNbr: '211',
+      status: 'desired',
+      note: 'con Rivero si abre',
+      locked: false,
+      section: null,
+    },
+  ],
+};
 
 const FIXTURES = {
   '/api/state': { schedule: { atISO: new Date(Date.now() + 3 * 864e5).toISOString() }, watcher: { intervalMs: 45000 } },
+  '/api/plans': { plans: [{ id: 1, term: '1930', name: 'Ago–Dic 2026', itemCount: 3, credits: 12, updatedAt: '2026-07-16 12:00:00' }] },
+  '/api/plans/1': PLAN_DETAIL,
+  '/api/terms': { terms: [{ term: '1930', startDate: '2026-08-24', endDate: '2026-12-05' }] },
   '/api/cart': {
     rows: [
       {
