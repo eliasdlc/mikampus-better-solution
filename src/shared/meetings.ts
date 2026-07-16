@@ -73,6 +73,38 @@ export function parseMeetings(rawDayTime: string, room: string | null = null): M
   return meetings;
 }
 
+// El class search escribe el componente abreviado ("101-LEC") y Mi Horario lo
+// escribe completo ("Lecture"). Las dos fuentes escriben la MISMA sección
+// (mismo class_nbr), así que sin normalizar se pisarían entre sí en cada sync.
+const COMPONENTS: Record<string, string> = {
+  lecture: 'LEC',
+  lec: 'LEC',
+  practicum: 'PRA',
+  pra: 'PRA',
+  laboratory: 'LAB',
+  lab: 'LAB',
+  seminar: 'SEM',
+  sem: 'SEM',
+};
+
+export function normalizeComponent(raw: string | null | undefined): string | null {
+  const t = (raw ?? '').trim();
+  if (!t) return null;
+  return COMPONENTS[t.toLowerCase()] ?? t.slice(0, 3).toUpperCase();
+}
+
+// "09/01/2026 - 12/07/2026" → { start: "2026-09-01", end: "2026-12-07" }.
+// El portal corre en inglés (languageCd=ENG), así que las fechas son
+// MM/DD/YYYY. El ICS las necesita para acotar la recurrencia semanal.
+export function parseDateRange(raw: string | null | undefined): { start: string | null; end: string | null } {
+  const m = (raw ?? '').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})\s*-\s*(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return { start: null, end: null };
+  return {
+    start: `${m[3]}-${m[1]}-${m[2]}`,
+    end: `${m[6]}-${m[4]}-${m[5]}`,
+  };
+}
+
 // Minutos desde medianoche — el WeeklyGrid posiciona bloques con esto.
 export function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);

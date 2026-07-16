@@ -6,8 +6,12 @@ import { withPage, shutdown } from './session.js';
 import { getCartStatus } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addClassToCart } from './peoplesoft/classSearch.js';
 import { readCatalog } from './peoplesoft/catalog.js';
+import { readSchedule, syncSchedule } from './peoplesoft/mySchedule.js';
 import { db, lastSync } from './db.js';
 import * as scheduler from './scheduler.js';
+
+// El término por defecto sale del .env, que es el que ya usa el resto de la app.
+const DEFAULT_TERM = process.env.TARGET_TERM || null;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
@@ -36,6 +40,39 @@ app.get('/api/catalog', (req, res) => {
   res.set('ETag', etag);
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
   res.json(readCatalog(term));
+});
+
+// Mi Horario. Ojo con el nombre: /api/schedule (abajo) es el scheduler que
+// dispara la inscripción a hora fija, otra cosa completamente. Esto es el
+// horario inscrito, y por eso vive en /api/my-schedule.
+//
+// GET sirve siempre desde SQLite, aunque nunca se haya sincronizado: la UI
+// muestra lo cacheado con su StalenessTag y decide si refrescar. Nunca dispara
+// scraping solo por entrar a la pantalla.
+app.get('/api/my-schedule', (req, res) => {
+  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM;
+  if (!term) return res.status(400).json({ error: 'Falta el término (?term=1930 o TARGET_TERM en .env)' });
+  res.json(readSchedule(term));
+});
+
+// El refresh en vivo es explícito. Tarda (es Playwright detrás), así que va
+// emitiendo pasos por el SSE existente para que el LiveOpBanner los muestre.
+app.post('/api/my-schedule/sync', async (req, res) => {
+  try {
+    const schedule = await withPage((page) =>
+      syncSchedule(page, {
+        onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
+      })
+    );
+    scheduler.emitEvent({
+      type: 'log',
+      message: `Horario actualizado: ${schedule.courses.length} materia(s) inscritas`,
+    });
+    res.json(readSchedule(schedule.term));
+  } catch (err) {
+    scheduler.emitEvent({ type: 'log', message: `Error leyendo el horario: ${err.message}` });
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/enroll', async (req, res) => {

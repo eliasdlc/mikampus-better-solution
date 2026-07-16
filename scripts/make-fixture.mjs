@@ -13,6 +13,8 @@ import path from 'node:path';
 // vida (mueren con la sesión), pero un token de sesión no se commitea igual.
 const SENSITIVE_FIELDS = ['ICSID', 'ICStateNum', 'ICNAVTYPEDROPDOWN'];
 
+// Los nombres de profesores NO se tocan: son públicos, están en el catálogo y
+// los tests los usan. Lo que se va es lo que identifica al estudiante.
 function scrub(html) {
   let out = html;
   for (const field of SENSITIVE_FIELDS) {
@@ -26,6 +28,21 @@ function scrub(html) {
     /(<input[^>]*type="hidden"[^>]*value=")([A-Za-z0-9+/]{24,}={0,2})(")/g,
     '$1SCRUBBED_FOR_FIXTURE$3'
   );
+
+  // Matrícula del estudiante. Aparece en dos formatos: en los href de la barra
+  // de navegación (EMPLID=123) y en el objeto JS PIA_KEYSTRUCT (EMPLID:"123").
+  // El resto de ese objeto (STRM, ACAD_CAREER) se conserva: no identifica a
+  // nadie y es de donde el scraper saca el código de término.
+  out = out.replace(/EMPLID=\d+/g, 'EMPLID=00000000');
+  out = out.replace(/EMPLID:"\d+"/g, 'EMPLID:"00000000"');
+
+  // Nombre del estudiante: el portal lo pinta en la cabecera. Se lee del DOM
+  // y se reemplaza en todo el documento, no solo en ese nodo.
+  const nameMatch = out.match(/id="DERIVED_SSTSNAV_PERSON_NAME"[^>]*>([^<]+)/);
+  if (nameMatch) {
+    const name = nameMatch[1].trim();
+    if (name) out = out.replaceAll(name, 'ESTUDIANTE DE PRUEBA');
+  }
   return out;
 }
 

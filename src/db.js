@@ -63,6 +63,31 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_seats_section ON seats_snapshot(section_id, captured_at);
 
+  -- Qué secciones tengo inscritas en un término. sections guarda TODA sección
+  -- conocida (el catálogo también escribe ahí), así que hace falta marcar
+  -- explícitamente cuáles son mías: sin esto no se puede distinguir "ICC-233
+  -- existe" de "estoy en la 101 de ICC-233".
+  -- Una fila por sección inscrita. status/units son atributos de la materia y
+  -- se repiten en sus componentes (una LEC y su PRA comparten los dos): es
+  -- redundancia acotada (2-3 filas por materia) a cambio de que dibujar el
+  -- horario sea un solo SELECT.
+  CREATE TABLE IF NOT EXISTS enrollments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    term        TEXT NOT NULL,
+    course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    section_id  INTEGER NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL,                -- enrolled / dropped / waitlisted
+    units       REAL,
+    grading     TEXT,
+    grade       TEXT,
+    start_date  TEXT,                         -- ISO; el ICS los necesita para
+    end_date    TEXT,                         -- acotar la recurrencia
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (term, section_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_enrollments_term ON enrollments(term);
+
   CREATE TABLE IF NOT EXISTS plans (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     term        TEXT NOT NULL,

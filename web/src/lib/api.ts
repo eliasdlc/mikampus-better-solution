@@ -2,9 +2,11 @@ import {
   appStateSchema,
   cartRowSchema,
   catalogResponseSchema,
+  scheduleResponseSchema,
   type AppState,
   type CartRow,
   type CatalogResponse,
+  type ScheduleResponse,
 } from '../../../src/shared/schemas.ts';
 import { z } from 'zod';
 
@@ -40,6 +42,19 @@ export async function fetchState(): Promise<AppState> {
 
 export async function fetchCatalog(): Promise<CatalogResponse> {
   return catalogResponseSchema.parse(await getJSON('/api/catalog'));
+}
+
+// Mi Horario, desde cache. Ojo: /api/schedule es el scheduler de inscripción,
+// otra cosa; el horario inscrito vive en /api/my-schedule.
+export async function fetchMySchedule(term?: string): Promise<ScheduleResponse> {
+  const qs = term ? `?term=${encodeURIComponent(term)}` : '';
+  return scheduleResponseSchema.parse(await getJSON(`/api/my-schedule${qs}`));
+}
+
+// Refresh en vivo contra PeopleSoft: tarda segundos y publica su progreso en
+// el feed SSE. La UI no se bloquea esperándolo.
+export async function syncMySchedule(): Promise<ScheduleResponse> {
+  return scheduleResponseSchema.parse(await send('/api/my-schedule/sync', 'POST'));
 }
 
 export function scheduleAt(atISO: string) {
