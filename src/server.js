@@ -44,6 +44,23 @@ app.get('/api/catalog', (req, res) => {
   res.json(readCatalog(term));
 });
 
+// Términos que la DB local conoce (todo lo que tenga secciones), con sus
+// fechas si Mi Horario las trajo: el planner las usa para elegir término al
+// crear un plan y para acotar la recurrencia del export ICS.
+app.get('/api/terms', (req, res) => {
+  const terms = db
+    .prepare(
+      `SELECT s.term, MIN(e.start_date) AS start_date, MAX(e.end_date) AS end_date
+       FROM sections s
+       LEFT JOIN enrollments e ON e.term = s.term
+       GROUP BY s.term
+       ORDER BY s.term DESC`
+    )
+    .all()
+    .map((r) => ({ term: r.term, startDate: r.start_date, endDate: r.end_date }));
+  res.json({ terms });
+});
+
 // Mi Horario. Ojo con el nombre: /api/schedule (abajo) es el scheduler que
 // dispara la inscripción a hora fija, otra cosa completamente. Esto es el
 // horario inscrito, y por eso vive en /api/my-schedule.

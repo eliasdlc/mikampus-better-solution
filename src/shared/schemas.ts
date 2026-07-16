@@ -67,6 +67,10 @@ export type ScrapedSection = z.infer<typeof scrapedSectionSchema>;
 // esto en el cliente.
 export const catalogSectionSchema = z.object({
   id: z.number().int(),
+  // El término viaja por sección (no solo como filtro de la respuesta): las
+  // acciones en vivo (agregar al carrito) lo necesitan, y un catálogo pedido
+  // sin filtro no tiene término global.
+  term: z.string(),
   classNbr: z.string(),
   section: z.string().nullable(),
   component: z.string().nullable(),
@@ -169,6 +173,15 @@ export const scheduleResponseSchema = z.object({
   courses: z.array(scheduleCourseSchema),
 });
 export type ScheduleResponse = z.infer<typeof scheduleResponseSchema>;
+
+// Términos conocidos por la DB local (GET /api/terms). Las fechas vienen de
+// Mi Horario y pueden faltar si ese término nunca se sincronizó.
+export const termInfoSchema = z.object({
+  term: z.string(),
+  startDate: z.string().nullable(),
+  endDate: z.string().nullable(),
+});
+export type TermInfo = z.infer<typeof termInfoSchema>;
 
 // ── Planes de ciclo ──────────────────────────────────────────────────────────
 // Un plan junta materias de un término. 'desired' = sin grupo elegido (chip
