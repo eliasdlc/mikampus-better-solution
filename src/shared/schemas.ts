@@ -183,8 +183,9 @@ export const planItemSchema = z.object({
   code: z.string(),
   title: z.string(),
   credits: z.number().nullable(),
-  // career y catalogNbr viajan porque "enviar al carrito" los necesita para
-  // reconstruir la búsqueda en el portal (POST /api/search/add).
+  // subject, career y catalogNbr viajan porque "enviar al carrito" los
+  // necesita para reconstruir la búsqueda en el portal.
+  subject: z.string(),
   career: z.string().nullable(),
   catalogNbr: z.string(),
   status: planItemStatusSchema,

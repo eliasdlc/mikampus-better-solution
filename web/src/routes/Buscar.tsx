@@ -3,6 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { fetchCatalog, addToCart } from '../lib/api.ts';
 import { buildIndex } from '../lib/search.ts';
 import { normalizeSeatStatus, type CatalogCourse, type CatalogSection } from '../../../src/shared/schemas.ts';
+import { portalCatalogNbr } from '../../../src/shared/courseCode.ts';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { SeatBadge } from '../components/SeatBadge.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
@@ -94,7 +95,7 @@ function CourseRow({ course, open, onToggle, term }: { course: CatalogCourse; op
 function SectionRow({ section, course, term }: { section: CatalogSection; course: CatalogCourse; term: string }) {
   const add = useMutation({
     mutationFn: () =>
-      addToCart({ term, career: course.career ?? 'GRDO', courseNumber: course.catalogNbr, classNbr: section.classNbr }),
+      addToCart({ term, career: course.career ?? 'GRDO', courseNumber: portalCatalogNbr(course), classNbr: section.classNbr }),
   });
   const meeting = section.meetings[0];
 

@@ -63,7 +63,7 @@ export function readPlan(planId) {
   const items = db
     .prepare(
       `SELECT i.id, i.status, i.note, i.locked, i.section_id,
-              c.id AS course_id, c.code, c.title, c.credits, c.career, c.catalog_nbr,
+              c.id AS course_id, c.code, c.subject, c.title, c.credits, c.career, c.catalog_nbr,
               s.class_nbr, s.section, s.component, s.instructor, s.meetings
        FROM plan_items i
        JOIN courses c ON c.id = i.course_id
@@ -76,6 +76,7 @@ export function readPlan(planId) {
       id: row.id,
       courseId: row.course_id,
       code: row.code,
+      subject: row.subject,
       title: row.title,
       credits: row.credits,
       career: row.career,
