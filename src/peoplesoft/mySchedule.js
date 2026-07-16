@@ -90,7 +90,21 @@ export function saveSchedule({ term, courses }) {
 
 // ── Capa de lectura (GET /api/schedule) ────────────────────────────────────
 
+// El término del horario que se sincronizó más recientemente. Sirve para que
+// /horario funcione sin configurar nada: PeopleSoft ya sabe cuál es tu término
+// activo, así que el primer sync lo descubre y desde ahí es el default.
+export function latestScheduledTerm() {
+  const row = db.prepare('SELECT term FROM enrollments ORDER BY updated_at DESC, term DESC LIMIT 1').get();
+  return row?.term ?? null;
+}
+
 export function readSchedule(term) {
+  // Sin término (nunca se sincronizó y no hay TARGET_TERM) no es un error:
+  // es un horario vacío, y la UI ofrece traerlo del portal.
+  if (!term) {
+    return { term: null, generatedAt: new Date().toISOString(), syncedAt: null, courses: [] };
+  }
+
   const rows = db
     .prepare(
       `SELECT e.status, e.units, e.grading, e.grade, e.start_date, e.end_date,
