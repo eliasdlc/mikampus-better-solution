@@ -82,7 +82,7 @@ export function saveSection(s) {
 export function readCatalog(term) {
   const sections = db
     .prepare(
-      `SELECT s.id, s.course_id, s.class_nbr, s.section, s.component, s.instructor, s.meetings,
+      `SELECT s.id, s.course_id, s.term, s.class_nbr, s.section, s.component, s.instructor, s.meetings,
               c.code, c.subject, c.catalog_nbr, c.title, c.career, c.credits
        FROM sections s JOIN courses c ON c.id = s.course_id
        ${term ? 'WHERE s.term = ?' : ''}
@@ -112,6 +112,7 @@ export function readCatalog(term) {
     const seat = latestSeat.get(row.id);
     byCourse.get(row.course_id).sections.push({
       id: row.id,
+      term: row.term,
       classNbr: row.class_nbr,
       section: row.section,
       component: row.component,

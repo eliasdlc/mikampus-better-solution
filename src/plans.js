@@ -21,6 +21,7 @@ function sectionShape(row) {
   const seat = latestSeatStmt.get(row.section_id);
   return {
     id: row.section_id,
+    term: row.section_term,
     classNbr: row.class_nbr,
     section: row.section,
     component: row.component,
@@ -64,7 +65,7 @@ export function readPlan(planId) {
     .prepare(
       `SELECT i.id, i.status, i.note, i.locked, i.section_id,
               c.id AS course_id, c.code, c.subject, c.title, c.credits, c.career, c.catalog_nbr,
-              s.class_nbr, s.section, s.component, s.instructor, s.meetings
+              s.term AS section_term, s.class_nbr, s.section, s.component, s.instructor, s.meetings
        FROM plan_items i
        JOIN courses c ON c.id = i.course_id
        LEFT JOIN sections s ON s.id = i.section_id
