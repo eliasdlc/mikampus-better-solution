@@ -1,4 +1,4 @@
-import type { ScheduleCourse } from '../../../src/shared/schemas.ts';
+import type { Meeting, ScheduleCourse } from '../../../src/shared/schemas.ts';
 import { toMinutes, type DayCode } from '../../../src/shared/meetings.ts';
 
 // Lógica de posicionamiento del WeeklyGrid, aparte del render: son funciones
@@ -16,7 +16,47 @@ export type Block = {
   day: DayCode;
   start: string;
   end: string;
+  // Preview del builder: el bloque se dibuja semitransparente y punteado
+  // (hover sobre una sección no elegida) y no cuenta como choque real.
+  ghost?: boolean;
 };
+
+// Bloques de UNA sección suelta (planner, builder, carrito): las pantallas
+// nuevas componen su grid desde pares materia+sección, no desde el horario
+// inscrito completo como toBlocks.
+export function sectionToBlocks(
+  course: { code: string; title: string },
+  section: {
+    classNbr: string;
+    section: string | null;
+    component: string | null;
+    instructor: string | null;
+    meetings: Meeting[];
+  },
+  { ghost = false }: { ghost?: boolean } = {}
+): Block[] {
+  const blocks: Block[] = [];
+  for (const [mi, meeting] of section.meetings.entries()) {
+    if (!meeting.start || !meeting.end) continue; // TBA no se puede dibujar
+    for (const day of meeting.days) {
+      blocks.push({
+        id: `${ghost ? 'ghost-' : ''}${section.classNbr}-${mi}-${day}`,
+        code: course.code,
+        title: course.title,
+        classNbr: section.classNbr,
+        section: section.section,
+        component: section.component,
+        room: meeting.room,
+        instructor: section.instructor,
+        day: day as DayCode,
+        start: meeting.start,
+        end: meeting.end,
+        ghost,
+      });
+    }
+  }
+  return blocks;
+}
 
 // Aplana materias → secciones → reuniones → un bloque por día. Una sección que
 // se reúne "MoWe 10:00-13:00" son dos bloques, uno en cada columna.
@@ -96,8 +136,9 @@ export function layoutDay(dayBlocks: Block[]): PlacedBlock[] {
     ...block,
     lane: lane.get(block.id)!,
     lanes: lanesPerGroup.get(groupOf.get(block.id)!)!,
+    // Un fantasma no genera choques reales: es un preview, no una elección.
     conflictsWith: sorted
-      .filter((other) => other.id !== block.id && overlaps(block, other))
+      .filter((other) => other.id !== block.id && !other.ghost && !block.ghost && overlaps(block, other))
       .map((other) => other.title),
   }));
 }
