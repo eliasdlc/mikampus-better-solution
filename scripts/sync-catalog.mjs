@@ -50,9 +50,13 @@ try {
   if (fromPensum) {
     console.log('Leyendo tu pensum del advisement report...');
     const { courses, subjects, plan } = await fetchAdvisement(page);
-    savePensum(courses);
-    const pendientes = courses.filter((c) => c.status === 'pending');
-    console.log(`✓ ${plan ?? 'pensum'}: ${courses.length} materias, ${pendientes.length} pendientes`);
+    // El informe repite materias entre bloques de requisito: lo guardado son
+    // los códigos únicos, siempre menos que las filas leídas.
+    const guardadas = savePensum(courses);
+    const pendientes = guardadas.filter((c) => c.status === 'pending');
+    console.log(
+      `✓ ${plan ?? 'pensum'}: ${guardadas.length} materias (${courses.length} filas en el informe), ${pendientes.length} pendientes`
+    );
 
     // Lo pendiente es lo único que se puede inscribir: barrer los subjects de
     // materias ya aprobadas es gastar navegaciones contra el portal para nada.

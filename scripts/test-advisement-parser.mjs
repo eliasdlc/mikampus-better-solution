@@ -1,7 +1,12 @@
 import { chromium } from 'playwright';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
-import { extractAdvisement, parseAdvisement, subjectsFromAdvisement } from '../src/peoplesoft/advisement.js';
+import {
+  extractAdvisement,
+  parseAdvisement,
+  subjectsFromAdvisement,
+  mergeDuplicateCourses,
+} from '../src/peoplesoft/advisement.js';
 
 // Corre el parser del advisement report contra HTML real volcado del portal,
 // sin tocarlo. Misma red que los otros parsers: si PeopleSoft cambia los IDs,
@@ -55,7 +60,50 @@ assert.ok(
   'todo subject es un código corto, sin basura del DOM'
 );
 
+// El informe repite materias entre bloques de requisito. La copia que aparece
+// como candidata de una electiva viene sin icono (= pending) y sin nota: si
+// pisa a la aprobada, la app te manda a inscribir algo ya cursado.
+const merged = mergeDuplicateCourses([
+  { code: 'ICC-201', subject: 'ICC', catalogNbr: '201', title: 'Programación', units: 4,
+    status: 'taken', takenTerm: 'Enero de 2025', grade: 'A' },
+  { code: 'ICC-201', subject: 'ICC', catalogNbr: '201', title: null, units: null,
+    status: 'pending', takenTerm: null, grade: null },
+]);
+assert.equal(merged.length, 1, 'el duplicado colapsa en un solo código');
+assert.equal(merged[0].status, 'taken', 'gana el estado más avanzado, no el último leído');
+assert.equal(merged[0].grade, 'A', 'la copia pendiente no borra la nota');
+assert.equal(merged[0].takenTerm, 'Enero de 2025', 'ni el término cursado');
+
+// El orden inverso tiene que dar lo mismo: la precedencia no puede depender de
+// en qué bloque del informe apareció primero.
+const invertido = mergeDuplicateCourses([
+  { code: 'ICC-201', subject: 'ICC', catalogNbr: '201', title: null, units: null,
+    status: 'pending', takenTerm: null, grade: null },
+  { code: 'ICC-201', subject: 'ICC', catalogNbr: '201', title: 'Programación', units: 4,
+    status: 'taken', takenTerm: 'Enero de 2025', grade: 'A' },
+]);
+assert.equal(invertido[0].status, 'taken', 'la precedencia no depende del orden');
+assert.equal(invertido[0].grade, 'A');
+
+// Una materia que de verdad falta sigue pendiente: la precedencia no puede
+// "aprobar" nada por su cuenta.
+const solaPendiente = mergeDuplicateCourses([
+  { code: 'MAT-101', subject: 'MAT', catalogNbr: '101', title: 'Cálculo', units: 4,
+    status: 'pending', takenTerm: null, grade: null },
+]);
+assert.equal(solaPendiente[0].status, 'pending', 'sin duplicado no cambia nada');
+
+// El pensum real: 98 filas → 84 materias, y las 40 aprobadas sobreviven enteras.
+const dedup = mergeDuplicateCourses(courses);
+assert.ok(dedup.length <= courses.length, 'deduplicar nunca inventa materias');
+assert.equal(
+  dedup.filter((c) => c.status === 'taken').length,
+  courses.filter((c) => c.status === 'taken').length,
+  'ninguna materia aprobada se pierde al colapsar duplicados'
+);
+
 await browser.close();
 console.log(
   `✓ advisement: ${courses.length} materias del pensum, ${subjects.length} subjects (${JSON.stringify(estados)})`
 );
+console.log(`✓ duplicados del informe: ${courses.length} filas → ${dedup.length} materias, aprobadas intactas`);
