@@ -45,6 +45,23 @@ db.exec(`
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- El pensum del estudiante y su avance, leído del advisement report
+  -- (My Academic Requirements). Es QUÉ materias exige su carrera y cuáles ya
+  -- cursó — no es el catálogo: los títulos y las secciones viven en courses
+  -- y sections, y se cruzan por el código canónico.
+  -- Se lee del portal a propósito: una lista de materias mantenida a mano
+  -- envejece en silencio cuando la universidad cambia el plan.
+  CREATE TABLE IF NOT EXISTS pensum (
+    code        TEXT PRIMARY KEY,             -- canónico, ej. "FIS-1FIS139"
+    subject     TEXT NOT NULL,
+    catalog_nbr TEXT NOT NULL,
+    units       REAL,
+    status      TEXT NOT NULL,                -- taken / in_progress / planned / pending
+    taken_term  TEXT,                         -- ej. "Enero de 2025"
+    grade       TEXT,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS sections (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
