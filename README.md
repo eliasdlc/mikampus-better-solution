@@ -1,13 +1,14 @@
-# pucmm-autoenroll
+# pucmm-autoenroll → mikampus
 
-Dashboard local que automatiza la inscripción en PeopleSoft (Campus Solutions) de PUCMM:
+Plataforma local que reemplaza el día a día de micampus.pucmm.edu.do: buscar materias, armar horario, planificar ciclos, inscribirse y ver notas/avance, desde una interfaz propia rápida. PeopleSoft queda como backend invisible al que se le hace scraping vía Playwright. El plan completo está en [`PLAN.md`](./PLAN.md).
 
-1. **Buscar y agregar materias al carrito** — por término, carrera y código exacto de clase.
-2. **Hora fija de pre-matrícula** — dispara el submit del carrito completo justo en el segundo asignado.
-3. **Watcher de cupos** — vigila el carrito y en cuanto una materia llena pasa a "Open" se auto-inscribe y notifica.
-4. **Inscripción manual** — un botón para correr el asistente de inscripción cuando quieras.
+Hoy funciona:
 
-Todo corre sobre una única sesión de Playwright (headless) que el backend mantiene y re-loguea sola si expira.
+1. **Buscar materias** — un input, resultados instantáneos del catálogo cacheado (índice MiniSearch en el cliente, insensible a acentos).
+2. **Carrito e inscripción** — carrito en vivo, hora fija de pre-matrícula, watcher de cupos e inscripción manual.
+3. **Actividad en vivo** — cada operación Playwright reporta su progreso por SSE.
+
+Todo corre sobre una única sesión de Playwright (headless) que el backend mantiene y re-loguea sola si expira. Los datos estables (catálogo) viven en SQLite y se sirven desde disco; solo lo volátil (cupos, carrito) va en vivo.
 
 ## Setup
 
@@ -15,10 +16,27 @@ Todo corre sobre una única sesión de Playwright (headless) que el backend mant
 npm install
 npm run install-browsers   # descarga Chromium para Playwright
 cp .env.example .env       # completa PUCMM_USERNAME y PUCMM_PASSWORD
-npm start                  # levanta el dashboard en http://localhost:4173
+npm run build              # compila la SPA (web/ → public/dist)
+npm start                  # levanta mikampus en http://localhost:4173
 ```
 
-Abrí `http://localhost:4173` en el navegador. No hace falta build ni tocar nada más — es HTML/CSS/JS plano servido por el mismo Express.
+Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload: `npm run dev` (Vite en :5173 con proxy de `/api` al backend en :4173, que debe estar corriendo con `npm start`).
+
+Sin catálogo real todavía, sembrá datos de prueba para ver la búsqueda: `node scripts/seed-catalog.mjs`.
+
+## Stack
+
+- **Backend** — Node + Express, Playwright para el scraping, `node:sqlite` (built-in, sin compilación nativa) para el catálogo y los planes en `data/mikampus.db`.
+- **Frontend** — Vite + React + TypeScript + Tailwind v4, TanStack Query (stale-while-revalidate), React Router, MiniSearch. SPA en `web/`, build servido por el mismo Express.
+- **Contratos** — Zod en `src/shared/schemas.ts`, importado tal cual por backend (TS nativo de Node) y frontend: todo output de scraper se valida en el borde.
+
+## Verificación (gate de cada fase)
+
+```bash
+npm run build && node scripts/check-budget.mjs   # bundle inicial < 250KB gz
+node scripts/bench-search.mjs                    # keystroke → resultados < 16ms
+node scripts/smoke.mjs                            # screenshots a 390/768/1440px
+```
 
 ## Cómo funciona por dentro
 
@@ -28,7 +46,10 @@ Abrí `http://localhost:4173` en el navegador. No hace falta build ni tocar nada
 - `src/peoplesoft/enroll.js` — corre el asistente de inscripción (Step 1→2→3) sobre todo el carrito y reporta éxito/error por materia.
 - `src/peoplesoft/classSearch.js` — busca clases por término/carrera/código y las agrega al carrito, incluyendo los pasos intermedios que PeopleSoft pida (sección relacionada, preferencias de inscripción).
 - `src/scheduler.js` — programación a hora fija + watcher periódico, con notificaciones de escritorio (`notify-send`).
-- `src/server.js` + `public/` — API REST, Server-Sent Events para actividad en vivo, y el dashboard.
+- `src/peoplesoft/catalog.js` — lee/escribe el catálogo en SQLite y (recon pendiente) barre el class search de un término. `GET /api/catalog` lo sirve cacheado con ETag.
+- `src/db.js` — SQLite (`node:sqlite`): catálogo, secciones, snapshots de cupo, planes, notas, holds y `sync_log`.
+- `src/server.js` — API REST, SSE de actividad en vivo, y sirve la SPA compilada (`public/dist`) con fallback de ruteo.
+- `web/` — la SPA React (rutas, componentes transversales `CourseChip`/`SeatBadge`/`StalenessTag`/`LiveOpBanner`, sistema de diseño).
 
 ## Riesgos a tener en cuenta
 
