@@ -39,6 +39,12 @@ export function SSEProvider({ children }: { children: ReactNode }) {
         case 'log':
           push(data.message);
           break;
+        // Un 'notice' es lo mismo que dispara la notificación de escritorio
+        // (ver src/notify.js): el feed y el popup dicen lo mismo porque salen
+        // del mismo evento, no de dos avisos escritos por separado.
+        case 'notice':
+          push(data.body ? `${data.title} — ${data.body}` : data.title, data.level ?? 'info');
+          break;
         case 'cart-status':
           // El backend ya guardó estas filas en SQLite antes de emitirlas: el
           // cache del cliente refleja lo mismo que devolvería un GET.
