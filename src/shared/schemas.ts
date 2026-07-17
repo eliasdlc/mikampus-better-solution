@@ -318,6 +318,57 @@ export const gradesResponseSchema = z.object({
 });
 export type GradesResponse = z.infer<typeof gradesResponseSchema>;
 
+// ── Pénsum y avance ─────────────────────────────────────────────────────────
+
+// Estados que el advisement report sí publica. NO hay 'eligible': el informe no
+// menciona prerequisitos en ninguna parte, así que la elegibilidad no se puede
+// calcular (riesgo previsto en el §8 del plan, confirmado en el recon de Fase 4).
+export const pensumStatusSchema = z.enum(['taken', 'in_progress', 'planned', 'pending']);
+
+export const pensumCourseSchema = z.object({
+  code: z.string(),
+  subject: z.string(),
+  catalogNbr: z.string(),
+  title: z.string().nullable(),
+  units: z.number().nullable(),
+  status: pensumStatusSchema,
+  takenTerm: z.string().nullable(),
+  grade: z.string().nullable(),
+  // Pendiente Y con secciones este término. Es lo más cerca de "elegible" que
+  // se puede afirmar sin prerequisitos: dice que se está ofertando, no que
+  // cumplas los requisitos para tomarla.
+  offered: z.boolean(),
+});
+export type PensumCourse = z.infer<typeof pensumCourseSchema>;
+
+export const pensumResponseSchema = z.object({
+  term: z.string().nullable(),
+  generatedAt: z.string(),
+  syncedAt: z.string().nullable(),
+  courses: z.array(pensumCourseSchema),
+});
+export type PensumResponse = z.infer<typeof pensumResponseSchema>;
+
+// 'unknown' no es "no bloquea": es "el portal no nos lo dijo". Ver
+// peoplesoft/holds.js — sin un hold real que mirar, la severidad no se inventa.
+export const holdSeveritySchema = z.enum(['blocking', 'info', 'unknown']);
+
+export const holdSchema = z.object({
+  code: z.string().nullable(),
+  title: z.string(),
+  description: z.string().nullable(),
+  severity: holdSeveritySchema,
+  link: z.string().nullable(),
+});
+export type Hold = z.infer<typeof holdSchema>;
+
+export const holdsResponseSchema = z.object({
+  generatedAt: z.string(),
+  syncedAt: z.string().nullable(),
+  holds: z.array(holdSchema),
+});
+export type HoldsResponse = z.infer<typeof holdsResponseSchema>;
+
 // Estado del scheduler + watcher (GET /api/state).
 export const appStateSchema = z.object({
   schedule: z.object({ atISO: z.string() }).nullable(),

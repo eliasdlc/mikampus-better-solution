@@ -147,6 +147,8 @@ db.exec(`
     term         TEXT NOT NULL,
     course_id    INTEGER REFERENCES courses(id) ON DELETE SET NULL,
     course_code  TEXT,
+    subject      TEXT,
+    catalog_nbr  TEXT,
     title        TEXT,
     grade        TEXT,
     credits      REAL,
@@ -205,6 +207,11 @@ function addColumnIfMissing(table, column, definition) {
 // El estado de una materia del histórico (cursada / cursando / transferida) lo
 // pide shared/gpa.ts para no meter al índice lo que el portal no cuenta.
 addColumnIfMissing('grades', 'status', "TEXT NOT NULL DEFAULT 'taken'");
+// subject y catalog_nbr se guardan como en `pensum`: el código canónico solo no
+// alcanza, y derivarlo partiendo el string en cada lectura sería una segunda
+// implementación de una regla que ya vive en shared/courseCode.ts.
+addColumnIfMissing('grades', 'subject', 'TEXT');
+addColumnIfMissing('grades', 'catalog_nbr', 'TEXT');
 
 // Registra el resultado de una corrida de scraping para poder mostrar
 // StalenessTag ("actualizado hace 2h") y depurar selectores rotos.
