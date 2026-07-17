@@ -4,7 +4,7 @@ import { fetchAccount, saveAccount } from '../lib/api.ts';
 
 // Cambiar de cuenta desde la página en vez de editar el .env y reiniciar. El
 // backend hace el trabajo pesado (tira la sesión, borra el cache personal); acá
-// solo mandamos las credenciales y, al volver, invalidamos las queries de datos
+// solo mandamos las credenciales y, al volver, descartamos las queries de datos
 // personales para que las pantallas se repinten vacías hasta el próximo sync.
 const PERSONAL_QUERIES = ['cart', 'grades', 'holds', 'my-schedule', 'pensum'];
 
@@ -19,9 +19,12 @@ export function Ajustes() {
     mutationFn: saveAccount,
     onSuccess: (fresh) => {
       queryClient.setQueryData(['account'], fresh);
-      // El cache personal ya no existe en el backend: que las pantallas dejen
-      // de mostrar a la persona anterior.
-      for (const key of PERSONAL_QUERIES) queryClient.invalidateQueries({ queryKey: [key] });
+      // removeQueries, no invalidateQueries: invalidar deja el dato viejo en
+      // cache y lo repinta (stale-while-revalidate) mientras refetchea, así que
+      // la pantalla mostraba a la persona anterior por un instante. Al borrarlo
+      // del cache, ninguna pantalla puede repintarlo: entra en loading y pide de
+      // nuevo, que ya es el backend vacío hasta el próximo sync.
+      for (const key of PERSONAL_QUERIES) queryClient.removeQueries({ queryKey: [key] });
       setPassword('');
     },
   });
