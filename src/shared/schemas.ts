@@ -266,6 +266,58 @@ export const cartRowSchema = z.object({
 });
 export type CartRow = z.infer<typeof cartRowSchema>;
 
+// ── Notas y avance ──────────────────────────────────────────────────────────
+
+// Course History marca cada materia con el alt de un icono: Taken / In
+// Progress / Transferred. 'transferred' son las convalidadas (nota "EXO", 0
+// créditos) y no entran al índice — ver shared/gpa.ts.
+export const courseHistoryStatusSchema = z.enum(['taken', 'in_progress', 'transferred']);
+export type CourseHistoryStatus = z.infer<typeof courseHistoryStatusSchema>;
+
+// Una materia del histórico. `grade` es null mientras se cursa; `term` es la
+// etiqueta en español del portal ("Enero de 2026"), que shared/gpa.ts sabe
+// ordenar.
+export const gradedCourseSchema = z.object({
+  code: z.string().min(1),
+  subject: z.string().min(1),
+  catalogNbr: z.string().min(1),
+  title: z.string().min(1).nullable().default(null),
+  term: z.string().min(1).nullable().default(null),
+  grade: z.string().min(1).nullable().default(null),
+  units: z.number().nullable().default(null),
+  status: courseHistoryStatusSchema,
+});
+export type GradedCourse = z.infer<typeof gradedCourseSchema>;
+
+export const scrapedCourseHistorySchema = z.object({
+  courses: z.array(gradedCourseSchema),
+});
+
+// Los totales del índice. Se calculan (no se scrapean) y reproducen exacto los
+// que publica el portal.
+export const gpaSummarySchema = z.object({
+  unitsTowardGpa: z.number(),
+  gradePoints: z.number(),
+  unitsPassed: z.number(),
+  unitsInProgress: z.number(),
+  gpa: z.number().nullable(),
+});
+
+export const termGradesSchema = gpaSummarySchema.extend({
+  term: z.string(),
+  sortKey: z.string().nullable(),
+  courses: z.array(gradedCourseSchema),
+});
+export type TermGrades = z.infer<typeof termGradesSchema>;
+
+export const gradesResponseSchema = z.object({
+  generatedAt: z.string(),
+  syncedAt: z.string().nullable(),
+  terms: z.array(termGradesSchema),
+  summary: gpaSummarySchema,
+});
+export type GradesResponse = z.infer<typeof gradesResponseSchema>;
+
 // Estado del scheduler + watcher (GET /api/state).
 export const appStateSchema = z.object({
   schedule: z.object({ atISO: z.string() }).nullable(),
