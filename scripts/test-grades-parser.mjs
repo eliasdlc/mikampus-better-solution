@@ -130,6 +130,24 @@ assert.equal(
   'el acumulado del portal no cambia según el término que mires'
 );
 
+// ── Redondea, no trunca (y esto es evidencia, no supuesto) ──────────────────
+// El acumulado no alcanza para distinguirlo: 402/143 = 2.8112 cae en 2.8 tanto
+// redondeando como truncando. Enero de 2025 sí lo distingue.
+await page.setContent(await readFile('fixtures/recon-grades-enero2025.html', 'utf8'));
+const enero2025Portal = parseGradeStats(await page.evaluate(extractGradeStats));
+assert.equal(enero2025Portal.termLabel, 'Enero de 2025');
+assert.equal(enero2025Portal.term.gradePoints, 40);
+assert.equal(enero2025Portal.term.unitsTowardGpa, 15);
+assert.equal(enero2025Portal.term.gpa, 2.7, 'el portal publica 2.700 para 40/15 = 2.6667');
+assert.equal(formatGpa(40 / 15), '2.700', 'redondea: truncar daría 2.600 y contradiría al portal');
+
+// Y nuestro cálculo del término da lo mismo que el portal, hasta el redondeo.
+const enero2025 = terms.find((t) => t.term === 'Enero de 2025');
+assert.equal(enero2025.gradePoints, 40, 'los 40 puntos que dice el portal');
+assert.equal(enero2025.unitsTowardGpa, 15, 'los 15 créditos que dice el portal');
+assert.equal(enero2025.unitsPassed, 11, 'y los 11 aprobados');
+assert.equal(formatGpa(enero2025.gpa), '2.700', 'y el mismo índice publicado');
+
 // ── El contraste que protege al what-if ─────────────────────────────────────
 assert.deepEqual(checkAgainstPortal(summary, statsPast.cumulative), [], 'lo calculado cuadra con lo que publica el portal');
 

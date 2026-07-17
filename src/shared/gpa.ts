@@ -71,12 +71,21 @@ export function summarizeGrades(courses: GradedCourse[]): GpaSummary {
 }
 
 // El portal publica el índice con un decimal de precisión y tres de adorno:
-// dice "2.800" donde 402/143 da 2.8112. Para que el número de mikampus no
-// contradiga al de micampus, lo que se muestra pasa por acá; el cálculo
-// interno (y el delta del what-if) se queda con la precisión completa.
+// dice "2.800" donde 402/143 da 2.8112. El índice oficial del estudiante es
+// ese, así que todo lo que se muestre pasa por acá — mikampus no puede
+// contradecir a micampus sobre su propio índice.
+//
+// Que redondea (y no trunca) está verificado, no asumido: el acumulado no
+// alcanzaba para distinguirlo (2.8112 cae en 2.8 de las dos formas), así que
+// se fue a buscar un término que sí: Enero de 2025 da 40/15 = 2.6667 y el
+// portal lo publica como 2.700, no 2.600 (fixtures/recon-grades-enero2025.html).
+export function roundGpa(gpa: number): number {
+  return Math.round(gpa * 10) / 10;
+}
+
 export function formatGpa(gpa: number | null): string {
   if (gpa === null) return '—';
-  return (Math.round(gpa * 10) / 10).toFixed(3);
+  return roundGpa(gpa).toFixed(3);
 }
 
 // ── Términos ────────────────────────────────────────────────────────────────

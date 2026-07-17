@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 const PORT = 4188;
 const BASE = `http://localhost:${PORT}`;
 const OUT = 'screenshots/smoke';
-const ROUTES = ['/', '/buscar', '/planner', '/builder', '/horario', '/inscripcion'];
+const ROUTES = ['/', '/buscar', '/planner', '/builder', '/horario', '/inscripcion', '/academico', '/holds'];
 const WIDTHS = [390, 768, 1440];
 
 // Un plan de mentira con items en los tres estados (grupo elegido con y sin
@@ -86,7 +86,56 @@ const PLAN_DETAIL = {
   ],
 };
 
+// Notas: un término calificado y uno en curso, que son los dos casos que la
+// pantalla dibuja distinto (índice vs "—" y el simulador).
+const TERM_ENERO = {
+  term: 'Enero de 2026',
+  sortKey: '2026-01',
+  unitsTowardGpa: 8,
+  gradePoints: 24,
+  unitsPassed: 8,
+  unitsInProgress: 0,
+  gpa: 3,
+  courses: [
+    { code: 'ICC-302', subject: 'ICC', catalogNbr: '302', title: 'Programación Funcional', term: 'Enero de 2026', grade: 'A', units: 4, status: 'taken' },
+    { code: 'ICC-352', subject: 'ICC', catalogNbr: '352', title: 'Programación Web', term: 'Enero de 2026', grade: 'B', units: 4, status: 'taken' },
+  ],
+};
+
+const TERM_EN_CURSO = {
+  term: 'Abril de 2026',
+  sortKey: '2026-04',
+  unitsTowardGpa: 0,
+  gradePoints: 0,
+  unitsPassed: 0,
+  unitsInProgress: 4,
+  gpa: null,
+  courses: [
+    { code: 'ICC-303', subject: 'ICC', catalogNbr: '303', title: 'Estructuras de Datos', term: 'Abril de 2026', grade: null, units: 4, status: 'in_progress' },
+  ],
+};
+
 const FIXTURES = {
+  '/api/grades': {
+    generatedAt: new Date().toISOString(),
+    syncedAt: '2026-07-16 12:00:00',
+    terms: [TERM_EN_CURSO, TERM_ENERO],
+    summary: { unitsTowardGpa: 8, gradePoints: 24, unitsPassed: 8, unitsInProgress: 4, gpa: 3 },
+  },
+  '/api/pensum': {
+    term: '1930',
+    generatedAt: new Date().toISOString(),
+    syncedAt: '2026-07-16 12:00:00',
+    courses: [
+      { code: 'ICC-302', subject: 'ICC', catalogNbr: '302', title: 'Programación Funcional', units: 4, status: 'taken', takenTerm: 'Enero de 2026', grade: 'A', offered: false },
+      { code: 'ICC-303', subject: 'ICC', catalogNbr: '303', title: 'Estructuras de Datos', units: 4, status: 'in_progress', takenTerm: null, grade: null, offered: false },
+      { code: 'ICC-321', subject: 'ICC', catalogNbr: '321', title: 'Bases de Datos', units: 4, status: 'pending', takenTerm: null, grade: null, offered: true },
+      { code: 'MAT-241', subject: 'MAT', catalogNbr: '241', title: 'Cálculo Vectorial', units: 4, status: 'pending', takenTerm: null, grade: null, offered: false },
+    ],
+  },
+  // El caso real hoy: sin holds, ya consultado. La pantalla afirma el vacío en
+  // vez de invitar a consultar.
+  '/api/holds': { generatedAt: new Date().toISOString(), syncedAt: '2026-07-16 12:00:00', holds: [] },
   '/api/state': { schedule: { atISO: new Date(Date.now() + 3 * 864e5).toISOString() }, watcher: { intervalMs: 45000 } },
   '/api/plans': { plans: [{ id: 1, term: '1930', name: 'Ago–Dic 2026', itemCount: 3, credits: 12, updatedAt: '2026-07-16 12:00:00' }] },
   '/api/plans/1': PLAN_DETAIL,

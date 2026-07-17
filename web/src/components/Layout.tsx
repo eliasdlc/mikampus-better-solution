@@ -10,6 +10,8 @@ const NAV = [
   { to: '/builder', label: 'Builder' },
   { to: '/horario', label: 'Mi horario' },
   { to: '/inscripcion', label: 'Inscripción' },
+  { to: '/academico', label: 'Notas y avance' },
+  { to: '/holds', label: 'Holds' },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {

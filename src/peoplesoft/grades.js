@@ -276,8 +276,8 @@ export async function fetchGrades(page) {
 }
 
 const insertGradeStmt = db.prepare(`
-  INSERT INTO grades (term, course_code, title, grade, credits, status, captured_at)
-  VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+  INSERT INTO grades (term, course_code, subject, catalog_nbr, title, grade, credits, status, captured_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 `);
 
 // El histórico se reemplaza entero en cada sync: el portal es la verdad, y las
@@ -288,7 +288,7 @@ export function saveGrades(courses) {
   const replace = db.prepare('DELETE FROM grades');
   replace.run();
   for (const c of courses) {
-    insertGradeStmt.run(c.term, c.code, c.title, c.grade, c.units, c.status);
+    insertGradeStmt.run(c.term, c.code, c.subject, c.catalogNbr, c.title, c.grade, c.units, c.status);
   }
   return courses;
 }
@@ -296,7 +296,8 @@ export function saveGrades(courses) {
 export function readGrades() {
   return db
     .prepare(
-      `SELECT term, course_code AS code, title, grade, credits AS units, status
+      `SELECT term, course_code AS code, subject, catalog_nbr AS catalogNbr,
+              title, grade, credits AS units, status
        FROM grades`
     )
     .all();
