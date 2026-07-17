@@ -56,11 +56,13 @@ export function Horario() {
   );
   const queryClient = useQueryClient();
 
-  // Los ciclos entre los que se puede cambiar: el actual, el siguiente y todo
-  // término con horario inscrito. Un término del catálogo sin inscripciones no
-  // entra: no hay horario que mostrar.
+  // El switcher lista todos los ciclos conocidos, del más reciente al más viejo:
+  // el actual, el siguiente, y los pasados (que viven en el histórico de notas
+  // aunque no tengan horario guardado). Elegir uno sin horario muestra el estado
+  // vacío con la opción de traerlo del portal. `terms` viene cronológico
+  // ascendente; se invierte para que el ciclo de hoy quede arriba.
   const termsQ = useQuery({ queryKey: ['term-context'], queryFn: fetchTermContext });
-  const options = (termsQ.data?.terms ?? []).filter((t) => t.hasSchedule || t.isCurrent || t.isNext);
+  const options = [...(termsQ.data?.terms ?? [])].reverse();
 
   // Por defecto, el ciclo actual. Su `term` sirve de valor aunque no tenga STRM
   // (entonces la query pide el default del server, que es también el actual).
@@ -72,13 +74,17 @@ export function Horario() {
 
   const activeTerm = selectedTerm ?? defaultTerm;
   const activeOption = options.find((t) => t.term === activeTerm);
-  // Un término sin STRM (solo etiqueta) no se puede pedir por código: se pide el
-  // default del server, que resuelve al ciclo actual.
   const activeCode = activeOption?.code ?? null;
 
   const { data, isPending, error } = useQuery({
     queryKey: ['my-schedule', activeTerm],
-    queryFn: () => fetchMySchedule(activeCode ?? undefined),
+    // Se pide SIEMPRE el ciclo que muestra el switcher, por su identificador: el
+    // STRM si lo tiene, si no la etiqueta (`activeTerm` ya es code ?? label). Un
+    // ciclo sin STRM (solo en notas, como el actual antes de sincronizarlo) no
+    // matchea ningún enrollment y el server devuelve vacío — que es lo honesto.
+    // Nunca se manda `undefined`: eso dejaba al server adivinar y servir otro
+    // ciclo (el último sincronizado) bajo el badge del actual.
+    queryFn: () => fetchMySchedule(activeTerm ?? undefined),
     enabled: activeTerm != null,
   });
 
@@ -193,8 +199,14 @@ export function Horario() {
         <p className="text-closed text-sm">No se pudo leer el horario guardado: {error.message}</p>
       ) : !courses.length ? (
         // Los vacíos invitan a la acción (regla de copy del sistema de diseño).
+        // El aviso nombra el ciclo: para el próximo dice que aún no inscribiste
+        // nada; para el actual o uno pasado, que no hay horario guardado de él.
         <div className="border-line rounded-[var(--radius)] border border-dashed p-8 text-center">
-          <p className="text-sm">Todavía no hay horario guardado.</p>
+          <p className="text-sm">
+            {activeOption?.isNext
+              ? `Aún no has inscrito materias para el próximo ciclo${activeOption.label ? ` (${activeOption.label})` : ''}.`
+              : `No hay horario guardado${activeOption?.label ? ` de ${activeOption.label}` : ''}.`}
+          </p>
           <button
             type="button"
             onClick={() => sync.mutate()}
