@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchMySchedule, syncMySchedule } from '../lib/api.ts';
+import { fetchMySchedule, syncMySchedule, fetchTermContext } from '../lib/api.ts';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
+import { TermBadge } from '../components/TermBadge.tsx';
 import { toBlocks } from '../lib/grid.ts';
 import { downloadICS } from '../lib/ics.ts';
 import { DAY_LABELS, WEEK_DAYS, toMinutes, type DayCode } from '../../../src/shared/meetings.ts';
@@ -55,16 +56,44 @@ export function Horario() {
   );
   const queryClient = useQueryClient();
 
+  // Los ciclos entre los que se puede cambiar: el actual, el siguiente y todo
+  // término con horario inscrito. Un término del catálogo sin inscripciones no
+  // entra: no hay horario que mostrar.
+  const termsQ = useQuery({ queryKey: ['term-context'], queryFn: fetchTermContext });
+  const options = (termsQ.data?.terms ?? []).filter((t) => t.hasSchedule || t.isCurrent || t.isNext);
+
+  // Por defecto, el ciclo actual. Su `term` sirve de valor aunque no tenga STRM
+  // (entonces la query pide el default del server, que es también el actual).
+  const defaultTerm = termsQ.data?.current?.term ?? termsQ.data?.next?.term ?? options[0]?.term ?? null;
+  const [selectedTerm, setSelectedTerm] = useState<string | null>(null);
+  useEffect(() => {
+    if (selectedTerm == null && defaultTerm != null) setSelectedTerm(defaultTerm);
+  }, [selectedTerm, defaultTerm]);
+
+  const activeTerm = selectedTerm ?? defaultTerm;
+  const activeOption = options.find((t) => t.term === activeTerm);
+  // Un término sin STRM (solo etiqueta) no se puede pedir por código: se pide el
+  // default del server, que resuelve al ciclo actual.
+  const activeCode = activeOption?.code ?? null;
+
   const { data, isPending, error } = useQuery({
-    queryKey: ['my-schedule'],
-    queryFn: () => fetchMySchedule(),
+    queryKey: ['my-schedule', activeTerm],
+    queryFn: () => fetchMySchedule(activeCode ?? undefined),
+    enabled: activeTerm != null,
   });
 
   // El refresh es explícito y va en vivo contra PeopleSoft (tarda segundos).
   // Mientras corre, la pantalla sigue mostrando lo cacheado: nunca se bloquea.
+  // El sync descubre el término real (con su STRM) y salta a mostrarlo.
   const sync = useMutation({
-    mutationFn: syncMySchedule,
-    onSuccess: (fresh) => queryClient.setQueryData(['my-schedule'], fresh),
+    mutationFn: () => syncMySchedule(),
+    onSuccess: (fresh) => {
+      if (fresh.term) {
+        queryClient.setQueryData(['my-schedule', fresh.term], fresh);
+        setSelectedTerm(fresh.term);
+      }
+      queryClient.invalidateQueries({ queryKey: ['term-context'] });
+    },
   });
 
   const courses = data?.courses ?? [];
@@ -74,7 +103,12 @@ export function Horario() {
     <div className="space-y-5">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-semibold tracking-tight">Mi horario</h1>
+          <div className="flex flex-wrap items-baseline gap-2">
+            <h1 className="font-display text-2xl font-semibold tracking-tight">Mi horario</h1>
+            {/* En el papel el ciclo sí va: un horario impreso sin decir de qué
+                ciclo es no sirve de nada. */}
+            <TermBadge label={activeOption?.label ?? null} />
+          </div>
           {courses.length > 0 && (
             <p className="text-muted tabular mt-0.5 text-sm">
               {courses.length} {courses.length === 1 ? 'materia' : 'materias'} · {credits} créditos
@@ -86,6 +120,24 @@ export function Horario() {
             flex-wrap: con el botón de imprimir ya son cuatro y no entran en una
             línea de 390px. */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
+          {options.length > 1 && (
+            <label className="text-muted flex items-center gap-1.5 text-xs">
+              Ciclo
+              <select
+                value={activeTerm ?? ''}
+                onChange={(e) => setSelectedTerm(e.target.value)}
+                className="border-line bg-bg text-fg rounded-[var(--radius)] border px-2 py-1 text-xs"
+              >
+                {options.map((t) => (
+                  <option key={t.term} value={t.term}>
+                    {t.label ?? t.term}
+                    {t.isCurrent ? ' · actual' : t.isNext ? ' · próximo' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <StalenessTag at={data?.syncedAt ?? null} onRefresh={() => sync.mutate()} refreshing={sync.isPending} />
 
           <div className="border-line flex rounded-[var(--radius)] border p-0.5" role="group" aria-label="Vista">

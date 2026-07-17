@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchCatalog, addToCart, fetchPlans, addPlanItem, fetchMySchedule } from '../lib/api.ts';
+import { fetchCatalog, addToCart, fetchPlans, addPlanItem, fetchMySchedule, fetchTermContext } from '../lib/api.ts';
 import { buildIndex } from '../lib/search.ts';
 import { normalizeSeatStatus, type CatalogCourse, type CatalogSection } from '../../../src/shared/schemas.ts';
 import { portalCatalogNbr } from '../../../src/shared/courseCode.ts';
@@ -11,10 +11,17 @@ import { StalenessTag } from '../components/StalenessTag.tsx';
 
 export function Buscar() {
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: () => fetchCatalog() });
-  // El horario ya inscrito: es contra esto que se mide el choque. Se lee de
-  // cache local, así que el filtro es instantáneo — y es justo lo que micampus
-  // no puede hacer.
-  const schedule = useQuery({ queryKey: ['my-schedule'], queryFn: () => fetchMySchedule() });
+  // Buscar planifica el ciclo que viene, así que el choque se mide contra el
+  // horario de ESE término (plan §11: "cruza contra el horario del término
+  // correspondiente"), no contra el que corre hoy. Se lee de cache local: el
+  // filtro es instantáneo — y es justo lo que micampus no puede hacer.
+  const termsQ = useQuery({ queryKey: ['term-context'], queryFn: fetchTermContext });
+  const planningCode = termsQ.data?.next?.code ?? null;
+  const schedule = useQuery({
+    queryKey: ['my-schedule', planningCode],
+    queryFn: () => fetchMySchedule(planningCode!),
+    enabled: planningCode != null,
+  });
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
   const [sinChoque, setSinChoque] = useState(false);
