@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import path from 'node:path';
+import { networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { withPage, shutdown } from './session.js';
@@ -458,8 +459,34 @@ app.get('*', (req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4173;
-const server = app.listen(PORT, () => {
+
+// Por defecto SOLO localhost. app.listen(PORT) sin host escucha en todas las
+// interfaces, así que hasta acá mikampus estaba abierto a la red entera sin que
+// nadie lo hubiera pedido: cualquiera en el mismo WiFi podía abrirlo y usar tu
+// sesión de PeopleSoft — inscribir, dar de baja, leer tus notas. No hay login:
+// la app asume que quien la abre sos vos.
+//
+// HOST=0.0.0.0 lo expone a propósito para abrirlo desde el teléfono (plan §6).
+// Las credenciales siguen sin salir de tu máquina — el .env y la sesión de
+// Playwright viven acá— pero la app queda al alcance de tu red. En el WiFi de
+// tu casa es razonable; en el de la universidad, durante la inscripción, no.
+const HOST = process.env.HOST || '127.0.0.1';
+
+// Las IPs por las que el teléfono puede llegar. Se imprimen porque el usuario
+// las necesita para tipearlas y "averiguá tu IP" no es una instrucción.
+function lanUrls() {
+  return Object.values(networkInterfaces())
+    .flat()
+    .filter((i) => i && i.family === 'IPv4' && !i.internal)
+    .map((i) => `http://${i.address}:${PORT}`);
+}
+
+const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);
+  if (HOST === '0.0.0.0') {
+    for (const url of lanUrls()) console.log(`  · en tu red: ${url}`);
+    console.log('  ⚠ abierto a tu red local: cualquiera en este WiFi puede usar tu sesión del portal.');
+  }
   // Apagado salvo que CATALOG_CRON_AT diga a qué hora (ver src/cron.js).
   startCatalogCron();
 });

@@ -249,6 +249,23 @@ try {
       console.log(secciones && cerrado ? `  ✓ palette-${width}.png (${materias} materias, ${secciones} secciones, Esc cierra)` : `  ✗ palette-${width}`);
     }
 
+    // La PWA se verifica donde importa: en el ancho del teléfono. Que el
+    // manifest y los iconos estén servidos y el service worker tome control —
+    // sin eso el navegador no ofrece instalarla y "es una PWA" es una promesa.
+    if (width === 390) {
+      const manifest = await page.request.get(`${BASE}/manifest.webmanifest`);
+      const icono = await page.request.get(`${BASE}/icon-512.png`);
+      const listo = await page
+        .waitForFunction(() => navigator.serviceWorker?.controller != null || navigator.serviceWorker?.ready, { timeout: 5000 })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!manifest.ok()) failures.push(`pwa: /manifest.webmanifest devolvió ${manifest.status()}`);
+      if (!icono.ok()) failures.push(`pwa: /icon-512.png devolvió ${icono.status()}`);
+      if (!listo) failures.push('pwa: el service worker no quedó activo');
+      console.log(manifest.ok() && icono.ok() && listo ? '  ✓ pwa (manifest, iconos, service worker)' : '  ✗ pwa');
+    }
+
     // La vista de impresión (plan §5.5) es una pantalla más y se verifica igual:
     // emulando el medio print. Sin esto, "sale bien en papel" es una suposición.
     if (width === 1440) {
