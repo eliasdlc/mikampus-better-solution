@@ -17,4 +17,11 @@ export const BROWSE_CATALOG_URL =
 export const SCHEDULE_URL =
   'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SSR_SSENRL_SCHD_W.GBL?FolderPath=PORTAL_ROOT_OBJECT.CO_EMPLOYEE_SELF_SERVICE.HCCC_ENROLLMENT.HC_SSR_SSENRL_SCHD_W_GBL&IsFolder=false&IgnoreParamTempl=FolderPath%2cIsFolder';
 
+// Dar de baja una materia (plan §5.5). Mismo patrón de URL clásica que el
+// carrito y Mi Horario, en la misma carpeta de Enrollment del portal.
+// RECON PENDIENTE: nadie corrió src/recon-drop.js todavía, así que no hay
+// scraper de baja — solo la URL por la que empezar a mirar.
+export const DROP_URL =
+  'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SSR_SSENRL_DROP.GBL?FolderPath=PORTAL_ROOT_OBJECT.CO_EMPLOYEE_SELF_SERVICE.HCCC_ENROLLMENT.HC_SSR_SSENRL_DROP_GBL&IsFolder=false&IgnoreParamTempl=FolderPath%2cIsFolder';
+
 export const CONTENT_FRAME_NAME = 'TargetContent';
