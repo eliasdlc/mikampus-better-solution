@@ -270,12 +270,61 @@ async function findFrame(page, selector, { timeout = 8000 } = {}) {
   return null;
 }
 
+// Pura y testeable: elige, entre los radios que ofrece el selector de término,
+// el del ciclo pedido. Matchea por STRM (el `value` del radio) y, como respaldo,
+// por etiqueta (la fila dice "Septiembre de 2026 | Grado | …"). Sin término
+// pedido toma el primero, que es el default del portal. Si se pidió uno que no
+// está en la lista, es un error explícito: sincronizar otro ciclo en silencio
+// es justo el bug que este paso viene a cerrar.
+export function pickTermRadio(radios, targetTerm) {
+  if (!targetTerm) return radios[0] ?? null;
+  const hit = radios.find((r) => r.value === targetTerm || (r.label ?? '').includes(targetTerm));
+  if (!hit) throw new Error(`El ciclo ${targetTerm} no está disponible en Mi Horario`);
+  return hit;
+}
+
+// El horario vive detrás de un selector de término: cuando hay más de un ciclo
+// activo, PeopleSoft primero pide elegirlo (radios SSR_DUMMY + Continuar) y
+// recién ahí muestra la grilla. Con un solo ciclo va directo, y el selector no
+// aparece: en ese caso no hay nada que elegir y seguimos de largo.
+async function selectTerm(page, targetTerm, onStep) {
+  const selector = await findFrame(page, 'input[name^="SSR_DUMMY_RECV1$sels$"]', { timeout: 4000 });
+  if (!selector) return;
+
+  const radios = await selector.evaluate(() =>
+    [...document.querySelectorAll('input[name^="SSR_DUMMY_RECV1$sels$"]')].map((radio) => {
+      const row = radio.closest('tr');
+      return { value: radio.value, id: radio.id, label: row ? row.textContent.replace(/\s+/g, ' ').trim() : null };
+    })
+  );
+
+  const target = pickTermRadio(radios, targetTerm);
+  if (!target) return;
+
+  onStep('eligiendo el ciclo…');
+  await selector.locator(`[id="${target.id}"]`).check();
+  await page.waitForTimeout(1500);
+
+  // El botón cambia de idioma según el portal ("Continue"/"Continuar"); aceptamos
+  // ambos para no atarnos a la locale.
+  const cont = await findFrame(page, 'input[value="Continue"], input[value="Continuar"]', { timeout: 5000 });
+  if (cont) {
+    await cont.locator('input[value="Continue"], input[value="Continuar"]').first().click();
+    await page.waitForTimeout(8000);
+  }
+}
+
 // Lee el horario inscrito del portal y lo persiste. Devuelve lo guardado.
-export async function syncSchedule(page, { onStep = () => {} } = {}) {
+// targetTerm (STRM) fija qué ciclo sincronizar; sin él, el que el portal dé por
+// defecto (el arranque, cuando todavía no conocemos el STRM del ciclo actual).
+export async function syncSchedule(page, { onStep = () => {}, targetTerm = null } = {}) {
   try {
     onStep('abriendo Mi Horario…');
     await page.goto(SCHEDULE_URL, { waitUntil: 'commit' });
     await page.waitForTimeout(6000);
+
+    // Si el portal ofrece elegir ciclo, elegimos el pedido antes de leer nada.
+    await selectTerm(page, targetTerm, onStep);
 
     // La pantalla abre en vista de calendario; List View es la que parseamos.
     const listRadio = await findFrame(page, '[id="DERIVED_REGFRM1_SSR_SCHED_FORMAT$258$"]');
@@ -293,6 +342,17 @@ export async function syncSchedule(page, { onStep = () => {} } = {}) {
 
     onStep('leyendo materias inscritas…');
     const schedule = toSchedule(await frame.evaluate(extractSchedule));
+
+    // Verificación: si pedimos un ciclo y el portal devolvió otro, no lo
+    // guardamos. Pasaba cuando el portal recuerda un ciclo previo y aterriza en
+    // su grilla sin ofrecer el selector: guardar eso metía Septiembre donde se
+    // pedía Abril. Mejor fallar fuerte que ensuciar el horario con otro término.
+    if (targetTerm && schedule.term && schedule.term !== targetTerm) {
+      throw new Error(
+        `Se pidió el horario del ciclo ${targetTerm} pero PeopleSoft mostró ${schedule.term}. ` +
+          'El portal no ofreció cambiar de ciclo; no se guardó nada.'
+      );
+    }
 
     const saved = saveSchedule(schedule);
     logSync({

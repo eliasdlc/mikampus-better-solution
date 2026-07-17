@@ -74,9 +74,11 @@ export async function fetchMySchedule(term?: string): Promise<ScheduleResponse> 
 }
 
 // Refresh en vivo contra PeopleSoft: tarda segundos y publica su progreso en
-// el feed SSE. La UI no se bloquea esperándolo.
-export async function syncMySchedule(): Promise<ScheduleResponse> {
-  return scheduleResponseSchema.parse(await send('/api/my-schedule/sync', 'POST'));
+// el feed SSE. La UI no se bloquea esperándolo. `term` (STRM) fija qué ciclo
+// sincronizar — el que muestra el switcher; sin él, el server toma el default
+// del portal (el arranque, cuando aún no se conoce el STRM del ciclo actual).
+export async function syncMySchedule(term?: string): Promise<ScheduleResponse> {
+  return scheduleResponseSchema.parse(await send('/api/my-schedule/sync', 'POST', term ? { term } : undefined));
 }
 
 export function scheduleAt(atISO: string) {
