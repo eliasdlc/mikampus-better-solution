@@ -1,21 +1,42 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { fetchCart, fetchState, fetchMySchedule, fetchHolds, fetchPlans } from '../lib/api.ts';
+import { fetchCart, fetchState, fetchMySchedule, fetchHolds, fetchPlans, fetchTermContext } from '../lib/api.ts';
 import { toBlocks, type Block } from '../lib/grid.ts';
 import { agendaFor, nextClass, type NextClass } from '../../../src/shared/agenda.ts';
 import { DAY_LABELS, toMinutes } from '../../../src/shared/meetings.ts';
+import type { TermInfo } from '../../../src/shared/schemas.ts';
 import { courseColor } from '../lib/color.ts';
 import { ago } from '../lib/time.ts';
 import { Countdown } from '../components/Countdown.tsx';
+import { TermBadge } from '../components/TermBadge.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
 
-// Dashboard (plan §5.1): el estado del día en una pantalla. Solo lo accionable
-// hoy — ninguna gráfica decorativa. Todo sale de cache local, así que abre al
-// instante y no toca el portal.
+// Dashboard (plan §5.1 + §11): el estado del día en una pantalla. Regla que
+// ordena todo: el hero y la agenda son SOLO del ciclo actual; lo del ciclo que
+// viene vive en su propia card "Próximo ciclo". Antes se mostraba el último
+// término sincronizado (1930/Septiembre) como "próxima clase" estando en julio
+// — una materia que empieza en tres meses. Ahora el tiempo manda.
 
 export function Dashboard() {
-  const schedule = useQuery({ queryKey: ['my-schedule'], queryFn: () => fetchMySchedule() });
+  const terms = useQuery({ queryKey: ['term-context'], queryFn: fetchTermContext });
+  const current = terms.data?.current ?? null;
+  const next = terms.data?.next ?? null;
+
+  // El horario del ciclo actual. Si el ciclo actual todavía no tiene STRM
+  // conocido (solo vive en grades), no hay horario que pedir: el hero lo dice
+  // en vez de mostrar el de otro término.
+  const schedule = useQuery({
+    queryKey: ['my-schedule', current?.code],
+    queryFn: () => fetchMySchedule(current!.code!),
+    enabled: !!current?.code,
+  });
+  // El del próximo ciclo, para la card (materias ya inscritas).
+  const nextSchedule = useQuery({
+    queryKey: ['my-schedule', next?.code],
+    queryFn: () => fetchMySchedule(next!.code!),
+    enabled: !!next?.code,
+  });
   const cart = useQuery({ queryKey: ['cart'], queryFn: fetchCart });
   const state = useQuery({ queryKey: ['state'], queryFn: fetchState });
   const holds = useQuery({ queryKey: ['holds'], queryFn: fetchHolds });
@@ -38,11 +59,16 @@ export function Dashboard() {
   );
   const proxima = useMemo(() => nextClass(blocks, now), [blocks, now]);
   const hoy = useMemo(() => agendaFor(blocks, now), [blocks, now]);
+  const nextEnrolled = (nextSchedule.data?.courses ?? []).filter((c) => c.status === 'enrolled');
+  const nextPlans = (plans.data ?? []).filter((p) => next && p.term === next.code);
 
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="font-display text-3xl font-semibold tracking-tight">mikampus</h1>
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h1 className="font-display text-3xl font-semibold tracking-tight">mikampus</h1>
+          <TermBadge label={current?.label} />
+        </div>
         <p className="text-muted text-sm">
           {now.toLocaleDateString('es-DO', { weekday: 'long', day: 'numeric', month: 'long' })}
         </p>
@@ -50,7 +76,13 @@ export function Dashboard() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-6">
-          <Hero proxima={proxima} now={now} tieneHorario={blocks.length > 0} planes={plans.data?.length ?? 0} />
+          <Hero
+            proxima={proxima}
+            now={now}
+            current={current}
+            tieneHorario={blocks.length > 0}
+            planes={plans.data?.length ?? 0}
+          />
 
           <section>
             <h2 className="text-muted mb-2 text-xs font-medium tracking-wide uppercase">Hoy</h2>
@@ -59,7 +91,13 @@ export function Dashboard() {
         </div>
 
         <aside className="space-y-3">
-          <CartCard count={cart.data?.rows.length ?? 0} scheduledAt={state.data?.schedule?.atISO ?? null} />
+          <NextCycleCard
+            term={next}
+            enrolled={nextEnrolled.length}
+            planes={nextPlans.length}
+            cartCount={cart.data?.rows.length ?? 0}
+            scheduledAt={state.data?.schedule?.atISO ?? null}
+          />
           <WatcherCard watcher={state.data?.watcher ?? null} />
           <HoldsCard holds={holds.data?.holds ?? []} />
         </aside>
@@ -76,30 +114,45 @@ export function Dashboard() {
 function Hero({
   proxima,
   now,
+  current,
   tieneHorario,
   planes,
 }: {
   proxima: NextClass<Block> | null;
   now: Date;
+  current: TermInfo | null;
   tieneHorario: boolean;
   planes: number;
 }) {
   if (!proxima) {
+    // El hero es del ciclo actual. Sin próxima clase, el mensaje depende de por
+    // qué: entre ciclos, un ciclo que aún no sincronizaste, o uno sin horario.
+    const titulo = !current
+      ? 'Estás entre ciclos'
+      : current.code == null
+        ? `Todavía no sincronizaste ${current.label ?? 'el ciclo actual'}`
+        : tieneHorario
+          ? 'Ninguna de tus materias tiene horario asignado'
+          : `Todavía no tenés horario inscrito en ${current.label ?? 'este ciclo'}`;
+
+    const puedeSincronizar = current != null;
     return (
       <section className="border-line rounded-[var(--radius)] border border-dashed p-6">
-        <p className="font-display text-xl font-semibold tracking-tight">
-          {tieneHorario ? 'Ninguna de tus materias tiene horario asignado' : 'Todavía no tenés horario inscrito'}
-        </p>
+        <p className="font-display text-xl font-semibold tracking-tight text-balance">{titulo}</p>
         <p className="text-muted mt-1 text-sm">
-          {planes > 0
-            ? `Tenés ${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}: elegí grupos y mandalos al carrito.`
-            : 'Armá tu ciclo en el planner y mandá las materias al carrito antes de la hora de inscripción.'}
+          {!current
+            ? 'No hay un ciclo corriendo ahora mismo. Mirá el próximo en la card de la derecha.'
+            : puedeSincronizar && current.code == null
+              ? 'El portal todavía no nos dio el horario de este ciclo. Traelo desde Mi horario.'
+              : planes > 0
+                ? `Tenés ${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}: elegí grupos y mandalos al carrito.`
+                : 'Armá tu ciclo en el planner y mandá las materias al carrito antes de la hora de inscripción.'}
         </p>
         <Link
-          to={planes > 0 ? '/planner' : '/buscar'}
+          to={current != null ? '/horario' : planes > 0 ? '/planner' : '/buscar'}
           className="bg-accent text-accent-fg mt-4 inline-block rounded-[var(--radius)] px-3 py-2 text-sm font-medium"
         >
-          {planes > 0 ? 'Ir al planner' : 'Buscar materias'}
+          {current != null ? 'Ir a mi horario' : planes > 0 ? 'Ir al planner' : 'Buscar materias'}
         </Link>
       </section>
     );
@@ -195,18 +248,49 @@ function Card({ to, title, children }: { to: string; title: string; children: Re
   );
 }
 
-function CartCard({ count, scheduledAt }: { count: number; scheduledAt: string | null }) {
+// El próximo ciclo (plan §11): lo que viene, separado de lo de hoy. Reúne lo
+// ya inscrito para ese término, el estado del plan/carrito y el countdown de la
+// inscripción. Es donde una materia futura (ICC-233 en 1930) aparece como
+// futuro, no como próxima clase.
+function NextCycleCard({
+  term,
+  enrolled,
+  planes,
+  cartCount,
+  scheduledAt,
+}: {
+  term: TermInfo | null;
+  enrolled: number;
+  planes: number;
+  cartCount: number;
+  scheduledAt: string | null;
+}) {
+  // Una línea que resume dónde estás parado para el ciclo que viene, en orden
+  // de compromiso: inscrito > carrito > plan > nada.
+  const estado =
+    enrolled > 0
+      ? `${enrolled} ${enrolled === 1 ? 'materia inscrita' : 'materias inscritas'}`
+      : cartCount > 0
+        ? `${cartCount} en el carrito`
+        : planes > 0
+          ? `${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}`
+          : 'sin materias todavía';
+
   return (
-    <Card to="/inscripcion" title="Carrito">
-      <div className="font-display tabular mt-1 text-2xl font-semibold">{count}</div>
-      <div className="text-muted text-xs">{count === 1 ? 'materia lista' : 'materias listas'} para inscribir</div>
+    <Card to="/inscripcion" title="Próximo ciclo">
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <TermBadge label={term?.label ?? null} />
+      </div>
+      <div className="font-display mt-2 text-lg font-semibold tracking-tight">{estado}</div>
       {scheduledAt ? (
         <div className="border-line mt-3 border-t pt-3">
           <Countdown toISO={scheduledAt} size="sm" />
-          <div className="text-muted mt-0.5 text-xs">para el disparo automático</div>
+          <div className="text-muted mt-0.5 text-xs">para el disparo de inscripción</div>
         </div>
       ) : (
-        <div className="text-muted border-line mt-3 border-t pt-3 text-xs">Sin disparo programado</div>
+        <div className="text-muted border-line mt-3 border-t pt-3 text-xs">
+          {cartCount > 0 ? 'carrito listo · sin disparo programado' : 'sin disparo programado'}
+        </div>
       )}
     </Card>
   );
