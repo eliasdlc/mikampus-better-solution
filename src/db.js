@@ -164,12 +164,16 @@ db.exec(`
     captured_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- Holds del Centro del Alumnado. severity nace 'unknown' a propósito: el
+  -- estudiante no tiene holds, así que el recon no pudo ver si el portal dice
+  -- cuáles bloquean la inscripción (ver peoplesoft/holds.js). 'unknown' no es
+  -- "no bloquea": es "el portal no nos lo dijo".
   CREATE TABLE IF NOT EXISTS holds (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     code         TEXT,
     title        TEXT NOT NULL,
     description  TEXT,
-    severity     TEXT NOT NULL DEFAULT 'info', -- blocking / info
+    severity     TEXT NOT NULL DEFAULT 'unknown', -- blocking / info / unknown
     link         TEXT,
     captured_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
