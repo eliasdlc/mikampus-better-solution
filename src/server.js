@@ -10,6 +10,7 @@ import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './pe
 import { readCatalog } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
+import { readTerms, reconcileTerms, currentTermCode } from './terms.js';
 import { fetchGrades, saveGrades, readGrades, termSummaries } from './peoplesoft/grades.js';
 import { fetchAdvisement, savePensum, readPensum } from './peoplesoft/advisement.js';
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
@@ -92,21 +93,13 @@ app.get('/api/catalog', (req, res) => {
   res.json(readCatalog(term));
 });
 
-// Términos que la DB local conoce (todo lo que tenga secciones), con sus
-// fechas si Mi Horario las trajo: el planner las usa para elegir término al
-// crear un plan y para acotar la recurrencia del export ICS.
+// Términos que la DB local conoce, ya resueltos contra hoy: cuál ciclo corre
+// (current), cuál sigue (next) y de cada uno su etiqueta, fechas y si tiene
+// horario o secciones. El Dashboard y /horario leen current/next para no
+// mezclar ciclos; el planner usa la lista (filtrando a plannable) para elegir
+// término y acotar la recurrencia del ICS.
 app.get('/api/terms', (req, res) => {
-  const terms = db
-    .prepare(
-      `SELECT s.term, MIN(e.start_date) AS start_date, MAX(e.end_date) AS end_date
-       FROM sections s
-       LEFT JOIN enrollments e ON e.term = s.term
-       GROUP BY s.term
-       ORDER BY s.term DESC`
-    )
-    .all()
-    .map((r) => ({ term: r.term, startDate: r.start_date, endDate: r.end_date }));
-  res.json({ terms });
+  res.json(readTerms());
 });
 
 // Mi Horario. Ojo con el nombre: /api/schedule (abajo) es el scheduler que
@@ -121,7 +114,13 @@ app.get('/api/terms', (req, res) => {
 // vacío (no un error): la pantalla ofrece traerlo del portal, y el sync
 // descubre el término activo sin que nadie lo configure.
 app.get('/api/my-schedule', (req, res) => {
-  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM || latestScheduledTerm();
+  // Sin término pedido, el default es el ciclo actual — no el último que se
+  // sincronizó, que era el bug: 1930 (Septiembre) entraba como "actual" en
+  // julio. Si el ciclo actual todavía no tiene STRM (solo vive en grades),
+  // currentTermCode devuelve null y recién ahí caen los fallbacks.
+  const term = req.query.term
+    ? String(req.query.term)
+    : currentTermCode() ?? DEFAULT_TERM ?? latestScheduledTerm();
   res.json(readSchedule(term));
 });
 
@@ -134,6 +133,10 @@ app.post('/api/my-schedule/sync', async (req, res) => {
         onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
       })
     );
+    // El sync trajo el STRM del término y su etiqueta: reconciliar cruza ese
+    // código con la etiqueta que grades ya usaba, así el modelo de tiempo sabe
+    // a qué ciclo pertenece lo recién inscrito.
+    reconcileTerms();
     scheduler.emitEvent({
       type: 'log',
       message: `Horario actualizado: ${schedule.courses.length} materia(s) inscritas`,
@@ -163,6 +166,8 @@ app.post('/api/grades/sync', async (req, res) => {
   try {
     const { courses, mismatches } = await withPage((page) => fetchGrades(page));
     saveGrades(courses);
+    // Las notas traen etiquetas de término que el modelo de tiempo no conocía.
+    reconcileTerms();
     // Si el índice calculado no cuadra con el que publica el portal, la
     // universidad cambió una regla: se avisa fuerte en vez de mostrar un
     // número plausible y falso (ver checkAgainstPortal).
@@ -512,6 +517,11 @@ function lanUrls() {
     .filter((i) => i && i.family === 'IPv4' && !i.internal)
     .map((i) => `http://${i.address}:${PORT}`);
 }
+
+// Cruza los términos que ya están en disco (STRM inscritos + etiquetas de
+// grades) al arrancar, para que el modelo de tiempo esté al día sin esperar a
+// una sync. Es barato: son pocas filas y upserts idempotentes.
+reconcileTerms();
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);

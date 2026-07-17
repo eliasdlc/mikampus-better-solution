@@ -143,6 +143,10 @@ export type ScrapedEnrollment = z.infer<typeof scrapedEnrollmentSchema>;
 
 export const scrapedScheduleSchema = z.object({
   term: z.string().min(1),
+  // La etiqueta en español del término ("Septiembre de 2026"), de la cabecera de
+  // Mi Horario. Es lo que cruza el STRM con el vocabulario de grades. Nullable:
+  // si el portal cambia el layout de la cabecera, el horario igual se guarda.
+  termLabel: z.string().nullable().default(null),
   courses: z.array(scrapedEnrollmentSchema),
 });
 export type ScrapedSchedule = z.infer<typeof scrapedScheduleSchema>;
@@ -174,14 +178,34 @@ export const scheduleResponseSchema = z.object({
 });
 export type ScheduleResponse = z.infer<typeof scheduleResponseSchema>;
 
-// Términos conocidos por la DB local (GET /api/terms). Las fechas vienen de
-// Mi Horario y pueden faltar si ese término nunca se sincronizó.
+// Términos conocidos por la DB local (GET /api/terms), ya resueltos contra hoy.
+// `term` es el identificador que usa el resto de la app: el STRM si lo hay, si
+// no la etiqueta. `code` es el STRM (null si el término solo vive en grades) y
+// `label` la etiqueta en español. Las fechas vienen de Mi Horario y pueden
+// faltar. hasSchedule = tiene horario inscrito; hasSections = es plannable.
 export const termInfoSchema = z.object({
   term: z.string(),
+  code: z.string().nullable(),
+  label: z.string().nullable(),
   startDate: z.string().nullable(),
   endDate: z.string().nullable(),
+  sortKey: z.string().nullable(),
+  isCurrent: z.boolean(),
+  isNext: z.boolean(),
+  hasSchedule: z.boolean(),
+  hasSections: z.boolean(),
 });
 export type TermInfo = z.infer<typeof termInfoSchema>;
+
+// El contexto de tiempo que devuelve /api/terms además de la lista: cuál ciclo
+// corre hoy y cuál es el siguiente (o null si no se puede resolver). Es lo que
+// el Dashboard y /horario leen para no mezclar ciclos.
+export const termContextSchema = z.object({
+  terms: z.array(termInfoSchema),
+  current: termInfoSchema.nullable(),
+  next: termInfoSchema.nullable(),
+});
+export type TermContext = z.infer<typeof termContextSchema>;
 
 // ── Planes de ciclo ──────────────────────────────────────────────────────────
 // Un plan junta materias de un término. 'desired' = sin grupo elegido (chip

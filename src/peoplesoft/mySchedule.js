@@ -7,6 +7,7 @@ import {
   normalizeEnrollStatus,
 } from '../shared/schemas.ts';
 import { parseMeetings, normalizeComponent, parseDateRange } from '../shared/meetings.ts';
+import { upsertTerm } from '../terms.js';
 
 // Horario inscrito. Recon en fixtures/recon-schedule-list.html (ver
 // src/recon-schedule.js). Lo que confirmó, y que manda en el diseño de acá:
@@ -41,14 +42,21 @@ const upsertEnrollmentStmt = db.prepare(`
 // término antes de reinsertar: si diste de baja una materia, un upsert solo la
 // dejaría para siempre en tu horario. Va en transacción para que el horario
 // nunca se lea a medio reemplazar.
-export function saveSchedule({ term, courses }) {
+export function saveSchedule({ term, termLabel = null, courses }) {
   db.exec('BEGIN');
   try {
     db.prepare('DELETE FROM enrollments WHERE term = ?').run(term);
 
+    // La ventana del término sale de las fechas de sus secciones (MTG_DATES):
+    // el primer inicio y el último fin. Es lo que el modelo de tiempo usa para
+    // saber si el ciclo corre hoy.
+    let start = null;
+    let end = null;
     let saved = 0;
     for (const course of courses) {
       for (const s of course.sections) {
+        if (s.startDate && (start === null || s.startDate < start)) start = s.startDate;
+        if (s.endDate && (end === null || s.endDate > end)) end = s.endDate;
         const sectionId = saveSection(
           scrapedSectionSchema.parse({
             courseCode: course.courseCode,
@@ -80,6 +88,10 @@ export function saveSchedule({ term, courses }) {
         saved++;
       }
     }
+    // El STRM, su etiqueta y su ventana en la misma fila: acá se cruzan los dos
+    // vocabularios de término. La etiqueta puede venir null (layout cambiado);
+    // upsertTerm la deriva de la fecha de inicio como respaldo.
+    upsertTerm({ code: term, label: termLabel, startDate: start, endDate: end });
     db.exec('COMMIT');
     return saved;
   } catch (err) {
@@ -165,6 +177,11 @@ export function extractSchedule() {
   // El código de término no se muestra en pantalla (la cabecera dice
   // "Septiembre de 2026"), pero el portal lo deja en un objeto JS.
   const term = (document.documentElement.innerHTML.match(/STRM:"(\d+)"/) ?? [])[1] ?? null;
+  // La etiqueta en español sí está en pantalla, en la cabecera del estudiante:
+  // "Septiembre de 2026 | Grado | Pont. Universidad…". Es la que cruza el STRM
+  // con el vocabulario de grades, así que la capturamos junto al código.
+  const termLabel =
+    (strip(document.querySelector('[id^="DERIVED_REGFRM1_SSR_STDNTKEY_DESCR$"]')).split('|')[0] || '').trim() || null;
 
   const courses = [];
   for (const box of document.querySelectorAll('[id^="ACE_STDNT_ENRL_SSV2$"]')) {
@@ -205,13 +222,14 @@ export function extractSchedule() {
     });
   }
 
-  return { term, courses };
+  return { term, termLabel, courses };
 }
 
 // Convierte lo extraído en el contrato Zod del horario.
 function toSchedule(raw) {
   return scrapedScheduleSchema.parse({
     term: raw.term,
+    termLabel: raw.termLabel ?? null,
     courses: raw.courses.map((c) => ({
       courseCode: `${c.subject}-${c.catalogNbr}`,
       subject: c.subject,
