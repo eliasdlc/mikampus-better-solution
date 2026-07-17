@@ -36,12 +36,28 @@ function scrub(html) {
   out = out.replace(/EMPLID=\d+/g, 'EMPLID=00000000');
   out = out.replace(/EMPLID:"\d+"/g, 'EMPLID:"00000000"');
 
-  // Nombre del estudiante: el portal lo pinta en la cabecera. Se lee del DOM
-  // y se reemplaza en todo el documento, no solo en ese nodo.
-  const nameMatch = out.match(/id="DERIVED_SSTSNAV_PERSON_NAME"[^>]*>([^<]+)/);
-  if (nameMatch) {
-    const name = nameMatch[1].trim();
-    if (name) out = out.replaceAll(name, 'ESTUDIANTE DE PRUEBA');
+  // Nombre del estudiante. No hay un solo nodo que lo tenga: las pantallas
+  // clásicas lo ponen en la cabecera de navegación, pero el Student Center no
+  // la trae y solo lo pinta en su título ("ELÍAS's Student Center"). Con una
+  // sola fuente, ese volcado se escapa entero.
+  const NAME_SOURCES = [
+    /id="DERIVED_SSTSNAV_PERSON_NAME"[^>]*>([^<]+)/,
+    /id="DERIVED_SSS_SCL_TITLE1[^"]*"[^>]*>([^<]+?)'s Student Center/,
+  ];
+  for (const source of NAME_SOURCES) {
+    const nameMatch = out.match(source);
+    if (!nameMatch) continue;
+    const name = nameMatch[1].replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    if (name) {
+      out = out.replaceAll(name, 'ESTUDIANTE DE PRUEBA');
+      // Y cada parte por separado, porque el portal usa el nombre de pila solo
+      // en varios lugares. Si de paso se lleva el apellido de un profesor que
+      // se llame igual, no importa: un fixture con un profesor anonimizado de
+      // más es barato; uno con el nombre del estudiante, no.
+      for (const part of name.split(' ')) {
+        if (part.length >= 3) out = out.replaceAll(new RegExp(`\\b${part}\\b`, 'gi'), 'ESTUDIANTE');
+      }
+    }
   }
   return out;
 }
