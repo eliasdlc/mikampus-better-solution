@@ -45,6 +45,23 @@ db.exec(`
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- El diccionario de términos: el único lugar donde el código STRM del portal
+  -- ("1930") y la etiqueta en español ("Septiembre de 2026") viven en la misma
+  -- fila. Sin esto la app tiene dos vocabularios de término que nada cruza —
+  -- STRM en sections/enrollments/plans, etiquetas en grades/pensum — y no puede
+  -- decir cuál ciclo corre hoy. Las fechas (de enrollments/MTG_DATES) permiten
+  -- resolver "actual" vs "siguiente" contra la fecha real; cuando faltan, la
+  -- resolución cae a una ventana derivada de la etiqueta (ver shared/terms.ts).
+  -- code puede ser NULL: un término que solo aparece en grades (un ciclo pasado
+  -- o futuro que nunca se scrapeó del class search) se conoce por su etiqueta.
+  CREATE TABLE IF NOT EXISTS terms (
+    code        TEXT UNIQUE,                 -- STRM, ej. "1930" (NULL si solo hay etiqueta)
+    label       TEXT PRIMARY KEY,            -- ej. "Septiembre de 2026"
+    start_date  TEXT,                        -- ISO; de enrollments si Mi Horario lo trajo
+    end_date    TEXT,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   -- El pensum del estudiante y su avance, leído del advisement report
   -- (My Academic Requirements). Es QUÉ materias exige su carrera y cuáles ya
   -- cursó — no es el catálogo: los títulos y las secciones viven en courses
