@@ -29,7 +29,9 @@ const t0 = performance.now();
 const index = buildIndex(courses);
 const buildMs = performance.now() - t0;
 
-const queries = ['calc', 'fisica', 'estruct', 'ICC-303', 'redes', 'programacion', 'algebra', 'datos'];
+// 'ICC3' es como se busca un código a medio escribir (y como PUCMM los
+// escribe): tiene que traer los ICC-3xx y hacerlo dentro del frame igual.
+const queries = ['calc', 'fisica', 'estruct', 'ICC-303', 'ICC3', 'redes', 'programacion', 'algebra', 'datos'];
 let worst = 0;
 let sum = 0;
 for (const q of queries) {

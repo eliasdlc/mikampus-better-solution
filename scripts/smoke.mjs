@@ -220,6 +220,35 @@ try {
         console.log(`  ✓ ${name}.png`);
       }
     }
+    // El ⌘K tiene que ser operable sin mouse (gate del plan §6.5), así que se
+    // verifica sin mouse: abrir, escribir, entrar a una materia con Enter y
+    // salir con Esc. El catálogo sale de la DB real (ICC del término 1930).
+    await page.goto(BASE + '/horario', { waitUntil: 'networkidle' });
+    await page.keyboard.press('Control+k');
+    await page.waitForSelector('[cmdk-input]', { timeout: 3000 });
+    await page.keyboard.type('icc3');
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${OUT}/palette-${width}.png`, fullPage: true });
+
+    const materias = await page.locator('[cmdk-item][data-value^="course-"]').count();
+    if (materias === 0) {
+      failures.push(`palette-${width}: ⌘K no encontró materias para "icc3"`);
+      console.log(`  ✗ palette-${width}.png — sin resultados`);
+    } else {
+      // Enter sobre el item seleccionado entra a las secciones de la materia.
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(300);
+      const secciones = await page.locator('[cmdk-item][data-value^="section-"]').count();
+      await page.screenshot({ path: `${OUT}/palette-secciones-${width}.png`, fullPage: true });
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(200);
+      const cerrado = (await page.locator('[cmdk-input]').count()) === 0;
+
+      if (!secciones) failures.push(`palette-${width}: Enter no abrió las secciones de la materia`);
+      if (!cerrado) failures.push(`palette-${width}: Esc no cerró el overlay`);
+      console.log(secciones && cerrado ? `  ✓ palette-${width}.png (${materias} materias, ${secciones} secciones, Esc cierra)` : `  ✗ palette-${width}`);
+    }
+
     await context.close();
   }
 
