@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { chromium } from 'playwright';
+import { getCredentials } from './credentials.js';
 
 const SIGNON_URL = 'https://micampus.pucmm.edu.do/psp/cs92pro/?cmd=login&languageCd=ENG';
 
@@ -18,9 +19,12 @@ async function fillVerified(page, selector, value, attempts = 3) {
 }
 
 export async function loginToPeopleSoft({ headless = true } = {}) {
-  const { PUCMM_USERNAME, PUCMM_PASSWORD } = process.env;
-  if (!PUCMM_USERNAME || !PUCMM_PASSWORD) {
-    throw new Error('Faltan PUCMM_USERNAME / PUCMM_PASSWORD en .env');
+  // Las credenciales salen de credentials.js (data/account.json si la página
+  // cambió de cuenta, si no el .env), no de process.env directo: así cambiar de
+  // cuenta desde la web tiene efecto sin reiniciar el proceso.
+  const { username, password } = getCredentials();
+  if (!username || !password) {
+    throw new Error('No hay cuenta configurada: seteala en Ajustes o en el .env');
   }
 
   const browser = await chromium.launch({ headless });
@@ -36,8 +40,8 @@ export async function loginToPeopleSoft({ headless = true } = {}) {
   // valor tras llenar, reintentando si el portal lo alteró.
   await page.waitForSelector('#userid', { state: 'visible' });
   await page.waitForSelector('#pwd', { state: 'visible' });
-  await fillVerified(page, '#userid', PUCMM_USERNAME);
-  await fillVerified(page, '#pwd', PUCMM_PASSWORD);
+  await fillVerified(page, '#userid', username);
+  await fillVerified(page, '#pwd', password);
   await page.click('input[name="Submit"]');
 
   // PeopleSoft no dispara una sola navegación limpia tras el submit: hace

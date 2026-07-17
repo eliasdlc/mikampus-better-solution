@@ -8,6 +8,7 @@ import { Horario } from './routes/Horario.tsx';
 import { Inscripcion } from './routes/Inscripcion.tsx';
 import { Academico } from './routes/Academico.tsx';
 import { Holds } from './routes/Holds.tsx';
+import { Ajustes } from './routes/Ajustes.tsx';
 
 export function App() {
   return (
@@ -21,6 +22,7 @@ export function App() {
         <Route path="/inscripcion" element={<Inscripcion />} />
         <Route path="/academico" element={<Academico />} />
         <Route path="/holds" element={<Holds />} />
+        <Route path="/ajustes" element={<Ajustes />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

@@ -10,6 +10,8 @@ import {
   gradesResponseSchema,
   pensumResponseSchema,
   holdsResponseSchema,
+  accountInfoSchema,
+  type AccountInfo,
   type AppState,
   type CartResponse,
   type CatalogResponse,
@@ -186,4 +188,17 @@ export async function fetchHolds(): Promise<HoldsResponse> {
 
 export async function syncHolds(): Promise<HoldsResponse> {
   return holdsResponseSchema.parse(await send('/api/holds/sync', 'POST'));
+}
+
+// ── Cuenta ───────────────────────────────────────────────────────────────────
+// La contraseña nunca vuelve del backend: fetchAccount solo trae el usuario.
+export async function fetchAccount(): Promise<AccountInfo> {
+  return accountInfoSchema.parse(await getJSON('/api/account'));
+}
+
+// Guardar cambia la cuenta en caliente: el backend tira la sesión y limpia el
+// cache personal. Devuelve la cuenta nueva ya vigente.
+export async function saveAccount(input: { username: string; password: string }): Promise<AccountInfo> {
+  const data = await send('/api/account', 'POST', input);
+  return accountInfoSchema.parse((data as { account?: unknown }).account);
 }

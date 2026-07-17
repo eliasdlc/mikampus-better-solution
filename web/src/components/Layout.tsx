@@ -13,6 +13,7 @@ const NAV = [
   { to: '/inscripcion', label: 'Inscripción' },
   { to: '/academico', label: 'Notas y avance' },
   { to: '/holds', label: 'Holds' },
+  { to: '/ajustes', label: 'Ajustes' },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
