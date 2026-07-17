@@ -249,6 +249,20 @@ try {
       console.log(secciones && cerrado ? `  ✓ palette-${width}.png (${materias} materias, ${secciones} secciones, Esc cierra)` : `  ✗ palette-${width}`);
     }
 
+    // La vista de impresión (plan §5.5) es una pantalla más y se verifica igual:
+    // emulando el medio print. Sin esto, "sale bien en papel" es una suposición.
+    if (width === 1440) {
+      await page.emulateMedia({ media: 'print' });
+      await page.goto(BASE + '/horario', { waitUntil: 'networkidle' });
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${OUT}/horario-impresion.png`, fullPage: true });
+
+      const navVisible = await page.locator('aside nav').isVisible();
+      if (navVisible) failures.push('horario-impresion: la navegación se imprime');
+      console.log(navVisible ? '  ✗ horario-impresion.png — imprime el nav' : '  ✓ horario-impresion.png');
+      await page.emulateMedia({ media: 'screen' });
+    }
+
     await context.close();
   }
 

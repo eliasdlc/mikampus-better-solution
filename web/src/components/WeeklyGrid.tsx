@@ -82,7 +82,7 @@ export function WeeklyGrid({ blocks, animate = false }: { blocks: Block[]; anima
           de días" del plan); en desktop las columnas entran juntas.
           scrollPaddingLeft compensa la canaleta sticky: sin esto, el snap alinea
           el día contra el borde del contenedor y la canaleta se lo come. */}
-      <div className="snap-x snap-mandatory overflow-x-auto" style={{ scrollPaddingLeft: GUTTER }}>
+      <div className="weekly-grid-scroll snap-x snap-mandatory overflow-x-auto" style={{ scrollPaddingLeft: GUTTER }}>
         <div
           className="weekly-grid grid"
           style={{
