@@ -10,7 +10,7 @@ import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './pe
 import { readCatalog } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
-import { readTerms, reconcileTerms, currentTermCode } from './terms.js';
+import { readTerms, reconcileTerms } from './terms.js';
 import { fetchGrades, saveGrades, readGrades, termSummaries } from './peoplesoft/grades.js';
 import { fetchAdvisement, savePensum, readPensum } from './peoplesoft/advisement.js';
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
@@ -114,13 +114,17 @@ app.get('/api/terms', (req, res) => {
 // vacío (no un error): la pantalla ofrece traerlo del portal, y el sync
 // descubre el término activo sin que nadie lo configure.
 app.get('/api/my-schedule', (req, res) => {
-  // Sin término pedido, el default es el ciclo actual — no el último que se
-  // sincronizó, que era el bug: 1930 (Septiembre) entraba como "actual" en
-  // julio. Si el ciclo actual todavía no tiene STRM (solo vive en grades),
-  // currentTermCode devuelve null y recién ahí caen los fallbacks.
+  // Sin término pedido, el default es el IDENTIFICADOR del ciclo actual (su STRM
+  // si lo hay, si no su etiqueta) — nunca el último sincronizado, que era el bug:
+  // 1930 (Septiembre) entraba como "actual" en julio. Ojo: cuando el ciclo actual
+  // solo vive en grades (etiqueta sin STRM), readSchedule(etiqueta) no matchea
+  // ningún enrollment y devuelve vacío. Eso es lo correcto: un horario vacío del
+  // ciclo actual, no el de otro término disfrazado de actual. latestScheduledTerm
+  // recién entra si hoy cae entre ciclos (no hay `current`).
+  const current = readTerms().current;
   const term = req.query.term
     ? String(req.query.term)
-    : currentTermCode() ?? DEFAULT_TERM ?? latestScheduledTerm();
+    : current?.term ?? DEFAULT_TERM ?? latestScheduledTerm();
   res.json(readSchedule(term));
 });
 
