@@ -82,7 +82,10 @@ export function Horario() {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Los controles no van al papel: la hoja es el horario, no la app.
+            flex-wrap: con el botón de imprimir ya son cuatro y no entran en una
+            línea de 390px. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
           <StalenessTag at={data?.syncedAt ?? null} onRefresh={() => sync.mutate()} refreshing={sync.isPending} />
 
           <div className="border-line flex rounded-[var(--radius)] border p-0.5" role="group" aria-label="Vista">
@@ -108,6 +111,17 @@ export function Horario() {
             className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2.5 py-1 text-xs transition-colors duration-100 disabled:opacity-40"
           >
             Exportar .ics
+          </button>
+
+          {/* Imprime lo que estás viendo (semana o lista): el papel no puede
+              contradecir la pantalla desde la que apretaste el botón. */}
+          <button
+            type="button"
+            onClick={() => window.print()}
+            disabled={!courses.length}
+            className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2.5 py-1 text-xs transition-colors duration-100 disabled:opacity-40"
+          >
+            Imprimir
           </button>
         </div>
       </header>

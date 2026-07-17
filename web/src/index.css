@@ -117,6 +117,66 @@ body {
   animation: block-land 180ms ease-out;
 }
 
+/* Vista de impresión (plan §5.5): el horario en papel, sin el cromo de la app.
+   Es una hoja para pegar en la nevera, no una captura de pantalla. */
+@media print {
+  /* Papel blanco y tinta negra pase lo que pase: el modo oscuro imprimiría una
+     página negra entera. .dark también, o el toggle decidiría cómo sale la hoja.
+     Los colores de materia sobreviven — son el dato, no decoración. */
+  :root,
+  .dark {
+    color-scheme: light;
+    --bg: #fff;
+    --fg: #000;
+    --surface: #fff;
+    --surface-2: #fff;
+    --line: #b4b4b4;
+    --muted: #454545;
+  }
+
+  /* El navegador descarta fondos e íconos al imprimir para ahorrar tinta: sin
+     esto, los bloques del grid salen todos blancos y el horario se vuelve
+     ilegible (que es justo lo que se está imprimiendo). */
+  * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  @page {
+    /* Una semana son seis columnas: apaisado o no entra. */
+    size: landscape;
+    margin: 10mm;
+  }
+
+  /* Sin el nav, el shell no puede seguir siendo la grilla de dos columnas: un
+     aside en display:none deja de ser grid item, así que el <main> se corría a
+     la PRIMERA columna — la de 220px del sidebar— y el horario salía aplastado
+     en una tira contra el margen izquierdo. */
+  .app-shell {
+    display: block !important;
+  }
+
+  /* La semana entera en la hoja: ni carrusel de días ni scroll (en papel no se
+     scrollea) ni canaleta sticky. */
+  .weekly-grid {
+    --day-min: 0px;
+  }
+
+  .weekly-grid .sticky {
+    position: static;
+  }
+
+  /* En papel no se scrollea: lo que quede fuera del contenedor, se pierde. */
+  .weekly-grid-scroll {
+    overflow: visible !important;
+  }
+
+  /* Una clase partida entre dos hojas no se lee. */
+  .weekly-grid > * {
+    break-inside: avoid;
+  }
+}
+
 /* Motion mínimo y funcional; respetar prefers-reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
   *,

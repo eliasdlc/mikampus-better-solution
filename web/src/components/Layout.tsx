@@ -37,11 +37,12 @@ export function Layout({ children }: { children: ReactNode }) {
   // que el WeeklyGrid (que es ancho a propósito y scrollea solo) empujaba la
   // columna y desbordaba la página entera en tablet.
   return (
-    <div className="min-h-full md:grid md:grid-cols-[220px_minmax(0,1fr)]">
+    <div className="app-shell min-h-full md:grid md:grid-cols-[220px_minmax(0,1fr)]">
       {/* En mobile esto es una barra superior. Con cuatro secciones el nav ya
           no entra al lado del logo en 390px, así que baja a su propia línea
           (order + w-full) en vez de desbordar la página a lo ancho. */}
-      <aside className="border-line bg-surface flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b px-4 py-3 md:h-screen md:flex-nowrap md:flex-col md:items-stretch md:justify-start md:border-r md:border-b-0 md:px-4 md:py-5">
+      {/* print:hidden — la navegación no existe en papel (plan §5.5). */}
+      <aside className="border-line bg-surface flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b px-4 py-3 print:hidden md:h-screen md:flex-nowrap md:flex-col md:items-stretch md:justify-start md:border-r md:border-b-0 md:px-4 md:py-5">
         <div className="flex items-center gap-2 md:mb-4">
           <span className="font-display text-lg font-semibold tracking-tight">mikampus</span>
         </div>
@@ -87,7 +88,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8 md:py-8">{children}</main>
+      <main className="mx-auto w-full max-w-5xl px-4 py-6 print:max-w-none print:p-0 md:px-8 md:py-8">{children}</main>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
