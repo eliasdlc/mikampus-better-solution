@@ -161,7 +161,8 @@ app.get('/api/pensum', (req, res) => {
   // lo trae y esta tabla no compite con el diccionario.
   const courses = db
     .prepare(
-      `SELECT p.code, p.subject, p.catalog_nbr, p.units, p.status, p.taken_term, p.grade, c.title
+      `SELECT p.code, p.subject, p.catalog_nbr, p.units, p.status, p.taken_term, p.grade,
+              c.id AS course_id, c.title
        FROM pensum p LEFT JOIN courses c ON c.code = p.code
        ORDER BY p.code`
     )
@@ -175,6 +176,9 @@ app.get('/api/pensum', (req, res) => {
       takenTerm: r.taken_term,
       grade: r.grade,
       title: r.title ?? null,
+      // Sin courseId no se puede agregar al plan: son las materias del pensum
+      // que el catálogo local todavía no conoce.
+      courseId: r.course_id ?? null,
       offered: r.status === 'pending' && offered.has(r.code),
     }));
 

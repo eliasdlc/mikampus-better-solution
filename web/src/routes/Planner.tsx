@@ -8,6 +8,7 @@ import {
   fetchCatalog,
   fetchPlan,
   fetchPlans,
+  fetchPensum,
   fetchTerms,
   removePlanItem,
   sendPlanToCart,
@@ -34,6 +35,67 @@ const meetingSummary = (section: { meetings: Meeting[] }) =>
   section.meetings
     .map((m) => (m.start ? `${m.days.join('')} ${m.start}–${m.end}` : 'TBA'))
     .join(' · ') || 'Sin horario';
+
+// "Pendientes de tu pénsum" (plan §5.3): lo que te falta y se está ofertando
+// este término, a un click de entrar al plan.
+//
+// El plan lo llamaba "elegibles". No lo son: elegible querría decir que cumplís
+// los requisitos, y el portal no publica prerequisitos en ninguna parte (§8 del
+// plan, confirmado en el recon de Fase 4). Acá "se oferta" = te falta y tiene
+// grupos publicados. La app dice lo que sabe, no lo que le gustaría saber.
+function PendientesDelPensum({
+  term,
+  yaEnElPlan,
+  onAdd,
+}: {
+  term: string;
+  yaEnElPlan: number[];
+  onAdd: (courseId: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const pensumQ = useQuery({ queryKey: ['pensum', term], queryFn: () => fetchPensum(term) });
+
+  const sugeridas = (pensumQ.data?.courses ?? []).filter(
+    // Sin courseId no hay con qué agregarla: es una materia del pénsum que el
+    // catálogo local todavía no conoce.
+    (c) => c.status === 'pending' && c.offered && c.courseId !== null && !yaEnElPlan.includes(c.courseId)
+  );
+
+  if (!pensumQ.data?.syncedAt || !sugeridas.length) return null;
+
+  return (
+    <section className="border-line rounded-[var(--radius)] border">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="hover:bg-surface-2 flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-100"
+      >
+        <span className="text-sm font-medium">Pendientes de tu pénsum</span>
+        <span className="text-muted flex items-center gap-2 text-xs">
+          <span className="tabular">{sugeridas.length} se ofertan</span>
+          <span aria-hidden>{open ? '▲' : '▼'}</span>
+        </span>
+      </button>
+      {open && (
+        <ul className="border-line divide-line divide-y border-t">
+          {sugeridas.map((c) => (
+            <li key={c.code} className="flex min-h-11 items-center justify-between gap-3 px-3 py-2">
+              <CourseChip code={c.code} title={c.title ?? c.code} size="sm" />
+              <button
+                type="button"
+                onClick={() => onAdd(c.courseId!)}
+                className="border-line hover:bg-surface-2 shrink-0 rounded-[var(--radius)] border px-2.5 py-1 text-xs transition-colors duration-100"
+              >
+                agregar
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 export function Planner() {
   const qc = useQueryClient();
@@ -85,6 +147,14 @@ export function Planner() {
     mutationFn: () => sendPlanToCart(planId!),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cart'] }),
   });
+  // Agregar desde el panel de pendientes es lo mismo que agregar desde el
+  // buscador: mismo applyDetail, o los créditos de la lista de planes quedarían
+  // desactualizados.
+  const addItemById = useMutation({
+    mutationFn: (courseId: number) => addPlanItem(planId!, { courseId }),
+    onSuccess: applyDetail,
+  });
+
   const addItem = useMutation({
     mutationFn: (course: CatalogCourse) => addPlanItem(planId!, { courseId: course.id }),
     onSuccess: applyDetail,
@@ -235,6 +305,12 @@ export function Planner() {
               />
             )}
             {addItem.error && <p className="text-closed text-xs">{(addItem.error as Error).message}</p>}
+
+            <PendientesDelPensum
+              term={plan.term}
+              yaEnElPlan={plan.items.map((i) => i.courseId)}
+              onAdd={(courseId) => addItemById.mutate(courseId)}
+            />
 
             {plan.items.length === 0 ? (
               <p className="text-muted text-sm">

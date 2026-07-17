@@ -1,30 +1,61 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchCatalog, addToCart, fetchPlans, addPlanItem } from '../lib/api.ts';
+import { fetchCatalog, addToCart, fetchPlans, addPlanItem, fetchMySchedule } from '../lib/api.ts';
 import { buildIndex } from '../lib/search.ts';
 import { normalizeSeatStatus, type CatalogCourse, type CatalogSection } from '../../../src/shared/schemas.ts';
 import { portalCatalogNbr } from '../../../src/shared/courseCode.ts';
+import { meetingSetsOverlap } from '../../../src/shared/meetings.ts';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { SeatBadge } from '../components/SeatBadge.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 
 export function Buscar() {
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: () => fetchCatalog() });
+  // El horario ya inscrito: es contra esto que se mide el choque. Se lee de
+  // cache local, así que el filtro es instantáneo — y es justo lo que micampus
+  // no puede hacer.
+  const schedule = useQuery({ queryKey: ['my-schedule'], queryFn: () => fetchMySchedule() });
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [sinChoque, setSinChoque] = useState(false);
 
   const courses = catalog.data?.courses ?? [];
   const byId = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
   const index = useMemo(() => buildIndex(courses), [courses]);
 
+  // Solo lo inscrito ocupa tiempo: una materia dada de baja no choca con nada.
+  const ocupado = useMemo(
+    () =>
+      (schedule.data?.courses ?? [])
+        .filter((c) => c.status === 'enrolled')
+        .flatMap((c) => c.sections.flatMap((s) => s.meetings)),
+    [schedule.data]
+  );
+  const terminoInscrito = schedule.data?.term ?? null;
+
+  // Una sección solo puede chocar con un horario del MISMO término: decir que
+  // una clase de Septiembre pisa una de Abril no significa nada. Sin horario
+  // de ese término, la app no opina.
+  const choca = useMemo(
+    () => (section: CatalogSection) =>
+      !!terminoInscrito && section.term === terminoInscrito && meetingSetsOverlap(section.meetings, ocupado),
+    [terminoInscrito, ocupado]
+  );
+
   const results: CatalogCourse[] = useMemo(() => {
-    if (!q.trim()) return courses.slice(0, 50);
-    return index
-      .search(q)
-      .map((r) => byId.get(r.id as number))
-      .filter((c): c is CatalogCourse => !!c)
-      .slice(0, 50);
-  }, [q, index, byId, courses]);
+    const base = !q.trim()
+      ? courses
+      : (index
+          .search(q)
+          .map((r) => byId.get(r.id as number))
+          .filter((c): c is CatalogCourse => !!c) as CatalogCourse[]);
+    // El filtro se aplica ANTES de cortar a 50: si no, una materia sin choque
+    // se perdería solo por caer 51ª entre las que sí chocan.
+    const filtrado = sinChoque ? base.filter((c) => c.sections.some((s) => !choca(s))) : base;
+    return filtrado.slice(0, 50);
+  }, [q, index, byId, courses, sinChoque, choca]);
+
+  const puedeFiltrar = ocupado.length > 0;
 
   return (
     <div className="space-y-5">
@@ -40,6 +71,27 @@ export function Buscar() {
         placeholder="Estructuras de datos, ICC-303, Pérez…"
         className="border-line bg-surface focus:border-accent w-full rounded-[var(--radius)] border px-4 py-3 text-base outline-none"
       />
+
+      {/* Filtros como chips togglables, no formulario (plan §5.2). */}
+      {puedeFiltrar && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSinChoque((v) => !v)}
+            aria-pressed={sinChoque}
+            className={`min-h-8 rounded-full px-3 py-1 text-xs transition-colors duration-100 ${
+              sinChoque ? 'bg-accent text-accent-fg font-medium' : 'border-line text-muted hover:text-fg border'
+            }`}
+          >
+            Sin choque con mi horario
+          </button>
+          {sinChoque && (
+            <span className="text-muted text-xs">
+              se ocultan las secciones que pisan tus {ocupado.length} bloque(s) inscritos
+            </span>
+          )}
+        </div>
+      )}
 
       {catalog.isLoading ? (
         <p className="text-muted text-sm">Cargando catálogo…</p>
@@ -60,6 +112,7 @@ export function Buscar() {
                 course={course}
                 open={expanded === course.id}
                 onToggle={() => setExpanded(expanded === course.id ? null : course.id)}
+                ocultarSeccion={sinChoque ? choca : undefined}
               />
             ))}
           </ul>
@@ -69,20 +122,36 @@ export function Buscar() {
   );
 }
 
-function CourseRow({ course, open, onToggle }: { course: CatalogCourse; open: boolean; onToggle: () => void }) {
+function CourseRow({
+  course,
+  open,
+  onToggle,
+  ocultarSeccion,
+}: {
+  course: CatalogCourse;
+  open: boolean;
+  onToggle: () => void;
+  // Con el filtro "sin choque" activo, las secciones que pisan el horario no se
+  // listan: la cuenta de secciones tiene que decir cuántas quedan, no cuántas
+  // hay, o el desplegable contradice al encabezado.
+  ocultarSeccion?: (s: CatalogSection) => boolean;
+}) {
+  const visibles = ocultarSeccion ? course.sections.filter((s) => !ocultarSeccion(s)) : course.sections;
+  const ocultas = course.sections.length - visibles.length;
   return (
     <li className="border-line bg-surface rounded-[var(--radius)] border">
       <button onClick={onToggle} className="hover:bg-surface-2 flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-100">
         <CourseChip code={course.code} title={course.title} />
         <span className="text-muted flex items-center gap-3 text-xs whitespace-nowrap">
           {course.credits != null && <span className="tabular">{course.credits} cr</span>}
-          <span>{course.sections.length} secc.</span>
+          <span>{visibles.length} secc.</span>
+          {ocultas > 0 && <span className="text-waitlist">{ocultas} chocan</span>}
           <span aria-hidden>{open ? '▲' : '▼'}</span>
         </span>
       </button>
       {open && (
         <div className="border-line divide-line divide-y border-t">
-          {course.sections.map((s) => (
+          {visibles.map((s) => (
             <SectionRow key={s.id} section={s} course={course} />
           ))}
         </div>
