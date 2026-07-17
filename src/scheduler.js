@@ -1,4 +1,4 @@
-import { getCartStatus } from './peoplesoft/cart.js';
+import { syncCart, readCart } from './peoplesoft/cart.js';
 import { enrollFromCart } from './peoplesoft/enroll.js';
 import { withPage } from './session.js';
 import { notify } from './notify.js';
@@ -18,13 +18,18 @@ export const emitEvent = emit;
 
 const state = {
   schedule: null, // { atISO, timer }
-  watcher: null, // { intervalMs, timer, lastStatus }
+  watcher: null, // { intervalMs, timer, lastCheckAt }
 };
 
 export function getState() {
   return {
     schedule: state.schedule ? { atISO: state.schedule.atISO } : null,
-    watcher: state.watcher ? { intervalMs: state.watcher.intervalMs } : null,
+    // lastCheckAt nace null y no en el arranque: "activo, sin chequear todavía"
+    // y "activo, chequeado hace un minuto" son estados distintos y el Dashboard
+    // los muestra distinto.
+    watcher: state.watcher
+      ? { intervalMs: state.watcher.intervalMs, lastCheckAt: state.watcher.lastCheckAt ?? null }
+      : null,
   };
 }
 
@@ -95,12 +100,16 @@ export function startWatcher(intervalMs = 45000) {
   const tick = async () => {
     let rows;
     try {
-      rows = await withPage((page) => getCartStatus(page));
+      // El watcher ya está leyendo el carrito cada 45s: que su tick alimente el
+      // cache deja el resto de la app fresca sin pedirle nada extra al portal.
+      rows = await withPage((page) => syncCart(page));
     } catch (err) {
       emit({ type: 'log', message: `Error leyendo el carrito: ${err.message}` });
       return;
     }
-    emit({ type: 'cart-status', rows });
+    // El watcher puede haberse apagado mientras este tick esperaba al portal.
+    if (state.watcher) state.watcher.lastCheckAt = new Date().toISOString();
+    emit({ type: 'cart-status', rows, syncedAt: readCart().syncedAt });
 
     let openedSomething = false;
     for (const row of rows) {
@@ -119,7 +128,7 @@ export function startWatcher(intervalMs = 45000) {
 
   tick().catch(() => {});
   const timer = setInterval(() => tick().catch(() => {}), intervalMs);
-  state.watcher = { intervalMs, timer };
+  state.watcher = { intervalMs, timer, lastCheckAt: null };
   emit({ type: 'watcher-set', enabled: true, intervalMs });
   emit({ type: 'log', message: `Watcher activado (cada ${Math.round(intervalMs / 1000)}s)` });
 }

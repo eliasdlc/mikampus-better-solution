@@ -180,6 +180,26 @@ db.exec(`
     captured_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- El carrito de inscripción, cacheado. Es el estado completo del carrito del
+  -- portal en un momento dado, no una acumulación: cada sync borra y reescribe,
+  -- porque una fila que ya no está en el portal tampoco está en el carrito.
+  -- Existe para que abrir una pantalla nunca dispare Playwright (el Dashboard
+  -- lo lee en cada carga); la lectura en vivo es explícita.
+  CREATE TABLE IF NOT EXISTS cart_rows (
+    idx          INTEGER PRIMARY KEY,          -- posición en el carrito del portal
+    class_label  TEXT NOT NULL,
+    course_code  TEXT,
+    title        TEXT NOT NULL,
+    section      TEXT,
+    class_nbr    TEXT,
+    instructor   TEXT,
+    credits      REAL,
+    campus       TEXT,
+    meetings     TEXT,                         -- JSON: [{days,start,end,room}]
+    status       TEXT,                         -- open / waitlist / closed
+    captured_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS sync_log (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     kind         TEXT NOT NULL,                -- catalog / mySchedule / grades / ...

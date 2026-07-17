@@ -266,6 +266,16 @@ export const cartRowSchema = z.object({
 });
 export type CartRow = z.infer<typeof cartRowSchema>;
 
+// El carrito viaja con su syncedAt como el horario y las notas: la pantalla
+// muestra lo cacheado con su StalenessTag y decide si refrescar. Entrar a una
+// pantalla nunca dispara scraping.
+export const cartResponseSchema = z.object({
+  generatedAt: z.string(),
+  syncedAt: z.string().nullable(),
+  rows: z.array(cartRowSchema),
+});
+export type CartResponse = z.infer<typeof cartResponseSchema>;
+
 // ── Notas y avance ──────────────────────────────────────────────────────────
 
 // Course History marca cada materia con el alt de un icono: Taken / In
@@ -375,6 +385,10 @@ export type HoldsResponse = z.infer<typeof holdsResponseSchema>;
 // Estado del scheduler + watcher (GET /api/state).
 export const appStateSchema = z.object({
   schedule: z.object({ atISO: z.string() }).nullable(),
-  watcher: z.object({ intervalMs: z.number() }).nullable(),
+  // lastCheckAt null = activo pero todavía sin mirar el carrito, que no es lo
+  // mismo que haberlo mirado recién.
+  watcher: z
+    .object({ intervalMs: z.number(), lastCheckAt: z.string().nullable().default(null) })
+    .nullable(),
 });
 export type AppState = z.infer<typeof appStateSchema>;
