@@ -11,6 +11,7 @@
     "recon:advisement": "node src/recon-advisement.js",
     "seed": "MIKAMPUS_DB=/tmp/mikampus-ui.db node scripts/seed-catalog.mjs",
     "recon:schedule": "node src/recon-schedule.js",
+    "recon:academico": "node src/recon-academico.js",
     "test": "node scripts/test-course-code.mjs && node scripts/test-catalog-parser.mjs && node scripts/test-browse-parser.mjs && node scripts/test-advisement-parser.mjs && node scripts/test-catalog-db.mjs && node scripts/test-cart-parser.mjs && node scripts/test-plans-db.mjs && node scripts/test-solver.mjs && node scripts/test-related-radio.mjs && node scripts/test-schedule-parser.mjs && node scripts/test-grid.mjs && node scripts/test-ics.mjs",
     "sync:catalog": "node scripts/sync-catalog.mjs",
     "smoke": "node scripts/smoke.mjs",
