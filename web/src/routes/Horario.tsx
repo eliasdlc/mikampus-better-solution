@@ -86,7 +86,10 @@ export function Horario() {
   // Mientras corre, la pantalla sigue mostrando lo cacheado: nunca se bloquea.
   // El sync descubre el término real (con su STRM) y salta a mostrarlo.
   const sync = useMutation({
-    mutationFn: () => syncMySchedule(),
+    // Refresca el ciclo que muestra el switcher, no el que el portal recuerde.
+    // Sin STRM (arranque del ciclo actual) va sin término y el server descubre
+    // el activo.
+    mutationFn: () => syncMySchedule(activeCode ?? undefined),
     onSuccess: (fresh) => {
       if (fresh.term) {
         queryClient.setQueryData(['my-schedule', fresh.term], fresh);

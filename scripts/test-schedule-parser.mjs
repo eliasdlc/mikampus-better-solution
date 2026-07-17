@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-test-'));
 process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
 
-const { extractSchedule, saveSchedule, readSchedule } = await import('../src/peoplesoft/mySchedule.js');
+const { extractSchedule, saveSchedule, readSchedule, pickTermRadio } = await import('../src/peoplesoft/mySchedule.js');
 const { scrapedScheduleSchema, normalizeEnrollStatus } = await import('../src/shared/schemas.ts');
 const { parseMeetings, normalizeComponent, parseDateRange } = await import('../src/shared/meetings.ts');
 
@@ -125,6 +125,25 @@ try {
   assert.equal(still.title, 'Seg. en Tecnología Información', 'el título sobrevive a la baja');
 
   console.log('✓ capa de escritura del horario (baja, re-sync, títulos)');
+
+  // ── Selección de término (change term) ─────────────────────────────────────
+  // El selector aparece cuando hay más de un ciclo activo. pickTermRadio elige
+  // el pedido; es la pieza que evita sincronizar el ciclo equivocado.
+  const radios = [
+    { value: '1920', id: 'r0', label: 'Abril de 2026 | Grado | PUCMM' },
+    { value: '1930', id: 'r1', label: 'Septiembre de 2026 | Grado | PUCMM' },
+  ];
+  assert.equal(pickTermRadio(radios, '1930').id, 'r1', 'matchea el ciclo pedido por STRM');
+  assert.equal(pickTermRadio(radios, 'Abril de 2026').id, 'r0', 'y por etiqueta como respaldo');
+  assert.equal(pickTermRadio(radios, null).id, 'r0', 'sin ciclo pedido, el primero (default del portal)');
+  assert.equal(pickTermRadio([], null), null, 'lista vacía sin pedido: no hay nada que elegir');
+  assert.throws(
+    () => pickTermRadio(radios, '1940'),
+    /no está disponible/,
+    'un ciclo que no está en la lista es error, no un silencioso ciclo ajeno'
+  );
+  console.log('✓ selección de término (pickTermRadio: STRM, etiqueta, default, ausente)');
+
   console.log('\nMi Horario OK contra HTML real.');
 } finally {
   await browser.close();

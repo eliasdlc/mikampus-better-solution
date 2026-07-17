@@ -128,8 +128,13 @@ app.get('/api/my-schedule', (req, res) => {
 // emitiendo pasos por el SSE existente para que el LiveOpBanner los muestre.
 app.post('/api/my-schedule/sync', async (req, res) => {
   try {
+    // El término lo elige el switcher de /horario (el STRM del ciclo activo).
+    // Sin él, el sync toma el que el portal dé por defecto: es el arranque,
+    // cuando todavía no se conoce el STRM del ciclo actual.
+    const targetTerm = req.body?.term ? String(req.body.term) : null;
     const schedule = await withPage((page) =>
       syncSchedule(page, {
+        targetTerm,
         onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
       })
     );
