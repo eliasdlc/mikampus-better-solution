@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchCart,
@@ -15,6 +15,7 @@ import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { SeatBadge } from '../components/SeatBadge.tsx';
 import { LiveOpBanner } from '../components/LiveOpBanner.tsx';
+import { Countdown } from '../components/Countdown.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
 
@@ -212,28 +213,6 @@ export function Inscripcion() {
       </div>
 
       <ActivityFeed />
-    </div>
-  );
-}
-
-// Countdown grande hasta el disparo (plan §5.7): los números expresivos de
-// Bricolage y tabulares para que no bailen al cambiar cada segundo.
-function Countdown({ toISO }: { toISO: string }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const total = Math.max(0, Math.floor((new Date(toISO).getTime() - now) / 1000));
-  const days = Math.floor(total / 86400);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const clock = `${pad(Math.floor((total % 86400) / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
-
-  return (
-    <div className="font-display tabular text-3xl font-semibold tracking-tight">
-      {days > 0 && <span>{days}d </span>}
-      {clock}
     </div>
   );
 }
