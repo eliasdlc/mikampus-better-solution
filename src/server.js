@@ -15,6 +15,7 @@ import { summarizeGrades } from './shared/gpa.ts';
 import { db, lastSync } from './db.js';
 import * as plans from './plans.js';
 import * as scheduler from './scheduler.js';
+import { startCatalogCron, stopCatalogCron } from './cron.js';
 
 // El término por defecto sale del .env, que es el que ya usa el resto de la app.
 const DEFAULT_TERM = process.env.TARGET_TERM || null;
@@ -458,11 +459,14 @@ app.get('*', (req, res, next) => {
 
 const PORT = process.env.PORT || 4173;
 const server = app.listen(PORT, () => {
-  console.log(`pucmm-autoenroll backend en http://localhost:${PORT}`);
+  console.log(`mikampus en http://localhost:${PORT}`);
+  // Apagado salvo que CATALOG_CRON_AT diga a qué hora (ver src/cron.js).
+  startCatalogCron();
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
+    stopCatalogCron();
     await shutdown();
     server.close(() => process.exit(0));
   });
