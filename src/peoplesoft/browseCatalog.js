@@ -110,6 +110,16 @@ export function extractCourses() {
     .filter((row) => row.rawNbr && row.title);
 }
 
+// Cuando una materia tiene varias entradas de catálogo, el portal le pega un
+// aviso al título en la misma celda y el scraper se lo lleva pegado: quedaban
+// 42 materias tituladas "Cine Latinoamericano*** view multiple offerings". Es
+// un cartel de navegación del portal, no parte del nombre de la materia.
+export function cleanTitle(title) {
+  return (title ?? '')
+    .replace(/\*{2,}\s*view multiple offerings\s*$/i, '')
+    .trim();
+}
+
 export function parseCourseRows(rows, { subject, knownSubjects }) {
   const courses = [];
   for (const row of rows) {
@@ -117,7 +127,9 @@ export function parseCourseRows(rows, { subject, knownSubjects }) {
     // Sin código no hay llave para unir con las secciones: mejor perder el
     // título que inventarse un código que no empate con el Class Search.
     if (!code) continue;
-    courses.push({ ...code, title: row.title });
+    const title = cleanTitle(row.title);
+    if (!title) continue;
+    courses.push({ ...code, title });
   }
   return courses;
 }
