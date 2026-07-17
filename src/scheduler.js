@@ -1,14 +1,24 @@
 import { syncCart, readCart } from './peoplesoft/cart.js';
 import { enrollFromCart } from './peoplesoft/enroll.js';
 import { withPage } from './session.js';
-import { notify } from './notify.js';
+import { notifyFromEvent } from './notify.js';
 
 const listeners = new Set();
 export function onEvent(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
+
+// Todo evento pasa por la política de notificaciones antes de llegar al SSE:
+// nadie decide por su cuenta si molestar al usuario (ver notify.js). Un fallo
+// notificando no puede tumbar la operación que lo emitió — la notificación es
+// el accesorio, la inscripción es el trabajo.
 function emit(event) {
+  try {
+    notifyFromEvent(event);
+  } catch (err) {
+    console.warn(`[notify] no se pudo notificar: ${err.message}`);
+  }
   for (const fn of listeners) fn(event);
 }
 
@@ -39,26 +49,30 @@ export async function runEnrollNow(reason) {
   try {
     result = await withPage((page) => enrollFromCart(page));
   } catch (err) {
-    emit({ type: 'log', message: `Error ejecutando inscripción: ${err.message}` });
-    notify('PUCMM Autoenroll — Error', err.message, { urgency: 'critical' });
+    emit({
+      type: 'notice',
+      level: 'error',
+      title: 'La inscripción falló',
+      body: err.message,
+      key: 'enroll-error',
+    });
     throw err;
   }
 
   if (!result.ok) {
-    emit({ type: 'log', message: `No se pudo completar: ${result.reason}` });
-    notify('PUCMM Autoenroll', `No se pudo procesar el carrito: ${result.reason}`, {
-      urgency: 'critical',
+    emit({
+      type: 'notice',
+      level: 'error',
+      title: 'No se pudo procesar el carrito',
+      body: result.reason,
+      key: `enroll-not-ok:${result.reason}`,
     });
     return result;
   }
 
-  const successes = result.results.filter((r) => r.success);
   const failures = result.results.filter((r) => !r.success);
   emit({ type: 'enroll-result', results: result.results, reason });
 
-  if (successes.length > 0) {
-    notify('PUCMM Autoenroll — ¡Inscrito!', successes.map((s) => s.classLabel).join(', '));
-  }
   if (failures.length > 0) {
     emit({
       type: 'log',
@@ -104,7 +118,16 @@ export function startWatcher(intervalMs = 45000) {
       // cache deja el resto de la app fresca sin pedirle nada extra al portal.
       rows = await withPage((page) => syncCart(page));
     } catch (err) {
-      emit({ type: 'log', message: `Error leyendo el carrito: ${err.message}` });
+      // Un watcher que no puede leer el carrito no está vigilando nada, y creer
+      // que sí es peor que saber que está roto. El dedupe evita los 80 popups
+      // por hora que serían si no.
+      emit({
+        type: 'notice',
+        level: 'error',
+        title: 'El watcher no pudo leer el carrito',
+        body: err.message,
+        key: 'watcher-cart-error',
+      });
       return;
     }
     // El watcher puede haberse apagado mientras este tick esperaba al portal.
