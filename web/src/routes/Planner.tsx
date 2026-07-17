@@ -245,7 +245,9 @@ export function Planner() {
 
       {creating && (
         <CreatePlanForm
-          terms={(termsQ.data ?? []).map((t) => t.term)}
+          // Solo términos plannable (con secciones en el catálogo): un plan
+          // contra una etiqueta suelta de grades no tendría materias que elegir.
+          terms={(termsQ.data ?? []).filter((t) => t.hasSections).map((t) => t.term)}
           pending={create.isPending}
           error={create.error as Error | null}
           onCreate={(input) => create.mutate(input)}

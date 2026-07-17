@@ -7,6 +7,7 @@ import {
   planToCartResultSchema,
   scheduleResponseSchema,
   termInfoSchema,
+  termContextSchema,
   gradesResponseSchema,
   pensumResponseSchema,
   holdsResponseSchema,
@@ -20,6 +21,7 @@ import {
   type PlanToCartResult,
   type ScheduleResponse,
   type TermInfo,
+  type TermContext,
   type GradesResponse,
   type PensumResponse,
   type HoldsResponse,
@@ -106,9 +108,17 @@ export function addToCart(input: {
 // CRUD contra SQLite: instantáneo, sin portal. La única operación viva es
 // sendPlanToCart, que tarda segundos por materia y publica su progreso en SSE.
 
+// La lista de términos conocidos, ya resueltos contra hoy. El planner filtra a
+// los plannable (hasSections); el resto de la app suele querer el contexto.
 export async function fetchTerms(): Promise<TermInfo[]> {
   const data = await getJSON('/api/terms');
   return z.object({ terms: z.array(termInfoSchema) }).parse(data).terms;
+}
+
+// El contexto de tiempo: la lista + cuál ciclo corre hoy y cuál sigue. Lo leen
+// el Dashboard y /horario para no mezclar ciclos.
+export async function fetchTermContext(): Promise<TermContext> {
+  return termContextSchema.parse(await getJSON('/api/terms'));
 }
 
 export async function fetchPlans(): Promise<PlanSummary[]> {

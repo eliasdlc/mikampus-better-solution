@@ -24,6 +24,9 @@ try {
   // ── Parser ───────────────────────────────────────────────────────────────
   // El código de término no está en pantalla: sale del objeto JS del portal.
   assert.equal(raw.term, '1930', 'el término se lee de PIA_KEYSTRUCT');
+  // La etiqueta en español sí está en pantalla: es la que cruza el STRM con el
+  // vocabulario de grades (el modelo de tiempo de la Fase 6 depende de esto).
+  assert.equal(raw.termLabel, 'Septiembre de 2026', 'la etiqueta sale de la cabecera del estudiante');
   assert.equal(raw.courses.length, 1, 'una materia inscrita en el fixture');
 
   const c = raw.courses[0];
@@ -59,6 +62,7 @@ try {
   // ── Capa de escritura ────────────────────────────────────────────────────
   const schedule = scrapedScheduleSchema.parse({
     term: raw.term,
+    termLabel: raw.termLabel,
     courses: raw.courses.map((x) => ({
       courseCode: `${x.subject}-${x.catalogNbr}`,
       subject: x.subject,
@@ -84,6 +88,14 @@ try {
   });
 
   assert.equal(saveSchedule(schedule), 2, 'guarda las dos secciones');
+
+  // saveSchedule cruza el término: el STRM, su etiqueta y su ventana quedan en
+  // una sola fila de `terms` — el cimiento del modelo de tiempo.
+  const { readTerms } = await import('../src/terms.js');
+  const term1930 = readTerms(new Date(2026, 6, 17)).terms.find((t) => t.code === '1930');
+  assert.equal(term1930.label, 'Septiembre de 2026', 'la etiqueta se persistió junto al STRM');
+  assert.equal(term1930.startDate, '2026-09-01', 'la ventana sale de MTG_DATES');
+  assert.equal(term1930.isNext, true, 'en julio de 2026, 1930 es el ciclo siguiente');
 
   const read = readSchedule('1930');
   assert.equal(read.courses.length, 1);
