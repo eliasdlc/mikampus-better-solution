@@ -170,3 +170,79 @@ Cada fase: recon → scraper validado con Zod → endpoint → pantalla → gate
 - **Volumen del scrape de catálogo:** todas las carreras de un término son muchas requests → throttle, correr fuera de pico, sync selectivo por carrera.
 - **Detección de tráfico programático:** ya documentado en README; el cache local reduce los hits al portal muy por debajo del uso manual, salvo el sync de catálogo, que es puntual y espaciado.
 - **Datos que el recon puede desmentir:** el pénsum visual (5.6) y "elegibles ahora" dependen de qué exponga realmente Academic Progress; si la página no da estructura de prerequisitos, la feature degrada a estados sin elegibilidad calculada. Se confirma en el recon de Fase 4.
+
+---
+---
+
+# PLAN v3 — mikampus entiende tu carrera
+
+> Las fases 1–5 dejaron una plataforma que reemplaza las *pantallas* de micampus. Esta etapa la hace entender al *estudiante*: en qué ciclo está, qué exige su pénsum de verdad (electivas incluidas), dónde está parado en la carrera, qué le toca inscribir, y qué índice puede aspirar a tener. El norte sigue siendo el mismo: organización meticulosa, flujos que se recorren solos, y ningún dato inventado — todo sale del portal o se calcula de forma verificable.
+
+## 9. Auditoría: qué está mal hoy y por qué
+
+Cada punto está anclado al código; ninguno es especulación.
+
+**A. La app no tiene modelo de tiempo.** No existe el concepto "ciclo actual" vs "ciclo que viene". Hoy (julio 2026) el estudiante cursa **Abril de 2026** (4 materias, visibles solo como `in_progress` en la tabla `grades`), pero `enrollments` solo conoce el término **1930 = Septiembre de 2026** (la pre-inscripción de ICC-233). La cadena del bug del Dashboard: `Dashboard.tsx:18` pide `/api/my-schedule` sin término → `server.js:92` cae en `latestScheduledTerm()` (`mySchedule.js:96`) → devuelve 1930 → el hero anuncia como "próxima clase" una materia que empieza en septiembre. Agravante estructural: conviven **dos vocabularios de término que nada une** — códigos STRM (`"1930"`) en `sections`/`enrollments`/`plans` y etiquetas en español (`"Abril de 2026"`) en `grades` y `pensum.taken_term`. No hay tabla que los cruce ni fechas que digan cuál corre hoy.
+
+**B. El pénsum se guarda plano y el portal lo da estructurado.** `parseAdvisement` (`advisement.js:76`) recorre solo las filas `CRSE_NAME$span$` y descarta los encabezados de grupo. Releyendo `fixtures/recon-advisement.html` (mismo fixture, cero recon nuevo): el informe organiza los 27 bloques como **"ICC-2020 Año N Período M"** — cada uno con `Satisfied / Not Satisfied`, `Units: X required, Y taken, Z needed`, `Courses: n required…` y hasta GPA por bloque — y dentro de cada período distingue "Cursos Obligatorios" de **slots de electiva con nombre** ("LIT-E01-T Electiva de Literatura", "ICC-E11-T Electiva I de ICC"…) con su lista de candidatas ("The following courses may be used to satisfy this requirement"). O sea: la conclusión de Fase 4 ("no hay semestre por materia") era falsa — el dato estaba en los encabezados colapsados que el parser no miró. Consecuencias del aplanado actual: (1) las 44 "pending" de la tabla `pensum` mezclan obligatorias reales con candidatas de electivas que jamás vas a cursar; (2) una electiva ya satisfecha no apaga a sus hermanas (tu punto 3); (3) no se puede decir "vas atrasado" porque no hay contra qué; (4) el panel "Pendientes de tu pénsum" del planner recomienda de esa lista inflada.
+
+**C. La app no sabe quién sos.** No hay perfil: carrera, pénsum ("Pénsum No. 2020 de INGENIERÍA EN CIENCIAS DE LA COMPUTACIÓN" — está en el fixture, no se guarda), cohorte (deducible: tu primer término con notas es Septiembre de 2023). Por eso `/buscar` indexa el catálogo entero (907 materias, 711 subjects) en vez de arrancar por tu carrera, y no hay dónde colgar metas.
+
+**D. Lo que ya está bien y se reusa tal cual.** La aritmética del GPA (`shared/gpa.ts`) reproduce el portal y ya alimenta un what-if en `/academico` — el punto 7 es una extensión, no una construcción. El solver, los planes, el carrito cacheado y el patrón recon→fixture→parser→endpoint→pantalla quedan intactos. El cron de catálogo ya barre por subjects del pénsum.
+
+**Restricción confirmada que sigue en pie:** el portal **no publica prerequisitos** en ninguna pantalla reconocida (advisement, class search, browse catalog). "Chequear pre/corequisitos" no se puede scrapear; ver §13 para cómo se degrada con honestidad.
+
+## 10. Modelo de datos nuevo
+
+Todo aditivo (patrón `addColumnIfMissing` / `CREATE TABLE IF NOT EXISTS`); nada rompe lo existente.
+
+- **`terms`** — `code` (STRM, PK), `label` ("Abril de 2026"), `start_date`, `end_date`, `updated_at`. Fuentes que ya tenemos sin recon nuevo: el dropdown del class search (`getSearchFormOptions`) lista código+etiqueta de los términos elegibles; Mi Horario da etiqueta (header) + código (`PIA_KEYSTRUCT.STRM`) del que sincroniza; las fechas salen de `enrollments.start_date/end_date` (MTG_DATES). La resolución vive en `src/shared/terms.ts` (pura, testeada): `currentTerm` = el que contiene a hoy; `nextTerm` = el primero que empieza después; fallbacks explícitos cuando faltan fechas. `grades.term` (etiqueta) se cruza contra `terms.label`.
+- **`profile`** — una fila: `career`, `pensum_no`, `plan_label`, `cohort_start_term`. Se llena desde el advisement + primer término de `grades`; editable.
+- **`requirement_groups`** — el árbol del advisement: `id`, `parent_id`, `label`, `kind` (`periodo` / `obligatorios` / `electiva`), `year`, `period`, `satisfied`, `units_required/taken/needed`, `courses_required/taken/needed`, `gpa_actual`, `position` (orden del documento — la verdad sobre la secuencia aunque la etiqueta cambie en otro pénsum).
+- **`requirement_courses`** — `group_id`, `code`, `status`, `grade`, `taken_term`, `units`. La tabla `pensum` actual pasa a **derivarse** de estas dos (se reconstruye en cada sync para no romper `/api/pensum`, el planner ni el cron), y gana la semántica correcta: *pendiente real* = lo que falta de grupos no satisfechos; candidata de electiva satisfecha = ya no te interesa; fuera de todo grupo = fuera de tu pénsum.
+- **`goals`** — `id`, `kind` (`gpa` por ahora), `target` (REAL), `deadline_term`, `created_at`, `achieved_at`.
+- **`prereqs`** (condicional, ver §13) — `code`, `requires_code`, `kind` (`pre`/`co`), `source` (`manual`). Solo existe si se decide sembrarla; nada la asume.
+
+## 11. Arquitectura de navegación: tres zonas de tiempo
+
+La regla que ordena todo mikampus a partir de ahora: **ninguna pantalla mezcla ciclos sin decirlo**. Cada vista term-scoped lleva un `TermBadge` ("Abril–Julio 2026") y las tres zonas del sidebar responden preguntas distintas:
+
+| Zona | Pregunta | Rutas |
+|---|---|---|
+| **Ahora** | ¿qué tengo hoy? | `/` (Hoy), `/horario` (con switcher de ciclo) |
+| **Próximo ciclo** | ¿qué inscribo? | `/planner`, `/builder`, `/buscar`, `/inscripcion` |
+| **Mi carrera** | ¿dónde estoy parado? | `/trayectoria` (nueva), `/academico`, `/holds` |
+
+El Dashboard se reparte igual: el hero y la agenda son **solo del ciclo actual**; lo del ciclo que viene vive en una card propia "Próximo ciclo" (materias ya inscritas + estado del plan/carrito + countdown de inscripción), que es donde ICC-233 tiene que aparecer — como futuro, no como próxima clase. Buscar y planner operan por defecto sobre `nextTerm` (para eso planificás); el filtro de choque cruza contra el horario del término correspondiente.
+
+**Carrera-first (tu punto 2):** el índice de búsqueda (/buscar y ⌘K) arranca acotado a tu pénsum (`requirement_courses` ∪ inscritas); un chip "Todo el catálogo" — apagado por defecto, estado visible — abre el resto. Igual en cada lista de la app: lo que no es de tu pénsum no compite por tu atención salvo que lo pidas.
+
+## 12. Los módulos nuevos
+
+### 12.1 Fase 6 — El tiempo (arregla el punto 1)
+Tabla `terms` + `shared/terms.ts` + endpoint `/api/terms` enriquecido (código, etiqueta, fechas, cuál es actual/siguiente). Dashboard: hero/agenda del ciclo actual, card "Próximo ciclo". `/horario` gana switcher de término. **Único recon en vivo de la fase:** el "change term" de Mi Horario (cuando hay más de un término activo, PeopleSoft ofrece elegirlo) para poder sincronizar el horario del ciclo en curso — hoy `syncSchedule` toma el que el portal dé por defecto (así entró 1930 y no Abril). Hasta ese recon, el Dashboard ya deja de mentir con lo que hay: sabe que 1930 no corre hoy. *Gate: tests de resolución de término (con fechas, sin fechas, entre ciclos) + el smoke verifica que el hero no muestra materias de un término futuro.*
+
+### 12.2 Fase 7 — El pénsum de verdad (arregla 2, 3 y 4)
+Parser v2 del advisement **contra el fixture existente**: recorre los `win0divDERIVED_SAA_DPR_SAA_DESCRLONG_*` construyendo el árbol período → obligatorios/electivas → cursos, con los contadores Satisfied/needed de cada grupo. Llena `requirement_groups`/`requirement_courses` + `profile`; `pensum` se deriva. `/api/pensum` v2 devuelve el árbol. `/academico` → Avance se rediseña: columnas (desktop) o acordeón (mobile) por **Año/Período** — lo que el plan §5.6 quería y creíamos imposible — con las electivas como *slots* ("Electiva de Literatura: ✓ satisfecha con LET-201" / "elegí 1 de 8") en vez de listas infladas. Búsqueda carrera-first con el chip "Todo el catálogo". El panel del planner pasa a sugerir *pendientes reales*. *Gate: el parser reproduce exacto los 3 grupos Satisfied / 24 Not Satisfied y los 81 créditos faltantes del fixture; una electiva satisfecha oculta a sus candidatas; test de que ninguna materia fuera de grupo entra al pénsum derivado.*
+
+### 12.3 Fase 8 — Trayectoria (el punto 5)
+Ruta nueva `/trayectoria`: la carrera como línea de tiempo vertical, un nodo por término ordenado por `termSortKey` — pasado (materias + nota + GPA del término, de `grades`), **presente** (en curso), **próximo ciclo** (inscrito + plan + carrito), **futuro** (los períodos no satisfechos del pénsum, en orden, con sus créditos faltantes). Arriba, la posición: "Año 2 Período 3 de 11 · 131/212 créditos · ~N ciclos para terminar" y el **atraso medido contra el pénsum**: períodos ya transcurridos desde tu cohorte (3 ciclos/año, de `terms`) vs. bloques satisfechos — "llevás 1 materia de Año 1 Período 3 pendiente" es un hecho verificable, no una vibra. *Gate: las cifras del encabezado cuadran con los totales del advisement; smoke en los 3 anchos (la línea de tiempo es propensa a desbordar en 390px).*
+
+### 12.4 Fase 9 — El recomendador (el punto 6)
+`src/shared/recommend.ts` — motor puro y testeado, cero red: entradas = árbol de requisitos, historial, catálogo del término objetivo, carga máxima deseada; salida = materias recomendadas **con su porqué** ("pendiente de Año 1 Período 3 — es lo más viejo que te falta", "slot Electiva de Filosofía: 3 candidatas se ofertan"). Estrategia: primero lo pendiente del período más antiguo no satisfecho (así el atraso se drena solo), después el período que sigue; electivas ofrecen candidatas, no imponen; solo materias con secciones en el término objetivo. En el planner: botón **"Generar plan recomendado"** que crea un plan normal — editable, borrable, reorganizable con total libertad, como cualquier otro (tu "y también debe permitirte reorganizar": ya lo cumple la infraestructura de planes; el recomendador solo pre-llena). El Dashboard, cuando exista `nextTerm` sin plan, lo ofrece proactivamente. *Gate: tests del motor con los tres perfiles (al día / atrasado / solo electivas) + el caso real del fixture.*
+
+### 12.5 Fase 10 — Metas y señales (los puntos 7 y 8)
+**Metas:** CRUD de `goals` + proyecciones en `shared/gpa.ts` (misma aritmética verificada, sin segunda implementación). Con los créditos faltantes del pénsum (81, del advisement) se calcula el abanico honesto: índice final si todo lo que queda es A (mejor caso) / si mantenés tu promedio histórico (caso medio) / si es C (piso razonable); y para una meta dada, el promedio que exige en lo restante — incluida la respuesta "inalcanzable: ni con todo A llegás a X antes de Y", que es la más valiosa. Vive en `/academico` junto al what-if, que ya proyecta el término en curso. **Señales:** `shared/insights.ts`, descriptivas y con test cada una — tendencia del índice (últimos 3 términos), rendimiento por área (subjects con ≥2 materias), carga vs. resultado (créditos/término contra GPA de ese término), materias repetidas o retiradas. Se muestran como hechos con número al lado, no como sermones; sin datos suficientes, la señal no aparece (nada de consejos genéricos). *Gate: proyecciones contrastadas a mano contra el fixture real; ninguna señal se emite bajo su umbral de datos.*
+
+## 13. Decisiones abiertas (del lado del producto)
+
+1. **Prerequisitos.** El portal no los da. Opción A: recomendar solo por orden de pénsum + "se oferta" (cero mantenimiento, es lo que la Fase 9 hace por defecto). Opción B: sembrar `prereqs` a mano desde el pénsum oficial 2020 (documento estático de Registro; ~64 materias, una vez) y que el recomendador valide de verdad — marcado en UI como "según pénsum 2020", no como palabra del portal. El plan arranca con A; B es un upgrade opt-in cuando aportes el documento.
+2. **Copy de las señales (Fase 10)** es texto de cara al usuario → se propone antes de commitear esa pantalla.
+
+## 14. Riesgos nuevos
+
+- **El recon del "change term"** puede revelar que un término en curso ya no es consultable en Mi Horario a mitad de ciclo; si pasa, el horario actual se reconstruye desde `grades` (materias sin aulas/horas) y se dice honestamente que el portal ya no lo da.
+- **Las etiquetas "Año N Período M" son del pénsum ICC 2020**; otro pénsum puede nombrar distinto. Por eso `position` (orden del documento) es la verdad para secuenciar y la etiqueta es solo display.
+- **El atraso es una inferencia** (cohorte + 3 ciclos/año): se muestra con su base de cálculo visible y la cohorte es editable en el perfil.
+
+Regla de siempre: recon → parser con fixture + test → endpoint → pantalla → gate → commit atómico. Fase 7 no necesita recon nuevo (el fixture ya tiene todo); Fase 6 necesita uno (change term); las demás son cálculo local.
