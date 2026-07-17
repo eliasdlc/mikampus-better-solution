@@ -180,7 +180,7 @@ const FIXTURES = {
 function startServer() {
   const proc = spawn('node', ['src/server.js'], { env: { ...process.env, PORT: String(PORT) } });
   return new Promise((resolve, reject) => {
-    proc.stdout.on('data', (d) => String(d).includes('backend en') && resolve(proc));
+    proc.stdout.on('data', (d) => String(d).includes('mikampus en') && resolve(proc));
     proc.stderr.on('data', (d) => process.stderr.write(d));
     proc.on('exit', (c) => reject(new Error(`server salió con código ${c}`)));
     setTimeout(() => reject(new Error('timeout esperando el server')), 15000);
