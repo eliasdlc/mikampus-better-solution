@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
-import { extractSubjects, extractCourses, parseCourseRows } from '../src/peoplesoft/browseCatalog.js';
+import { extractSubjects, extractCourses, parseCourseRows, cleanTitle } from '../src/peoplesoft/browseCatalog.js';
 
 // Corre los parsers del Browse Catalog contra HTML real volcado por el recon,
 // sin tocar el portal. Misma red de seguridad que test-catalog-parser.mjs: si
@@ -53,6 +53,16 @@ assert.equal(byCode.get('ICC-1ICC473'), 'Proyecto de Grado ICC');
 // La trampa del wrapper $span$: si el filtro por id exacto se rompe, cada
 // materia aparecería dos veces.
 assert.equal(new Set(byCode.keys()).size, courses.length, 'sin materias duplicadas por el wrapper $span$');
+
+// El cartel que el portal le pega al título cuando la materia tiene varias
+// entradas de catálogo. No está en la fixture de ICC, pero sí llegó a la base:
+// 42 materias quedaron tituladas "Cine Latinoamericano*** view multiple
+// offerings". Es navegación del portal, no el nombre de la materia.
+assert.equal(cleanTitle('Cine Latinoamericano*** view multiple offerings'), 'Cine Latinoamericano');
+assert.equal(cleanTitle('Educación Artística Integrada I*** view multiple offerings'), 'Educación Artística Integrada I');
+assert.equal(cleanTitle('Bases de Datos'), 'Bases de Datos', 'un título normal no se toca');
+// Sin anclar al final, un título que hablara de ofertas perdería texto real.
+assert.equal(cleanTitle('*** view multiple offerings de la Materia'), '*** view multiple offerings de la Materia');
 
 await browser.close();
 console.log(`✓ browse parser: ${subjects.length} subjects, ${courses.length} materias ICC con título`);
