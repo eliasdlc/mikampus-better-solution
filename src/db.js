@@ -136,6 +136,12 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_plan_items_plan ON plan_items(plan_id);
 
+  -- El histórico de notas, leído de My Course History. Una materia repetida
+  -- aparece dos veces con términos distintos, así que la identidad de una fila
+  -- es término+código, no el código solo.
+  -- Sin grade_points a propósito: Course History no los da y el índice se
+  -- calcula con shared/gpa.ts, que reproduce exacto los totales del portal.
+  -- Guardar un número derivado acá sería una segunda verdad que puede mentir.
   CREATE TABLE IF NOT EXISTS grades (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     term         TEXT NOT NULL,
@@ -144,7 +150,7 @@ db.exec(`
     title        TEXT,
     grade        TEXT,
     credits      REAL,
-    grade_points REAL,
+    status       TEXT NOT NULL DEFAULT 'taken', -- taken / in_progress / transferred
     captured_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -179,6 +185,22 @@ db.exec(`
     finished_at  TEXT
   );
 `);
+
+// CREATE TABLE IF NOT EXISTS no reforma una tabla que ya existe: una columna
+// nueva llega a las bases recién creadas y no a la que el usuario ya tiene.
+// Esto agrega la columna solo si falta, que es todo lo que necesita una app
+// local sin sistema de migraciones. Es aditivo: no borra ni reescribe nada.
+function addColumnIfMissing(table, column, definition) {
+  const exists = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some((c) => c.name === column);
+  if (!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+// El estado de una materia del histórico (cursada / cursando / transferida) lo
+// pide shared/gpa.ts para no meter al índice lo que el portal no cuenta.
+addColumnIfMissing('grades', 'status', "TEXT NOT NULL DEFAULT 'taken'");
 
 // Registra el resultado de una corrida de scraping para poder mostrar
 // StalenessTag ("actualizado hace 2h") y depurar selectores rotos.
