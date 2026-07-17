@@ -136,11 +136,16 @@ const FIXTURES = {
   // El caso real hoy: sin holds, ya consultado. La pantalla afirma el vacío en
   // vez de invitar a consultar.
   '/api/holds': { generatedAt: new Date().toISOString(), syncedAt: '2026-07-16 12:00:00', holds: [] },
-  '/api/state': { schedule: { atISO: new Date(Date.now() + 3 * 864e5).toISOString() }, watcher: { intervalMs: 45000 } },
+  '/api/state': {
+    schedule: { atISO: new Date(Date.now() + 3 * 864e5).toISOString() },
+    watcher: { intervalMs: 45000, lastCheckAt: new Date(Date.now() - 40e3).toISOString() },
+  },
   '/api/plans': { plans: [{ id: 1, term: '1930', name: 'Ago–Dic 2026', itemCount: 3, credits: 12, updatedAt: '2026-07-16 12:00:00' }] },
   '/api/plans/1': PLAN_DETAIL,
   '/api/terms': { terms: [{ term: '1930', startDate: '2026-08-24', endDate: '2026-12-05' }] },
   '/api/cart': {
+    generatedAt: new Date().toISOString(),
+    syncedAt: '2026-07-16 12:00:00',
     rows: [
       {
         index: 0,

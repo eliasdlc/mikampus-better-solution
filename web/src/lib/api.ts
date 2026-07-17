@@ -1,6 +1,6 @@
 import {
   appStateSchema,
-  cartRowSchema,
+  cartResponseSchema,
   catalogResponseSchema,
   planDetailSchema,
   planSummarySchema,
@@ -11,7 +11,7 @@ import {
   pensumResponseSchema,
   holdsResponseSchema,
   type AppState,
-  type CartRow,
+  type CartResponse,
   type CatalogResponse,
   type PlanDetail,
   type PlanSummary,
@@ -45,9 +45,13 @@ async function send(url: string, method: string, body?: unknown): Promise<unknow
   return data;
 }
 
-export async function fetchCart(): Promise<CartRow[]> {
-  const data = await getJSON('/api/cart');
-  return z.object({ rows: z.array(cartRowSchema) }).parse(data).rows;
+// Desde cache (<10ms). El refresh contra el portal es syncCart y es explícito.
+export async function fetchCart(): Promise<CartResponse> {
+  return cartResponseSchema.parse(await getJSON('/api/cart'));
+}
+
+export async function syncCart(): Promise<CartResponse> {
+  return cartResponseSchema.parse(await send('/api/cart/sync', 'POST'));
 }
 
 export async function fetchState(): Promise<AppState> {

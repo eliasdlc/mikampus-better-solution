@@ -40,7 +40,13 @@ export function SSEProvider({ children }: { children: ReactNode }) {
           push(data.message);
           break;
         case 'cart-status':
-          qc.setQueryData(['cart'], data.rows);
+          // El backend ya guardó estas filas en SQLite antes de emitirlas: el
+          // cache del cliente refleja lo mismo que devolvería un GET.
+          qc.setQueryData(['cart'], {
+            generatedAt: new Date().toISOString(),
+            syncedAt: data.syncedAt ?? null,
+            rows: data.rows,
+          });
           break;
         case 'enroll-result':
           setLastEnroll({ reason: data.reason, results: data.results });

@@ -6,7 +6,7 @@ export function Dashboard() {
   const cart = useQuery({ queryKey: ['cart'], queryFn: fetchCart });
   const state = useQuery({ queryKey: ['state'], queryFn: fetchState });
 
-  const cartCount = cart.data?.length ?? 0;
+  const cartCount = cart.data?.rows.length ?? 0;
   const scheduledAt = state.data?.schedule?.atISO;
   const watcherOn = !!state.data?.watcher;
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchCart,
+  syncCart,
   fetchState,
   scheduleAt,
   cancelSchedule,
@@ -14,6 +15,7 @@ import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { SeatBadge } from '../components/SeatBadge.tsx';
 import { LiveOpBanner } from '../components/LiveOpBanner.tsx';
+import { StalenessTag } from '../components/StalenessTag.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
 
 // El carrito enriquecido trae horario por fila: se proyecta en el WeeklyGrid
@@ -42,6 +44,11 @@ export function Inscripcion() {
   const [intervalSecs, setIntervalSecs] = useState(45);
 
   const enroll = useMutation({ mutationFn: enrollNow });
+  // El carrito se muestra desde cache; traerlo del portal es explícito y tarda.
+  const refresh = useMutation({
+    mutationFn: syncCart,
+    onSuccess: (fresh) => qc.setQueryData(['cart'], fresh),
+  });
   const schedule = useMutation({
     mutationFn: () => scheduleAt(new Date(at).toISOString()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
@@ -57,20 +64,21 @@ export function Inscripcion() {
 
   const watcherOn = !!state.data?.watcher;
   const scheduledAt = state.data?.schedule?.atISO;
-  const rows = cart.data ?? [];
+  const rows = cart.data?.rows ?? [];
   const blocks = useMemo(() => cartBlocks(rows), [rows]);
 
   return (
     <div className="space-y-6">
       <header className="flex items-baseline justify-between">
         <h1 className="font-display text-2xl font-semibold tracking-tight">Inscripción</h1>
-        <button
-          onClick={() => cart.refetch()}
-          className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2.5 py-1 text-xs"
-        >
-          {cart.isFetching ? 'leyendo…' : 'refrescar carrito'}
-        </button>
+        <StalenessTag at={cart.data?.syncedAt ?? null} onRefresh={() => refresh.mutate()} refreshing={refresh.isPending} />
       </header>
+
+      {refresh.error && (
+        <p className="text-closed text-sm">
+          PeopleSoft no respondió al leer el carrito ({(refresh.error as Error).message}).
+        </p>
+      )}
 
       <LiveOpBanner active={enroll.isPending} message="Ejecutando inscripción del carrito en PeopleSoft…" />
 
@@ -80,12 +88,30 @@ export function Inscripcion() {
             <header className="border-line border-b px-4 py-2.5">
               <h2 className="text-sm font-medium">Carrito</h2>
             </header>
-            {cart.isLoading ? (
+            {cart.isPending ? (
               <p className="text-muted p-4 text-sm">Leyendo el carrito…</p>
             ) : cart.error ? (
               <p className="text-closed p-4 text-sm">{(cart.error as Error).message}</p>
             ) : rows.length === 0 ? (
-              <p className="text-muted p-4 text-sm">El carrito está vacío. Agregá materias desde Buscar o mandá un plan.</p>
+              // Un carrito vacío y un carrito nunca leído se ven igual y no son
+              // lo mismo: sin sincronizar, la app no sabe qué hay en el portal.
+              <div className="p-4">
+                {cart.data?.syncedAt ? (
+                  <p className="text-muted text-sm">El carrito está vacío. Agregá materias desde Buscar o mandá un plan.</p>
+                ) : (
+                  <>
+                    <p className="text-sm">Todavía no leíste tu carrito del portal.</p>
+                    <button
+                      type="button"
+                      onClick={() => refresh.mutate()}
+                      disabled={refresh.isPending}
+                      className="bg-accent text-accent-fg mt-3 rounded-[var(--radius)] px-3 py-2 text-sm font-medium disabled:opacity-50"
+                    >
+                      {refresh.isPending ? 'Leyendo PeopleSoft…' : 'Traerlo de PeopleSoft'}
+                    </button>
+                  </>
+                )}
+              </div>
             ) : (
               <ul className="divide-line divide-y">
                 {rows.map((row) => (

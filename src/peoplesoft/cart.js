@@ -1,5 +1,5 @@
 import { CART_URL, CONTENT_FRAME_NAME } from './constants.js';
-import { db } from '../db.js';
+import { db, logSync, lastSync } from '../db.js';
 import { cartRowSchema, normalizeSeatStatus } from '../shared/schemas.ts';
 import { parseMeetings } from '../shared/meetings.ts';
 import { splitCourseCode, courseCodeToString } from '../shared/courseCode.ts';
@@ -99,4 +99,87 @@ export async function getCartStatus(page) {
 
   const frame = contentFrame(page);
   return enrichCartRows(await frame.evaluate(extractCartRows));
+}
+
+// ── Cache ───────────────────────────────────────────────────────────────────
+// Leer el carrito son ~10s de Playwright. Que eso pase al abrir una pantalla
+// (el Dashboard lo muestra en cada carga) rompe el presupuesto del plan §6 y
+// castiga al portal sin motivo, así que el carrito se cachea como el horario,
+// las notas y los holds: el GET sirve disco y el refresh es explícito.
+
+// El carrito del portal es un estado completo, no un incremento: se borra y se
+// reescribe entero. Guardarlo fila por fila dejaría en la DB materias que el
+// usuario ya sacó del carrito en micampus.
+export function saveCart(rows) {
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM cart_rows').run();
+    const insert = db.prepare(
+      `INSERT INTO cart_rows (idx, class_label, course_code, title, section, class_nbr,
+                              instructor, credits, campus, meetings, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const row of rows) {
+      insert.run(
+        row.index,
+        row.classLabel,
+        row.courseCode,
+        row.title,
+        row.section,
+        row.classNbr,
+        row.instructor,
+        row.credits,
+        row.campus,
+        JSON.stringify(row.meetings ?? []),
+        row.status
+      );
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  logSync({ kind: 'cart', status: 'ok', detail: `${rows.length} materia(s)`, rows: rows.length });
+  return rows.length;
+}
+
+export function readCart() {
+  const rows = db
+    .prepare(
+      `SELECT idx, class_label, course_code, title, section, class_nbr, instructor,
+              credits, campus, meetings, status
+       FROM cart_rows ORDER BY idx`
+    )
+    .all()
+    .map((r) =>
+      cartRowSchema.parse({
+        index: r.idx,
+        classLabel: r.class_label,
+        courseCode: r.course_code,
+        title: r.title,
+        section: r.section,
+        classNbr: r.class_nbr,
+        instructor: r.instructor,
+        credits: r.credits,
+        campus: r.campus,
+        meetings: r.meetings ? JSON.parse(r.meetings) : [],
+        status: r.status,
+      })
+    );
+
+  return { generatedAt: new Date().toISOString(), syncedAt: lastSync('cart'), rows };
+}
+
+// La única lectura en vivo. La usa el refresh explícito de /inscripcion y cada
+// tick del watcher, así que el cache queda fresco sin pedirle nada extra al
+// portal.
+export async function syncCart(page) {
+  try {
+    const rows = await getCartStatus(page);
+    saveCart(rows);
+    return rows;
+  } catch (err) {
+    logSync({ kind: 'cart', status: 'error', detail: err.message });
+    throw err;
+  }
 }

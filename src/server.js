@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { withPage, shutdown } from './session.js';
-import { getCartStatus } from './peoplesoft/cart.js';
+import { readCart, syncCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readCatalog } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
@@ -25,11 +25,21 @@ const app = express();
 app.use(express.json());
 app.use(express.static(DIST_DIR));
 
-app.get('/api/cart', async (req, res) => {
+// Mismo trato que el horario y las notas: el GET sirve el cache de SQLite con
+// su syncedAt (<10ms) y nunca dispara Playwright. Leer el carrito en vivo son
+// ~10s y el Dashboard lo muestra en cada carga.
+app.get('/api/cart', (req, res) => {
+  res.json(readCart());
+});
+
+app.post('/api/cart/sync', async (req, res) => {
   try {
-    const rows = await withPage((page) => getCartStatus(page));
-    res.json({ rows });
+    await withPage((page) => syncCart(page));
+    const cart = readCart();
+    scheduler.emitEvent({ type: 'cart-status', rows: cart.rows, syncedAt: cart.syncedAt });
+    res.json(cart);
   } catch (err) {
+    scheduler.emitEvent({ type: 'log', message: `Error leyendo el carrito: ${err.message}` });
     res.status(500).json({ error: err.message });
   }
 });
