@@ -115,6 +115,33 @@ const TERM_EN_CURSO = {
   ],
 };
 
+// Los dos ciclos del contexto de tiempo (termInfoSchema completo). Abril corre
+// hoy; Septiembre (1930) es el siguiente y el que se planifica.
+const TERM_ACTUAL = {
+  term: '1920',
+  code: '1920',
+  label: 'Abril de 2026',
+  startDate: '2026-04-20',
+  endDate: '2026-08-01',
+  sortKey: '2026-04',
+  isCurrent: true,
+  isNext: false,
+  hasSchedule: false,
+  hasSections: false,
+};
+const TERM_PROXIMO = {
+  term: '1930',
+  code: '1930',
+  label: 'Septiembre de 2026',
+  startDate: '2026-08-24',
+  endDate: '2026-12-05',
+  sortKey: '2026-09',
+  isCurrent: false,
+  isNext: true,
+  hasSchedule: false,
+  hasSections: true,
+};
+
 const FIXTURES = {
   '/api/grades': {
     generatedAt: new Date().toISOString(),
@@ -142,7 +169,14 @@ const FIXTURES = {
   },
   '/api/plans': { plans: [{ id: 1, term: '1930', name: 'Ago–Dic 2026', itemCount: 3, credits: 12, updatedAt: '2026-07-16 12:00:00' }] },
   '/api/plans/1': PLAN_DETAIL,
-  '/api/terms': { terms: [{ term: '1930', startDate: '2026-08-24', endDate: '2026-12-05' }] },
+  '/api/terms': {
+    // El modelo de tiempo de la Fase 6: hoy (jul 2026) corre Abril y viene
+    // Septiembre (1930). El Dashboard parte el hero del ciclo actual del card
+    // "Próximo ciclo", y /horario ofrece el switcher entre los dos.
+    terms: [TERM_ACTUAL, TERM_PROXIMO],
+    current: TERM_ACTUAL,
+    next: TERM_PROXIMO,
+  },
   '/api/cart': {
     generatedAt: new Date().toISOString(),
     syncedAt: '2026-07-16 12:00:00',
