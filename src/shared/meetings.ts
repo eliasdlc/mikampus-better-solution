@@ -118,3 +118,10 @@ export function meetingsOverlap(a: Meeting, b: Meeting): boolean {
   if (!a.days.some((d) => b.days.includes(d))) return false;
   return toMinutes(a.start) < toMinutes(b.end) && toMinutes(b.start) < toMinutes(a.end);
 }
+
+// ¿Alguna reunión de un lado choca con alguna del otro? Es la pregunta del
+// filtro "sin choque" de la búsqueda: una sección con teoría y práctica choca
+// si CUALQUIERA de sus bloques pisa cualquier bloque de lo ya inscrito.
+export function meetingSetsOverlap(a: Meeting[], b: Meeting[]): boolean {
+  return a.some((x) => b.some((y) => meetingsOverlap(x, y)));
+}

@@ -334,6 +334,9 @@ export const pensumCourseSchema = z.object({
   status: pensumStatusSchema,
   takenTerm: z.string().nullable(),
   grade: z.string().nullable(),
+  // null cuando el catálogo local todavía no conoce la materia: sin id no hay
+  // con qué agregarla a un plan.
+  courseId: z.number().int().nullable(),
   // Pendiente Y con secciones este término. Es lo más cerca de "elegible" que
   // se puede afirmar sin prerequisitos: dice que se está ofertando, no que
   // cumplas los requisitos para tomarla.
