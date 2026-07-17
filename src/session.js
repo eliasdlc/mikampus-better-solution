@@ -48,6 +48,20 @@ export function withPage(fn) {
   return result;
 }
 
+// Fuerza que la próxima acción re-loguee desde cero. Se usa al cambiar de
+// cuenta: sin esto, ensureSession() reusaría el navegador logueado con la
+// cuenta vieja (solo re-loguea si la página cayó en cmd=login). Va por la
+// misma fila que withPage para no matar el navegador a mitad de un scrape.
+export function resetSession() {
+  const run = () => teardown();
+  const result = queue.then(run, run);
+  queue = result.then(
+    () => {},
+    () => {}
+  );
+  return result;
+}
+
 export async function shutdown() {
   await teardown();
 }

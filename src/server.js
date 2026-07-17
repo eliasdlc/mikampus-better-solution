@@ -3,7 +3,8 @@ import path from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { withPage, shutdown } from './session.js';
+import { withPage, resetSession, shutdown } from './session.js';
+import { getAccountInfo, setCredentials } from './credentials.js';
 import { readCart, syncCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readCatalog } from './peoplesoft/catalog.js';
@@ -13,7 +14,7 @@ import { fetchGrades, saveGrades, readGrades, termSummaries } from './peoplesoft
 import { fetchAdvisement, savePensum, readPensum } from './peoplesoft/advisement.js';
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades } from './shared/gpa.ts';
-import { db, lastSync } from './db.js';
+import { db, lastSync, clearPersonalData } from './db.js';
 import * as plans from './plans.js';
 import * as scheduler from './scheduler.js';
 import { startCatalogCron, stopCatalogCron } from './cron.js';
@@ -26,6 +27,37 @@ const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
 const app = express();
 app.use(express.json());
 app.use(express.static(DIST_DIR));
+
+// ── Cuenta ───────────────────────────────────────────────────────────────────
+// Devuelve el usuario vigente y de dónde sale (account.json o .env), nunca la
+// contraseña. La pantalla de Ajustes lo usa para mostrar con qué cuenta estás.
+app.get('/api/account', (req, res) => {
+  res.json(getAccountInfo());
+});
+
+// Cambiar de cuenta desde la página. Hace las tres cosas que editar el .env a
+// mano no hacía: persiste las credenciales, tira la sesión de Playwright (para
+// que la próxima acción re-loguee con la cuenta nueva) y borra el cache
+// personal en SQLite (si no, la página seguiría mostrando a la persona
+// anterior, porque los GET sirven disco). Los datos se retraen con "sync".
+app.post('/api/account', async (req, res) => {
+  const { username, password } = req.body ?? {};
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Faltan usuario o contraseña' });
+  }
+  try {
+    const account = setCredentials({ username, password });
+    await resetSession();
+    clearPersonalData();
+    scheduler.emitEvent({
+      type: 'log',
+      message: `Cuenta cambiada a ${account.username}. Sincronizá cada pantalla para traer tus datos.`,
+    });
+    res.json({ ok: true, account });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Mismo trato que el horario y las notas: el GET sirve el cache de SQLite con
 // su syncedAt (<10ms) y nunca dispara Playwright. Leer el carrito en vivo son

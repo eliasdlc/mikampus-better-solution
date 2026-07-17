@@ -233,6 +233,30 @@ addColumnIfMissing('grades', 'status', "TEXT NOT NULL DEFAULT 'taken'");
 addColumnIfMissing('grades', 'subject', 'TEXT');
 addColumnIfMissing('grades', 'catalog_nbr', 'TEXT');
 
+// Datos que pertenecen a una cuenta concreta: notas, horario inscrito, pénsum,
+// avance, holds y carrito. El catálogo (courses/subjects/sections/seats) y los
+// planes que armaste a mano son independientes de la cuenta y NO se tocan.
+const PERSONAL_TABLES = ['grades', 'enrollments', 'pensum', 'progress_items', 'holds', 'cart_rows'];
+// Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
+// StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
+const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart'];
+
+// Borra todo lo que es de la persona anterior. Se llama al cambiar de cuenta:
+// sin esto la página seguiría sirviendo desde SQLite las notas/horario/pénsum
+// del dueño viejo, porque los GET leen cache de disco, no el portal en vivo.
+export function clearPersonalData() {
+  db.exec('BEGIN');
+  try {
+    for (const table of PERSONAL_TABLES) db.exec(`DELETE FROM ${table}`);
+    const placeholders = PERSONAL_SYNC_KINDS.map(() => '?').join(', ');
+    db.prepare(`DELETE FROM sync_log WHERE kind IN (${placeholders})`).run(...PERSONAL_SYNC_KINDS);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
 // Registra el resultado de una corrida de scraping para poder mostrar
 // StalenessTag ("actualizado hace 2h") y depurar selectores rotos.
 export function logSync({ kind, term = null, status, detail = null, rows = null }) {
