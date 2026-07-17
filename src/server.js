@@ -8,6 +8,10 @@ import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './pe
 import { readCatalog } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
+import { fetchGrades, saveGrades, readGrades, termSummaries } from './peoplesoft/grades.js';
+import { fetchAdvisement, savePensum, readPensum } from './peoplesoft/advisement.js';
+import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
+import { summarizeGrades } from './shared/gpa.ts';
 import { db, lastSync } from './db.js';
 import * as plans from './plans.js';
 import * as scheduler from './scheduler.js';
@@ -93,6 +97,118 @@ app.post('/api/my-schedule/sync', async (req, res) => {
     res.json(readSchedule(schedule.term));
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el horario: ${err.message}` });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Notas y avance (/academico) ─────────────────────────────────────────────
+// Mismo trato que Mi Horario: el GET sirve lo cacheado con su StalenessTag y
+// nunca dispara scraping por entrar a la pantalla. El índice se calcula acá
+// (no se guarda) para que no exista una segunda verdad que pueda envejecer.
+app.get('/api/grades', (req, res) => {
+  const courses = readGrades();
+  res.json({
+    generatedAt: new Date().toISOString(),
+    syncedAt: lastSync('grades'),
+    terms: termSummaries(courses),
+    summary: summarizeGrades(courses),
+  });
+});
+
+app.post('/api/grades/sync', async (req, res) => {
+  try {
+    const { courses, mismatches } = await withPage((page) => fetchGrades(page));
+    saveGrades(courses);
+    // Si el índice calculado no cuadra con el que publica el portal, la
+    // universidad cambió una regla: se avisa fuerte en vez de mostrar un
+    // número plausible y falso (ver checkAgainstPortal).
+    for (const m of mismatches) {
+      scheduler.emitEvent({ type: 'log', message: `⚠ El índice no cuadra con el portal — ${m}` });
+    }
+    scheduler.emitEvent({ type: 'log', message: `Notas actualizadas: ${courses.length} materia(s)` });
+    res.json({
+      generatedAt: new Date().toISOString(),
+      syncedAt: lastSync('grades'),
+      terms: termSummaries(readGrades()),
+      summary: summarizeGrades(readGrades()),
+      mismatches,
+    });
+  } catch (err) {
+    scheduler.emitEvent({ type: 'log', message: `Error leyendo las notas: ${err.message}` });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// El pénsum con su avance. `offered` marca las materias pendientes que este
+// término tienen secciones en el catálogo local: NO es "cumplís el
+// prerequisito" —el portal no publica prerequisitos en ningún lado (ver el
+// recon de Fase 4)— es "te falta y se está ofertando". La UI no puede decir
+// más que eso sin mentir.
+app.get('/api/pensum', (req, res) => {
+  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM || latestScheduledTerm();
+  const offered = new Set(
+    term
+      ? db
+          .prepare(
+            `SELECT DISTINCT c.code FROM sections s JOIN courses c ON c.id = s.course_id WHERE s.term = ?`
+          )
+          .all(term)
+          .map((r) => r.code)
+      : []
+  );
+
+  // El título es del catálogo (tabla courses), no del pénsum: el advisement no
+  // lo trae y esta tabla no compite con el diccionario.
+  const courses = db
+    .prepare(
+      `SELECT p.code, p.subject, p.catalog_nbr, p.units, p.status, p.taken_term, p.grade, c.title
+       FROM pensum p LEFT JOIN courses c ON c.code = p.code
+       ORDER BY p.code`
+    )
+    .all()
+    .map((r) => ({
+      code: r.code,
+      subject: r.subject,
+      catalogNbr: r.catalog_nbr,
+      units: r.units,
+      status: r.status,
+      takenTerm: r.taken_term,
+      grade: r.grade,
+      title: r.title ?? null,
+      offered: r.status === 'pending' && offered.has(r.code),
+    }));
+
+  res.json({ term, generatedAt: new Date().toISOString(), syncedAt: lastSync('advisement'), courses });
+});
+
+app.post('/api/pensum/sync', async (req, res) => {
+  try {
+    scheduler.emitEvent({ type: 'log', message: 'Generando el informe de avance (tarda: lo arma el portal)…' });
+    const { courses } = await withPage((page) => fetchAdvisement(page));
+    const saved = savePensum(courses);
+    scheduler.emitEvent({ type: 'log', message: `Pénsum actualizado: ${saved.length} materia(s)` });
+    res.json({ ok: true, courses: saved.length });
+  } catch (err) {
+    scheduler.emitEvent({ type: 'log', message: `Error leyendo el pénsum: ${err.message}` });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/holds', (req, res) => {
+  res.json({ generatedAt: new Date().toISOString(), syncedAt: lastSync('holds'), holds: readHolds() });
+});
+
+app.post('/api/holds/sync', async (req, res) => {
+  try {
+    const parsed = await withPage((page) => fetchHolds(page));
+    saveHolds(parsed.holds);
+    scheduler.emitEvent({
+      type: 'log',
+      message: parsed.holds.length ? `${parsed.holds.length} hold(s) activos` : 'Sin holds ni pendientes',
+    });
+    res.json({ generatedAt: new Date().toISOString(), syncedAt: lastSync('holds'), holds: readHolds(), todos: parsed.todos });
+  } catch (err) {
+    scheduler.emitEvent({ type: 'log', message: `Error leyendo los holds: ${err.message}` });
     res.status(500).json({ error: err.message });
   }
 });
