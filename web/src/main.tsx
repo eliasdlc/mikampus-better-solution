@@ -18,6 +18,19 @@ import { applyTheme, resolveTheme } from './lib/theme.ts';
 // Aplicar el tema antes del primer render evita el flash de tema claro.
 applyTheme(resolveTheme());
 
+// El service worker (shell offline, requisito para instalar la PWA) solo existe
+// en contexto seguro: localhost lo es, http://192.168.x.x NO. Abierta desde el
+// teléfono por la LAN, mikampus es una web normal — funciona igual, pero el
+// navegador no va a ofrecer instalarla. Registrar sin este guard es un error en
+// consola en cada carga desde el teléfono.
+if ('serviceWorker' in navigator && window.isSecureContext && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('[pwa] no se pudo registrar el service worker:', err.message);
+    });
+  });
+}
+
 // stale-while-revalidate en toda la app (principio #2): se muestra lo cacheado
 // al instante y se refresca en background. Navegar entre pantallas no bloquea.
 const queryClient = new QueryClient({

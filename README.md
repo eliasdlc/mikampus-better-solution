@@ -22,6 +22,12 @@ npm start                  # levanta mikampus en http://localhost:4173
 
 Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload: `npm run dev` (Vite en :5173 con proxy de `/api` al backend en :4173, que debe estar corriendo con `npm start`).
 
+### Desde el teléfono
+
+`HOST=0.0.0.0 npm start` lo abre a tu red local e imprime la URL a tipear en el teléfono (`http://192.168.x.x:4173`). Tus credenciales no salen de tu máquina — el `.env` y la sesión de Playwright siguen acá— **pero la app queda al alcance de todo el WiFi y no tiene login**: quien la abra usa tu sesión del portal y puede inscribir o dar de baja en tu nombre. En tu casa es razonable; en el WiFi de la universidad, no. Por eso el default es solo `localhost`.
+
+En localhost, mikampus se instala como PWA (manifest + service worker: abre standalone y el shell sobrevive sin red). Por LAN plana no: `http://192.168.x.x` no es contexto seguro y el navegador no registra service workers ahí, así que desde el teléfono es una web normal — funciona igual, pero sin instalar. El service worker cachea el shell y **nunca** `/api`: los datos vienen con su `syncedAt` y un cache invisible sin fecha te mostraría el horario de ayer diciendo "actualizado hace instantes".
+
 Para que la búsqueda tenga contra qué buscar, llená el catálogo desde el portal: `node scripts/sync-catalog.mjs ICC` (ver [De dónde sale el nombre de cada materia](#de-dónde-sale-el-nombre-de-cada-materia)). Tarda unos minutos por subject y solo hace falta una vez por término. `scripts/seed-catalog.mjs` siembra 4 materias **inventadas** y es solo para probar la UI sin portal — no lo corras contra la base real.
 
 ## Stack
