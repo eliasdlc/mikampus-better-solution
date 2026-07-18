@@ -267,6 +267,48 @@ export const planToCartResultSchema = z.object({
 });
 export type PlanToCartResult = z.infer<typeof planToCartResultSchema>;
 
+// ── Recomendador de ciclo ──────────────────────────────────────────────────
+// La propuesta explica cada materia y ya trae la sección elegida por el solver.
+// Crear el plan persiste exactamente esta combinación después de recalcularla
+// en el server; el frontend nunca puede colar una sección arbitraria.
+export const recommendedAlternativeSchema = z.object({
+  courseId: z.number().int(),
+  code: z.string(),
+  title: z.string(),
+  credits: z.number().positive(),
+  sections: z.number().int().positive(),
+});
+
+export const recommendedCourseSchema = z.object({
+  courseId: z.number().int(),
+  code: z.string(),
+  title: z.string(),
+  credits: z.number().positive(),
+  kind: z.enum(['obligatoria', 'electiva']),
+  groupId: z.number().int(),
+  groupLabel: z.string(),
+  periodLabel: z.string(),
+  reason: z.string(),
+  section: catalogSectionSchema,
+  alternatives: z.array(recommendedAlternativeSchema),
+});
+export type RecommendedCourse = z.infer<typeof recommendedCourseSchema>;
+
+export const recommendationResponseSchema = z.object({
+  term: z.string(),
+  generatedAt: z.string(),
+  maxCredits: z.number().positive(),
+  totalCredits: z.number().nonnegative(),
+  recommendations: z.array(recommendedCourseSchema),
+  schedule: z.object({
+    valid: z.boolean(),
+    adjusted: z.boolean(),
+    omitted: z.array(z.object({ code: z.string(), reason: z.string() })),
+  }),
+  caveats: z.array(z.string()),
+});
+export type RecommendationResponse = z.infer<typeof recommendationResponseSchema>;
+
 // Carrito real (GET /api/cart), enriquecido: además del label crudo del portal,
 // el código canónico (color estable + cruce con el catálogo), el título del
 // diccionario local, el horario parseado (para proyectar el carrito en el
@@ -299,6 +341,57 @@ export const cartResponseSchema = z.object({
   rows: z.array(cartRowSchema),
 });
 export type CartResponse = z.infer<typeof cartResponseSchema>;
+
+// El recon de jul-2026 confirmó que esta instalación de PeopleSoft no expone
+// el Validate nativo ni un control de waitlist en los pasos 1/2 del carrito.
+// El endpoint conserva un contrato explícito para que la UI pueda decirlo y
+// para detectar si un parche futuro habilita alguno de los dos controles.
+export const cartCapabilitySchema = z.object({
+  supported: z.boolean(),
+  reason: z.string().nullable().default(null),
+});
+
+export const cartValidationResponseSchema = z.object({
+  validatedAt: z.string(),
+  validate: cartCapabilitySchema,
+  waitlistChoice: cartCapabilitySchema,
+  waitlistPosition: cartCapabilitySchema,
+  results: z.array(
+    z.object({
+      classLabel: z.string(),
+      success: z.boolean(),
+      message: z.string(),
+    })
+  ),
+});
+export type CartValidationResponse = z.infer<typeof cartValidationResponseSchema>;
+
+// Enrollment Dates. precision='date' significa literalmente que el portal no
+// publicó hora: nunca se convierte a medianoche ni alimenta el scheduler.
+export const enrollmentWindowSchema = z.object({
+  termCode: z.string(),
+  session: z.string(),
+  startsAt: z.string(),
+  endsAt: z.string(),
+  precision: z.enum(['date', 'datetime']),
+  userId: z.number().int(),
+  syncedAt: z.string(),
+});
+export type EnrollmentWindow = z.infer<typeof enrollmentWindowSchema>;
+
+export const enrollmentWindowsResponseSchema = z.object({
+  syncedAt: z.string().nullable(),
+  windows: z.array(enrollmentWindowSchema),
+});
+export type EnrollmentWindowsResponse = z.infer<typeof enrollmentWindowsResponseSchema>;
+
+export const dropResultSchema = z.object({
+  ok: z.boolean(),
+  courseCode: z.string(),
+  classLabel: z.string(),
+  message: z.string(),
+});
+export type DropResult = z.infer<typeof dropResultSchema>;
 
 // ── Notas y avance ──────────────────────────────────────────────────────────
 

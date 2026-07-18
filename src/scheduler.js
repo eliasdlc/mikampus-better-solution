@@ -47,7 +47,7 @@ export async function runEnrollNow(reason) {
   emit({ type: 'log', message: `Ejecutando inscripción (${reason})...` });
   let result;
   try {
-    result = await withPage((page) => enrollFromCart(page));
+    result = await withPage((page) => enrollFromCart(page), { retry: false });
   } catch (err) {
     emit({
       type: 'notice',

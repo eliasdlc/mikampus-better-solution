@@ -8,6 +8,10 @@ import {
   cancelSchedule,
   setWatcher,
   enrollNow,
+  validateCart,
+  fetchEnrollmentWindows,
+  syncEnrollmentWindows,
+  fetchTermContext,
 } from '../lib/api.ts';
 import type { CartRow } from '../../../src/shared/schemas.ts';
 import { sectionToBlocks, type Block } from '../lib/grid.ts';
@@ -40,11 +44,23 @@ export function Inscripcion() {
   const qc = useQueryClient();
   const cart = useQuery({ queryKey: ['cart'], queryFn: fetchCart });
   const state = useQuery({ queryKey: ['state'], queryFn: fetchState });
+  const terms = useQuery({ queryKey: ['term-context'], queryFn: fetchTermContext });
+  const nextTerm = terms.data?.next?.code ?? undefined;
+  const windows = useQuery({
+    queryKey: ['enrollment-windows', nextTerm],
+    queryFn: () => fetchEnrollmentWindows(nextTerm),
+    enabled: terms.isSuccess,
+  });
 
   const [at, setAt] = useState('');
   const [intervalSecs, setIntervalSecs] = useState(45);
 
   const enroll = useMutation({ mutationFn: enrollNow });
+  const validation = useMutation({ mutationFn: validateCart });
+  const refreshWindow = useMutation({
+    mutationFn: () => syncEnrollmentWindows(nextTerm),
+    onSuccess: (fresh) => qc.setQueryData(['enrollment-windows', nextTerm], fresh),
+  });
   // El carrito se muestra desde cache; traerlo del portal es explícito y tarda.
   const refresh = useMutation({
     mutationFn: syncCart,
@@ -67,6 +83,12 @@ export function Inscripcion() {
   const scheduledAt = state.data?.schedule?.atISO;
   const rows = cart.data?.rows ?? [];
   const blocks = useMemo(() => cartBlocks(rows), [rows]);
+  const enrollmentWindow = windows.data?.windows[0] ?? null;
+  const liveMessage = enroll.isPending
+    ? 'Ejecutando inscripción del carrito en PeopleSoft…'
+    : validation.isPending
+      ? 'Buscando Validate en el wizard de PeopleSoft…'
+      : 'Leyendo la ventana de inscripción publicada…';
 
   return (
     <div className="space-y-6">
@@ -81,7 +103,10 @@ export function Inscripcion() {
         </p>
       )}
 
-      <LiveOpBanner active={enroll.isPending} message="Ejecutando inscripción del carrito en PeopleSoft…" />
+      <LiveOpBanner
+        active={enroll.isPending || validation.isPending || refreshWindow.isPending}
+        message={liveMessage}
+      />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
@@ -142,6 +167,52 @@ export function Inscripcion() {
         </div>
 
         <aside className="space-y-4">
+          <div className="border-line bg-surface overflow-hidden rounded-[var(--radius)] border">
+            <div className="bg-accent h-1" aria-hidden />
+            <div className="space-y-3 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-medium">Ventana publicada</h2>
+                  <p className="text-muted text-xs">PeopleSoft · {terms.data?.next?.label ?? 'próximo ciclo'}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => refreshWindow.mutate()}
+                  disabled={refreshWindow.isPending}
+                  className="text-accent text-xs font-medium underline underline-offset-2 disabled:opacity-50"
+                >
+                  {refreshWindow.isPending ? 'leyendo…' : 'actualizar'}
+                </button>
+              </div>
+              {enrollmentWindow ? (
+                <div>
+                  <div className="tabular font-display text-xl font-semibold tracking-tight">
+                    {new Date(`${enrollmentWindow.startsAt}T12:00:00`).toLocaleDateString('es-DO', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                  </div>
+                  <p className="text-muted mt-0.5 text-xs">
+                    hasta el{' '}
+                    {new Date(`${enrollmentWindow.endsAt}T12:00:00`).toLocaleDateString('es-DO', {
+                      day: 'numeric',
+                      month: 'short',
+                    })}
+                  </p>
+                  {enrollmentWindow.precision === 'date' && (
+                    <p className="border-waitlist/40 bg-waitlist/10 text-waitlist mt-3 rounded-[var(--radius)] border px-2.5 py-2 text-xs">
+                      El portal no publica la hora. Escribí abajo la hora comunicada por tu escuela; mikampus no asumirá medianoche.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-muted text-xs">Todavía no has leído Enrollment Dates.</p>
+              )}
+              {refreshWindow.error && <p className="text-closed text-xs">{refreshWindow.error.message}</p>}
+            </div>
+          </div>
+
           <div className="border-line bg-surface space-y-3 rounded-[var(--radius)] border p-4">
             <h2 className="text-sm font-medium">Hora de inscripción</h2>
             {scheduledAt ? (
@@ -174,6 +245,31 @@ export function Inscripcion() {
                 </button>
               </div>
             )}
+          </div>
+
+          <div className="border-line bg-surface space-y-3 rounded-[var(--radius)] border p-4">
+            <div>
+              <h2 className="text-sm font-medium">Validación previa</h2>
+              <p className="text-muted mt-1 text-xs">Comprueba qué pre-chequeos habilitó PUCMM antes de someter.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => validation.mutate()}
+              disabled={validation.isPending || rows.length === 0}
+              className="border-line hover:bg-surface-2 w-full rounded-[var(--radius)] border px-3 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              Validar carrito ahora
+            </button>
+            {validation.data && !validation.data.validate.supported && (
+              <div className="border-line bg-bg rounded-[var(--radius)] border p-2.5 text-xs">
+                <p className="font-medium">Validate no está habilitado por PUCMM</p>
+                <p className="text-muted mt-1">{validation.data.validate.reason}</p>
+                <p className="text-muted mt-2">
+                  Waitlist: {validation.data.waitlistChoice.reason} {validation.data.waitlistPosition.reason}
+                </p>
+              </div>
+            )}
+            {validation.error && <p className="text-closed text-xs">{validation.error.message}</p>}
           </div>
 
           <div className="border-line bg-surface space-y-3 rounded-[var(--radius)] border p-4">

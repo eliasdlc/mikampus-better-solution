@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { fetchCart, fetchState, fetchMySchedule, fetchHolds, fetchPlans, fetchTermContext } from '../lib/api.ts';
+import {
+  fetchCart,
+  fetchState,
+  fetchMySchedule,
+  fetchHolds,
+  fetchPlans,
+  fetchTermContext,
+  fetchEnrollmentWindows,
+} from '../lib/api.ts';
 import { toBlocks, type Block } from '../lib/grid.ts';
 import { agendaFor, nextClass, type NextClass } from '../../../src/shared/agenda.ts';
 import { DAY_LABELS, toMinutes } from '../../../src/shared/meetings.ts';
-import type { TermInfo } from '../../../src/shared/schemas.ts';
+import type { EnrollmentWindow, TermInfo } from '../../../src/shared/schemas.ts';
 import { courseColor } from '../lib/color.ts';
 import { ago } from '../lib/time.ts';
 import { Countdown } from '../components/Countdown.tsx';
@@ -41,6 +49,11 @@ export function Dashboard() {
   const state = useQuery({ queryKey: ['state'], queryFn: fetchState });
   const holds = useQuery({ queryKey: ['holds'], queryFn: fetchHolds });
   const plans = useQuery({ queryKey: ['plans'], queryFn: fetchPlans });
+  const enrollmentWindows = useQuery({
+    queryKey: ['enrollment-windows', next?.code],
+    queryFn: () => fetchEnrollmentWindows(next?.code ?? undefined),
+    enabled: terms.isSuccess,
+  });
 
   // Cada 30s: es lo que tarda "faltan 12 min" en volverse mentira. El countdown
   // del hero corre por su cuenta cada segundo; esto solo decide CUÁL es la
@@ -97,6 +110,7 @@ export function Dashboard() {
             planes={nextPlans.length}
             cartCount={cart.data?.rows.length ?? 0}
             scheduledAt={state.data?.schedule?.atISO ?? null}
+            enrollmentWindow={enrollmentWindows.data?.windows[0] ?? null}
           />
           <WatcherCard watcher={state.data?.watcher ?? null} />
           <HoldsCard holds={holds.data?.holds ?? []} />
@@ -258,12 +272,14 @@ function NextCycleCard({
   planes,
   cartCount,
   scheduledAt,
+  enrollmentWindow,
 }: {
   term: TermInfo | null;
   enrolled: number;
   planes: number;
   cartCount: number;
   scheduledAt: string | null;
+  enrollmentWindow: EnrollmentWindow | null;
 }) {
   // Una línea que resume dónde estás parado para el ciclo que viene, en orden
   // de compromiso: inscrito > carrito > plan > nada.
@@ -275,9 +291,10 @@ function NextCycleCard({
         : planes > 0
           ? `${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}`
           : 'sin materias todavía';
+  const ofrecerRecomendacion = term != null && planes === 0;
 
   return (
-    <Card to="/inscripcion" title="Próximo ciclo">
+    <Card to={ofrecerRecomendacion ? '/planner?recomendado=1' : '/inscripcion'} title="Próximo ciclo">
       <div className="mt-1 flex items-center justify-between gap-2">
         <TermBadge label={term?.label ?? null} />
       </div>
@@ -289,7 +306,26 @@ function NextCycleCard({
         </div>
       ) : (
         <div className="text-muted border-line mt-3 border-t pt-3 text-xs">
-          {cartCount > 0 ? 'carrito listo · sin disparo programado' : 'sin disparo programado'}
+          {enrollmentWindow ? (
+            <>
+              <span className="text-fg tabular font-mono">
+                {new Date(`${enrollmentWindow.startsAt}T12:00:00`).toLocaleDateString('es-DO', {
+                  day: 'numeric',
+                  month: 'short',
+                })}
+              </span>{' '}
+              · {enrollmentWindow.precision === 'date' ? 'hora no publicada' : 'abre inscripción'}
+            </>
+          ) : cartCount > 0 ? (
+            'carrito listo · sin disparo programado'
+          ) : (
+            'sin disparo programado'
+          )}
+        </div>
+      )}
+      {ofrecerRecomendacion && (
+        <div className="text-accent border-line mt-3 border-t pt-3 text-xs font-medium">
+          Generar un plan desde tu trayectoria →
         </div>
       )}
     </Card>
