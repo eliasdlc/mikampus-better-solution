@@ -99,6 +99,42 @@ export function createPlan({ term, name }) {
   return readPlan(lastInsertRowid);
 }
 
+// Persiste de una vez la combinación que devolvió el recomendador. Se valida
+// todo antes de abrir la transacción para que nunca quede un "plan recomendado"
+// a medias si una sección desapareció o pertenece a otro término.
+export function createPlanWithItems({ term, name, items }) {
+  if (!term?.trim() || !name?.trim()) throw new Error('Un plan necesita término y nombre');
+  if (!Array.isArray(items) || items.length === 0) throw new Error('No hay materias recomendadas para crear el plan');
+
+  const seen = new Set();
+  const planShape = { term: term.trim() };
+  for (const item of items) {
+    if (!Number.isInteger(item.courseId) || !Number.isInteger(item.sectionId)) {
+      throw new Error('La recomendación tiene una materia o sección inválida');
+    }
+    if (seen.has(item.courseId)) throw new Error('La recomendación repite una materia');
+    seen.add(item.courseId);
+    assertSectionBelongs(planShape, item.courseId, item.sectionId);
+  }
+
+  db.exec('BEGIN');
+  try {
+    const { lastInsertRowid: planId } = db
+      .prepare('INSERT INTO plans (term, name) VALUES (?, ?)')
+      .run(term.trim(), name.trim());
+    const insert = db.prepare(
+      `INSERT INTO plan_items (plan_id, course_id, section_id, status, note)
+       VALUES (?, ?, ?, 'planned', ?)`
+    );
+    for (const item of items) insert.run(planId, item.courseId, item.sectionId, item.note ?? null);
+    db.exec('COMMIT');
+    return readPlan(planId);
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
 export function updatePlan(planId, { name }) {
   if (!name?.trim()) throw new Error('El nombre no puede quedar vacío');
   const { changes } = db
