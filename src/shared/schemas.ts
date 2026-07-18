@@ -463,6 +463,90 @@ export const profileResponseSchema = z.object({
 });
 export type ProfileResponse = z.infer<typeof profileResponseSchema>;
 
+// ── Metas y señales (Fase 10, §12.7) ─────────────────────────────────────────
+// Todo esto se calcula local (nunca se scrapea) con la aritmética de gpa.ts. El
+// contrato existe igual: es el borde entre backend y frontend, y valida que el
+// motor devuelve lo que la UI espera.
+
+// El abanico honesto de índice final sobre los créditos que faltan del pénsum.
+export const gpaProjectionSchema = z.object({
+  remainingCredits: z.number(),
+  current: z.number().nullable(),
+  best: z.number().nullable(), // todo A
+  maintain: z.number().nullable(), // mantenés tu promedio
+  floor: z.number().nullable(), // todo C
+});
+export type GpaProjectionResponse = z.infer<typeof gpaProjectionSchema>;
+
+export const goalVerdictSchema = z.enum(['met', 'secured', 'reachable', 'tight', 'unreachable']);
+
+export const goalSchema = z.object({
+  id: z.number().int(),
+  kind: z.literal('gpa'),
+  target: z.number(),
+  deadlineTerm: z.string().nullable(),
+  createdAt: z.string(),
+  achievedAt: z.string().nullable(),
+});
+export type Goal = z.infer<typeof goalSchema>;
+
+// La meta con su veredicto calculado en vivo contra las notas del momento.
+export const goalEvaluationSchema = goalSchema.extend({
+  verdict: goalVerdictSchema,
+  // Promedio (0–4) que exige lo que falta. null cuando no quedan créditos.
+  requiredAverage: z.number().nullable(),
+  projectedIfMaintain: z.number().nullable(),
+});
+export type GoalEvaluation = z.infer<typeof goalEvaluationSchema>;
+
+// Metas + proyección viajan juntas: la UI las muestra en el mismo panel y una
+// mutación de meta refresca ambas. basedOn dice sobre cuántos créditos al índice
+// se calcula todo, para que el número no salga sin su base.
+export const goalsResponseSchema = z.object({
+  goals: z.array(goalEvaluationSchema),
+  projection: gpaProjectionSchema.nullable(),
+  basedOn: z.object({
+    gpa: z.number().nullable(),
+    unitsTowardGpa: z.number(),
+    remainingCredits: z.number(),
+  }),
+  syncedAt: z.string().nullable(),
+});
+export type GoalsResponse = z.infer<typeof goalsResponseSchema>;
+
+// Señales descriptivas. Discriminadas por kind: la UI mapea cada una a su forma
+// sin adivinar. Una señal ausente del arreglo es una señal bajo su umbral.
+const areaStatSchema = z.object({ subject: z.string(), gpa: z.number(), count: z.number().int() });
+const loadStatSchema = z.object({ avgGpa: z.number(), avgCredits: z.number(), terms: z.number().int() });
+
+export const insightSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('gpa-trend'),
+    direction: z.enum(['rising', 'falling', 'flat']),
+    delta: z.number(),
+    points: z.array(z.object({ term: z.string(), gpa: z.number() })),
+  }),
+  z.object({ kind: z.literal('area-performance'), best: areaStatSchema, worst: areaStatSchema }),
+  z.object({ kind: z.literal('load-vs-result'), heavy: loadStatSchema, light: loadStatSchema }),
+  z.object({
+    kind: z.literal('repeated-courses'),
+    courses: z.array(
+      z.object({
+        code: z.string(),
+        attempts: z.array(z.object({ term: z.string().nullable(), grade: z.string().nullable() })),
+      })
+    ),
+  }),
+  z.object({ kind: z.literal('withdrawn-courses'), count: z.number().int(), codes: z.array(z.string()) }),
+]);
+export type Insight = z.infer<typeof insightSchema>;
+
+export const insightsResponseSchema = z.object({
+  insights: z.array(insightSchema),
+  syncedAt: z.string().nullable(),
+});
+export type InsightsResponse = z.infer<typeof insightsResponseSchema>;
+
 // 'unknown' no es "no bloquea": es "el portal no nos lo dijo". Ver
 // peoplesoft/holds.js — sin un hold real que mirar, la severidad no se inventa.
 export const holdSeveritySchema = z.enum(['blocking', 'info', 'unknown']);

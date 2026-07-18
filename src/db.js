@@ -206,6 +206,22 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_plan_items_plan ON plan_items(plan_id);
 
+  -- Metas del estudiante (Fase 10, §12.7). Por ahora solo 'gpa': un índice
+  -- objetivo, con un término límite opcional. Es un dato hecho a mano —como los
+  -- planes— así que no entra a PERSONAL_TABLES: no se borra al cambiar de cuenta.
+  -- user_id nace ya (constante 1) para abaratar el multi-usuario (§0). El
+  -- veredicto (alcanzable/inalcanzable) NO se guarda: se calcula en vivo con
+  -- shared/gpa.ts contra las notas del momento, para que no envejezca en la fila.
+  CREATE TABLE IF NOT EXISTS goals (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL DEFAULT 1,
+    kind           TEXT NOT NULL DEFAULT 'gpa',
+    target         REAL NOT NULL,
+    deadline_term  TEXT,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    achieved_at    TEXT
+  );
+
   -- El histórico de notas, leído de My Course History. Una materia repetida
   -- aparece dos veces con términos distintos, así que la identidad de una fila
   -- es término+código, no el código solo.
