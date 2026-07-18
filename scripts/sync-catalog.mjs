@@ -3,6 +3,7 @@ import { loginToPeopleSoft } from '../src/login.js';
 import { fetchSubjects, syncSubjectTitles, knownSubjects } from '../src/peoplesoft/browseCatalog.js';
 import { syncCatalogSubject } from '../src/peoplesoft/catalog.js';
 import { fetchAdvisement, savePensum } from '../src/peoplesoft/advisement.js';
+import { readTerms } from '../src/terms.js';
 
 // Llena el catálogo real desde el portal. Es el eslabón que faltaba: el scraper
 // existía y estaba probado, pero nadie lo llamaba, así que la app buscaba
@@ -25,7 +26,7 @@ import { fetchAdvisement, savePensum } from '../src/peoplesoft/advisement.js';
 //   node scripts/sync-catalog.mjs --solo-titulos LET   # títulos, sin barrer secciones
 //   SYNC_TERM=1930 node scripts/sync-catalog.mjs ICC
 
-const TERM = process.env.SYNC_TERM || process.env.TARGET_TERM || '1930';
+const TERM = process.env.SYNC_TERM || readTerms().next?.code || null;
 const CAREER = process.env.SYNC_CAREER || 'GRDO';
 
 const args = process.argv.slice(2);
@@ -38,6 +39,10 @@ const soloPendientes = args.includes('--pendientes');
 // títulos, que son una sola pantalla.
 const soloTitulos = args.includes('--solo-titulos');
 let requested = args.filter((a) => !a.startsWith('--')).map((s) => s.toUpperCase());
+
+if (!soloTitulos && !onlySubjects && !TERM) {
+  throw new Error('No se conoce el próximo ciclo. Sincronizá términos o indicá SYNC_TERM explícitamente.');
+}
 
 const { browser, page } = await loginToPeopleSoft({ headless: true });
 try {

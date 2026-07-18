@@ -29,13 +29,17 @@ async function teardown() {
 // usuario, en fila (nunca dos acciones de Playwright en paralelo sobre la
 // misma página) y con un reintento automático si la sesión expiró a mitad
 // de camino.
-export function withPage(fn) {
+export function withPage(fn, { retry = true } = {}) {
   const run = async () => {
     await ensureSession();
     try {
       return await fn(page);
     } catch (err) {
       await teardown();
+      // Una operación con efectos (enroll/drop) no se repite a ciegas: el
+      // timeout pudo ocurrir DESPUÉS del submit. El caller debe verificar el
+      // estado antes de decidir un segundo intento.
+      if (!retry) throw err;
       await ensureSession();
       return await fn(page);
     }
