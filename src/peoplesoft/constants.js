@@ -17,6 +17,15 @@ export const BROWSE_CATALOG_URL =
 export const SCHEDULE_URL =
   'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SSR_SSENRL_SCHD_W.GBL?FolderPath=PORTAL_ROOT_OBJECT.CO_EMPLOYEE_SELF_SERVICE.HCCC_ENROLLMENT.HC_SSR_SSENRL_SCHD_W_GBL&IsFolder=false&IgnoreParamTempl=FolderPath%2cIsFolder';
 
+// Ver Mi Horario (visor de solo lectura, componente LAM). Distinto de
+// SCHEDULE_URL: aquel (SSR_SSENRL_SCHD_W) vive dentro del flujo de inscripción y
+// su selector de término solo ofrece ciclos abiertos para inscribir, así que no
+// muestra el ciclo en curso ni los pasados. Este componente (SS_LAM_STD_GR_LST,
+// bajo "Inscripciones") es el visor: no está atado a citas de inscripción, así
+// que sirve para consultar el horario real de cualquier ciclo, actual o pasado.
+export const VIEW_SCHEDULE_URL =
+  'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SS_LAM_STD_GR_LST.GBL?PORTALPARAM_PTCNAV=HC_SS_LAM_STD_GR_LST_GBL1&EOPP.SCNode=SA&EOPP.SCPortal=EMPLOYEE&EOPP.SCName=HCCC_ENROLLMENT&EOPP.SCLabel=Inscripciones&EOPP.SCPTfname=HCCC_ENROLLMENT&FolderPath=PORTAL_ROOT_OBJECT.CO_EMPLOYEE_SELF_SERVICE.HCCC_ENROLLMENT.HC_SS_LAM_STD_GR_LST_GBL1&IsFolder=false';
+
 // Dar de baja una materia (plan §5.5). Mismo patrón de URL clásica que el
 // carrito y Mi Horario, en la misma carpeta de Enrollment del portal.
 // RECON PENDIENTE: nadie corrió src/recon-drop.js todavía, así que no hay
