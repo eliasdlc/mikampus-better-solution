@@ -10,6 +10,10 @@ import {
   termContextSchema,
   gradesResponseSchema,
   pensumResponseSchema,
+  requirementsResponseSchema,
+  profileResponseSchema,
+  type RequirementsResponse,
+  type ProfileResponse,
   holdsResponseSchema,
   accountInfoSchema,
   type AccountInfo,
@@ -188,10 +192,23 @@ export async function fetchPensum(term?: string): Promise<PensumResponse> {
   return pensumResponseSchema.parse(await getJSON(`/api/pensum${qs}`));
 }
 
+// El árbol de requisitos: período → obligatorios/electivas → cursos, con el
+// courseId del catálogo y "offered" ya cruzados en el server.
+export async function fetchRequirements(term?: string): Promise<RequirementsResponse> {
+  const qs = term ? `?term=${encodeURIComponent(term)}` : '';
+  return requirementsResponseSchema.parse(await getJSON(`/api/requirements${qs}`));
+}
+
+export async function fetchProfile(): Promise<ProfileResponse> {
+  return profileResponseSchema.parse(await getJSON('/api/profile'));
+}
+
 // El informe de avance lo genera el portal al vuelo: es la operación más lenta
-// de la app (~30s).
-export async function syncPensum(): Promise<{ ok: boolean; courses: number }> {
-  return z.object({ ok: z.boolean(), courses: z.number() }).parse(await send('/api/pensum/sync', 'POST'));
+// de la app (~30s). Ahora reconstruye el árbol entero y deriva el pénsum.
+export async function syncPensum(): Promise<{ ok: boolean; groups: number; courses: number; pensum: number }> {
+  return z
+    .object({ ok: z.boolean(), groups: z.number(), courses: z.number(), pensum: z.number() })
+    .parse(await send('/api/pensum/sync', 'POST'));
 }
 
 export async function fetchHolds(): Promise<HoldsResponse> {

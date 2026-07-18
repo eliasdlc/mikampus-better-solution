@@ -1,5 +1,6 @@
 import { db, logSync } from '../db.js';
 import { splitCourseCode, courseCodeToString } from '../shared/courseCode.ts';
+import { termSortKey } from '../shared/gpa.ts';
 import { knownSubjects } from './browseCatalog.js';
 
 // My Academic Requirements — el informe de avance de carrera (el mismo que la
@@ -384,11 +385,28 @@ export async function fetchAdvisement(page) {
   await page.waitForTimeout(12000);
 
   frame = await findFrame(page, '[id^="CRSE_NAME$span$"]');
-  const raw = await frame.evaluate(extractAdvisement);
-  const courses = parseAdvisement(raw.rows, { knownSubjects: knownSubjects() });
+  const raw = await frame.evaluate(extractAdvisementTree);
+  const tree = parseAdvisementTree(raw, { knownSubjects: knownSubjects() });
+  const subjects = subjectsFromAdvisement(tree.courses);
 
-  logSync({ kind: 'advisement', term: null, status: 'ok', detail: raw.plan ?? 'pensum', rows: courses.length });
-  return { ...raw, courses, subjects: subjectsFromAdvisement(courses) };
+  logSync({ kind: 'advisement', term: null, status: 'ok', detail: raw.plan ?? 'pensum', rows: tree.courses.length });
+  return { plan: raw.plan, generatedAt: raw.generatedAt, subjects, ...tree };
+}
+
+// La cohorte del estudiante: su primer término con notas. Sale de grades, no del
+// informe de avance, así que se calcula acá para pasársela al save del árbol.
+export function earliestGradeTerm() {
+  const labels = db.prepare('SELECT DISTINCT term FROM grades WHERE term IS NOT NULL').all().map((r) => r.term);
+  let best = null;
+  let bestKey = null;
+  for (const label of labels) {
+    const key = termSortKey(label);
+    if (key && (bestKey == null || key < bestKey)) {
+      bestKey = key;
+      best = label;
+    }
+  }
+  return best;
 }
 
 // El informe lista la misma materia en varios bloques de requisito, así que el
