@@ -451,3 +451,165 @@ export function readPensum() {
 export function pendingCourses() {
   return db.prepare("SELECT code FROM pensum WHERE status = 'pending' ORDER BY code").all().map((r) => r.code);
 }
+
+// ── Guardado del árbol v2 + pénsum derivado ────────────────────────────────
+
+// Reconstruye la tabla plana `pensum` a partir del árbol. La regla que arregla
+// el punto 2 del plan: una candidata de electiva que nunca cursaste NO es una
+// pendiente que debas inscribir, es una opción entre varias. Al pénsum solo
+// entra lo obligatorio (aparece en un grupo no-electiva) o lo que ya cursaste.
+// Así `pendingCourses()` deja de devolver 44 materias infladas.
+export function derivePensum() {
+  const rows = db
+    .prepare(
+      `SELECT code, subject, catalog_nbr, units, status, is_candidate, taken_term, grade
+       FROM requirement_courses`
+    )
+    .all();
+
+  const byCode = new Map();
+  for (const r of rows) {
+    let e = byCode.get(r.code);
+    if (!e) {
+      e = {
+        code: r.code, subject: r.subject, catalogNbr: r.catalog_nbr, units: r.units,
+        status: r.status, takenTerm: r.taken_term, grade: r.grade,
+        obligatoria: r.is_candidate === 0,
+      };
+      byCode.set(r.code, e);
+      continue;
+    }
+    // Entre copias del mismo código gana el estado más avanzado (una aprobada
+    // no puede quedar como pending por reaparecer de candidata); la nota y el
+    // término los aporta la copia que la cursó.
+    if (STATUS_PRECEDENCE.indexOf(r.status) > STATUS_PRECEDENCE.indexOf(e.status)) {
+      e.status = r.status;
+      if (r.grade) e.grade = r.grade;
+      if (r.taken_term) e.takenTerm = r.taken_term;
+    }
+    e.grade ??= r.grade;
+    e.takenTerm ??= r.taken_term;
+    e.units ??= r.units;
+    e.subject ??= r.subject;
+    e.catalogNbr ??= r.catalog_nbr;
+    if (r.is_candidate === 0) e.obligatoria = true;
+  }
+
+  db.exec('DELETE FROM pensum');
+  let n = 0;
+  for (const e of byCode.values()) {
+    const cursada = STATUS_PRECEDENCE.indexOf(e.status) >= STATUS_PRECEDENCE.indexOf('in_progress');
+    if (!e.obligatoria && !cursada) continue; // candidata pura → no es del pénsum
+    upsertPensumStmt.run(e.code, e.subject, e.catalogNbr, e.units, e.status, e.takenTerm, e.grade);
+    n++;
+  }
+  return n;
+}
+
+const insertGroupStmt = db.prepare(`
+  INSERT INTO requirement_groups
+    (id, parent_id, kind, label, year, period, satisfied, collapsed, position,
+     units_required, units_taken, units_needed, courses_required, courses_taken, courses_needed, gpa_actual)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const insertReqCourseStmt = db.prepare(`
+  INSERT OR IGNORE INTO requirement_courses
+    (group_id, code, subject, catalog_nbr, title, units, status, is_candidate, taken_term, grade)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const upsertProfileStmt = db.prepare(`
+  INSERT INTO profile (id, career, pensum_no, plan_label, cohort_start_term, updated_at)
+  VALUES (1, ?, ?, ?, ?, datetime('now'))
+  ON CONFLICT(id) DO UPDATE SET
+    career = excluded.career,
+    pensum_no = excluded.pensum_no,
+    plan_label = excluded.plan_label,
+    -- la cohorte solo se pisa si el nuevo sync la trae; si no, se conserva
+    cohort_start_term = COALESCE(excluded.cohort_start_term, profile.cohort_start_term),
+    updated_at = datetime('now')
+`);
+
+// Borra y reescribe el árbol entero (como cart_rows): un grupo que el portal ya
+// no lista tampoco existe. Los grupos van en orden de documento, que es orden
+// topológico (padre antes que hijo), así que la FK parent_id se respeta sin
+// ordenar aparte. Deriva el pénsum al final, todo en una transacción.
+export function saveRequirementTree({ profile, groups, courses }, { cohortStartTerm = null } = {}) {
+  db.exec('BEGIN');
+  try {
+    db.exec('DELETE FROM requirement_courses');
+    db.exec('DELETE FROM requirement_groups');
+
+    for (const g of groups) {
+      insertGroupStmt.run(
+        g.id, g.parentId, g.kind, g.label, g.year, g.period,
+        g.satisfied ? 1 : 0, g.collapsed ? 1 : 0, g.position,
+        g.unitsRequired, g.unitsTaken, g.unitsNeeded,
+        g.coursesRequired, g.coursesTaken, g.coursesNeeded, g.gpaActual
+      );
+    }
+    for (const c of courses) {
+      insertReqCourseStmt.run(
+        c.groupId, c.code, c.subject, c.catalogNbr, c.title, c.units,
+        c.status, c.isCandidate ? 1 : 0, c.takenTerm, c.grade
+      );
+    }
+    if (profile) {
+      upsertProfileStmt.run(profile.career, profile.pensumNo, profile.planLabel, cohortStartTerm);
+    }
+
+    const pensum = derivePensum();
+    db.exec('COMMIT');
+    return { groups: groups.length, courses: courses.length, pensum };
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+export function readProfile() {
+  return db.prepare('SELECT * FROM profile WHERE id = 1').get() ?? null;
+}
+
+// El árbol anidado para la UI: cada grupo con sus hijos y sus cursos. Los
+// grupos vienen ordenados por posición del documento, que es la secuencia real.
+export function readRequirementTree() {
+  const groups = db.prepare('SELECT * FROM requirement_groups ORDER BY position').all();
+  if (groups.length === 0) return null;
+
+  const courses = db
+    .prepare('SELECT * FROM requirement_courses ORDER BY is_candidate, code')
+    .all();
+  const coursesByGroup = new Map();
+  for (const c of courses) {
+    const list = coursesByGroup.get(c.group_id) ?? [];
+    list.push({
+      code: c.code, subject: c.subject, catalogNbr: c.catalog_nbr, title: c.title,
+      units: c.units, status: c.status, isCandidate: c.is_candidate === 1,
+      takenTerm: c.taken_term, grade: c.grade,
+    });
+    coursesByGroup.set(c.group_id, list);
+  }
+
+  const nodes = new Map();
+  for (const g of groups) {
+    nodes.set(g.id, {
+      id: g.id, kind: g.kind, label: g.label, year: g.year, period: g.period,
+      satisfied: g.satisfied === 1, collapsed: g.collapsed === 1, position: g.position,
+      units: { required: g.units_required, taken: g.units_taken, needed: g.units_needed },
+      courses: { required: g.courses_required, taken: g.courses_taken, needed: g.courses_needed },
+      gpaActual: g.gpa_actual,
+      items: coursesByGroup.get(g.id) ?? [],
+      children: [],
+    });
+  }
+
+  let root = null;
+  for (const g of groups) {
+    const node = nodes.get(g.id);
+    if (g.parent_id == null) root = node;
+    else nodes.get(g.parent_id)?.children.push(node);
+  }
+  return root;
+}
