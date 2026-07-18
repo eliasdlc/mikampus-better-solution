@@ -1,6 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchCatalog, addToCart, fetchPlans, addPlanItem, fetchMySchedule, fetchTermContext } from '../lib/api.ts';
+import {
+  fetchCatalog,
+  addToCart,
+  fetchPlans,
+  addPlanItem,
+  fetchMySchedule,
+  fetchTermContext,
+  fetchPensumCodes,
+} from '../lib/api.ts';
 import { buildIndex } from '../lib/search.ts';
 import { normalizeSeatStatus, type CatalogCourse, type CatalogSection } from '../../../src/shared/schemas.ts';
 import { portalCatalogNbr } from '../../../src/shared/courseCode.ts';
@@ -22,13 +30,22 @@ export function Buscar() {
     queryFn: () => fetchMySchedule(planningCode!),
     enabled: planningCode != null,
   });
+  // Carrera-first (§11): el índice arranca acotado a tu pénsum (requisitos +
+  // inscritas). El chip "Todo el catálogo" — apagado por defecto — abre el resto.
+  const pensumCodesQ = useQuery({ queryKey: ['pensum-codes'], queryFn: fetchPensumCodes });
+  const pensumCodes = useMemo(() => new Set(pensumCodesQ.data ?? []), [pensumCodesQ.data]);
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
   const [sinChoque, setSinChoque] = useState(false);
+  const [todoCatalogo, setTodoCatalogo] = useState(false);
 
   const courses = catalog.data?.courses ?? [];
   const byId = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
   const index = useMemo(() => buildIndex(courses), [courses]);
+  // Solo hay a qué acotar si el pénsum ya se sincronizó; sin eso, el catálogo
+  // entero (no dejar la búsqueda vacía porque falte el pénsum).
+  const hayPensum = pensumCodes.size > 0;
+  const acotado = hayPensum && !todoCatalogo;
 
   // Solo lo inscrito ocupa tiempo: una materia dada de baja no choca con nada.
   const ocupado = useMemo(
@@ -56,11 +73,12 @@ export function Buscar() {
           .search(q)
           .map((r) => byId.get(r.id as number))
           .filter((c): c is CatalogCourse => !!c) as CatalogCourse[]);
-    // El filtro se aplica ANTES de cortar a 50: si no, una materia sin choque
-    // se perdería solo por caer 51ª entre las que sí chocan.
-    const filtrado = sinChoque ? base.filter((c) => c.sections.some((s) => !choca(s))) : base;
+    // Carrera-first primero, y todo el filtrado ANTES de cortar a 50: si no,
+    // una materia tuya se perdería solo por caer 51ª entre las del catálogo.
+    const propias = acotado ? base.filter((c) => pensumCodes.has(c.code)) : base;
+    const filtrado = sinChoque ? propias.filter((c) => c.sections.some((s) => !choca(s))) : propias;
     return filtrado.slice(0, 50);
-  }, [q, index, byId, courses, sinChoque, choca]);
+  }, [q, index, byId, courses, sinChoque, choca, acotado, pensumCodes]);
 
   const puedeFiltrar = ocupado.length > 0;
 
@@ -80,18 +98,33 @@ export function Buscar() {
       />
 
       {/* Filtros como chips togglables, no formulario (plan §5.2). */}
-      {puedeFiltrar && (
+      {(puedeFiltrar || hayPensum) && (
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSinChoque((v) => !v)}
-            aria-pressed={sinChoque}
-            className={`min-h-8 rounded-full px-3 py-1 text-xs transition-colors duration-100 ${
-              sinChoque ? 'bg-accent text-accent-fg font-medium' : 'border-line text-muted hover:text-fg border'
-            }`}
-          >
-            Sin choque con mi horario
-          </button>
+          {hayPensum && (
+            <button
+              type="button"
+              onClick={() => setTodoCatalogo((v) => !v)}
+              aria-pressed={todoCatalogo}
+              className={`min-h-8 rounded-full px-3 py-1 text-xs transition-colors duration-100 ${
+                todoCatalogo ? 'bg-accent text-accent-fg font-medium' : 'border-line text-muted hover:text-fg border'
+              }`}
+            >
+              Todo el catálogo
+            </button>
+          )}
+          {puedeFiltrar && (
+            <button
+              type="button"
+              onClick={() => setSinChoque((v) => !v)}
+              aria-pressed={sinChoque}
+              className={`min-h-8 rounded-full px-3 py-1 text-xs transition-colors duration-100 ${
+                sinChoque ? 'bg-accent text-accent-fg font-medium' : 'border-line text-muted hover:text-fg border'
+              }`}
+            >
+              Sin choque con mi horario
+            </button>
+          )}
+          {acotado && <span className="text-muted text-xs">mostrando solo tu pénsum</span>}
           {sinChoque && (
             <span className="text-muted text-xs">
               se ocultan las secciones que pisan tus {ocupado.length} bloque(s) inscritos

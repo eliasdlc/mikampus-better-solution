@@ -303,6 +303,21 @@ app.get('/api/profile', (req, res) => {
   res.json({ profile: readProfile(), syncedAt: lastSync('advisement') });
 });
 
+// Los códigos que le importan a TU carrera: todo lo del árbol de requisitos
+// (obligatorias + candidatas de electiva) más lo que ya tenés inscrito. Es lo
+// que acota la búsqueda carrera-first (§11): el índice arranca por acá y el chip
+// "Todo el catálogo" abre el resto.
+app.get('/api/pensum/codes', (req, res) => {
+  const reqCodes = db.prepare('SELECT DISTINCT code FROM requirement_courses').all().map((r) => r.code);
+  const enrolled = db
+    .prepare(
+      `SELECT DISTINCT c.code FROM enrollments e JOIN courses c ON c.id = e.course_id WHERE e.status = 'enrolled'`
+    )
+    .all()
+    .map((r) => r.code);
+  res.json({ codes: [...new Set([...reqCodes, ...enrolled])] });
+});
+
 app.get('/api/holds', (req, res) => {
   res.json({ generatedAt: new Date().toISOString(), syncedAt: lastSync('holds'), holds: readHolds() });
 });
