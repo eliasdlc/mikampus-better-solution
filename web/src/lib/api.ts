@@ -203,6 +203,12 @@ export async function fetchProfile(): Promise<ProfileResponse> {
   return profileResponseSchema.parse(await getJSON('/api/profile'));
 }
 
+// Los códigos de tu carrera (pénsum + inscritas): acotan la búsqueda a lo tuyo.
+export async function fetchPensumCodes(): Promise<string[]> {
+  const { codes } = z.object({ codes: z.array(z.string()) }).parse(await getJSON('/api/pensum/codes'));
+  return codes;
+}
+
 // El informe de avance lo genera el portal al vuelo: es la operación más lenta
 // de la app (~30s). Ahora reconstruye el árbol entero y deriva el pénsum.
 export async function syncPensum(): Promise<{ ok: boolean; groups: number; courses: number; pensum: number }> {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Command } from 'cmdk';
-import { fetchCatalog, fetchPlans, addToCart, addPlanItem } from '../lib/api.ts';
+import { fetchCatalog, fetchPlans, addToCart, addPlanItem, fetchPensumCodes } from '../lib/api.ts';
 import { buildIndex } from '../lib/search.ts';
 import { portalCatalogNbr } from '../../../src/shared/courseCode.ts';
 import { normalizeSeatStatus, type CatalogCourse, type CatalogSection } from '../../../src/shared/schemas.ts';
@@ -37,6 +37,8 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   // un índice MiniSearch a quien nunca lo use. Después es cache de TanStack,
   // compartido con /buscar.
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: () => fetchCatalog(), enabled: open });
+  const pensumCodesQ = useQuery({ queryKey: ['pensum-codes'], queryFn: fetchPensumCodes, enabled: open });
+  const pensumCodes = useMemo(() => new Set(pensumCodesQ.data ?? []), [pensumCodesQ.data]);
   const courses = catalog.data?.courses ?? [];
   const byId = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
   const index = useMemo(() => buildIndex(courses), [courses]);
@@ -52,12 +54,15 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
 
   const resultados = useMemo(() => {
     if (!q.trim()) return [];
-    return index
+    const todos = index
       .search(q)
       .map((r) => byId.get(r.id as number))
-      .filter((c): c is CatalogCourse => !!c)
-      .slice(0, 8);
-  }, [q, index, byId]);
+      .filter((c): c is CatalogCourse => !!c);
+    // Carrera-first (§11): primero lo tuyo. Si la búsqueda no matchea nada de
+    // tu pénsum, cae al catálogo entero — el palette nunca queda inútil.
+    const propios = pensumCodes.size ? todos.filter((c) => pensumCodes.has(c.code)) : todos;
+    return (propios.length ? propios : todos).slice(0, 8);
+  }, [q, index, byId, pensumCodes]);
 
   const irA = (to: string) => {
     onOpenChange(false);
