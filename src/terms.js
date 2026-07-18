@@ -101,3 +101,11 @@ export function readTerms(today = new Date()) {
 export function currentTermCode() {
   return readTerms().current?.code ?? null;
 }
+
+// Buscar, planner, pénsum y requisitos miran hacia el próximo ciclo. La única
+// excepción es un término explícito en el request. TARGET_TERM dejó de existir:
+// un valor global del proceso no puede gobernar el tiempo de cada pantalla.
+export function planningTerm(requested = null, fallback = null) {
+  if (requested) return String(requested);
+  return readTerms().next?.term ?? fallback ?? null;
+}

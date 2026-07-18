@@ -1,6 +1,6 @@
 import { CART_URL, CONTENT_FRAME_NAME } from './constants.js';
 import { db, logSync, lastSync } from '../db.js';
-import { cartRowSchema, normalizeSeatStatus } from '../shared/schemas.ts';
+import { cartRowSchema, cartValidationResponseSchema, normalizeSeatStatus } from '../shared/schemas.ts';
 import { parseMeetings } from '../shared/meetings.ts';
 import { splitCourseCode, courseCodeToString } from '../shared/courseCode.ts';
 import { knownSubjects } from './browseCatalog.js';
@@ -99,6 +99,57 @@ export async function getCartStatus(page) {
 
   const frame = contentFrame(page);
   return enrichCartRows(await frame.evaluate(extractCartRows));
+}
+
+// Capabilities del wizard, contra fixtures/recon-cart-phase85-step{1,2}.html.
+// Es deliberadamente un parser separado de las filas: responde qué decisiones
+// ofrece PeopleSoft, no qué estados pinta como leyenda.
+export function extractCartCapabilities() {
+  const controls = [...document.querySelectorAll('input, button, a')].map((el) => ({
+    text: `${el.value ?? ''} ${el.textContent ?? ''} ${el.getAttribute('title') ?? ''}`.replace(/\s+/g, ' ').trim(),
+    id: el.id ?? '',
+    type: el.getAttribute('type') ?? '',
+  }));
+  const validate = controls.some((control) => /\bvalidate\b/i.test(control.text) || /VALIDATE/i.test(control.id));
+  const waitlistChoice = controls.some(
+    (control) =>
+      /WAIT_LIST_OKAY|WAITLIST_OKAY|WAIT_LIST_CHOICE/i.test(control.id) ||
+      (/wait\s*list/i.test(control.text) && /checkbox|radio/i.test(control.type))
+  );
+  const bodyText = document.body.textContent.replace(/\s+/g, ' ');
+  const waitlistPosition = /wait\s*list\s*position|position\s*(?:on|in)\s*(?:the\s*)?wait/i.test(bodyText);
+  return { validate, waitlistChoice, waitlistPosition };
+}
+
+export async function validateCart(page) {
+  await page.goto(CART_URL, { waitUntil: 'commit' });
+  await page.waitForTimeout(5_000);
+  const frame = contentFrame(page);
+  const capabilities = await frame.evaluate(extractCartCapabilities);
+
+  // El recon es una conclusión de producto: esta instalación no expone el
+  // Validate nativo prometido por el plan. Si aparece tras un parche, fallamos
+  // explícitamente para capturar el nuevo flujo antes de clickear a ciegas.
+  if (capabilities.validate) {
+    throw new Error('PeopleSoft ahora muestra Validate; hace falta un recon del resultado antes de habilitarlo');
+  }
+  const unavailable =
+    'El portal de PUCMM no ofrece Validate en el carrito ni en el paso de revisión; solo valida al someter la inscripción.';
+  return cartValidationResponseSchema.parse({
+    validatedAt: new Date().toISOString(),
+    validate: { supported: false, reason: unavailable },
+    waitlistChoice: {
+      supported: capabilities.waitlistChoice,
+      reason: capabilities.waitlistChoice
+        ? null
+        : 'El wizard no ofrece decidir waitlist por materia; conserva la política configurada por el portal.',
+    },
+    waitlistPosition: {
+      supported: capabilities.waitlistPosition,
+      reason: capabilities.waitlistPosition ? null : 'El carrito no publica una posición de lista de espera.',
+    },
+    results: [],
+  });
 }
 
 // ── Cache ───────────────────────────────────────────────────────────────────

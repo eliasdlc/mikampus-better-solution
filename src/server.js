@@ -5,13 +5,13 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { withPage, resetSession, shutdown } from './session.js';
 import { getAccountInfo, setCredentials } from './credentials.js';
-import { readCart, syncCart } from './peoplesoft/cart.js';
+import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readCatalog } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
-import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
-import { readTerms, reconcileTerms } from './terms.js';
-import { fetchGrades, saveGrades, readGrades, termSummaries } from './peoplesoft/grades.js';
+import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
+import { readTerms, reconcileTerms, planningTerm } from './terms.js';
+import { fetchGrades, saveGrades, readGrades, termSummaries, diffPublishedGrades } from './peoplesoft/grades.js';
 import {
   fetchAdvisement,
   readPensum,
@@ -28,9 +28,10 @@ import * as plans from './plans.js';
 import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
 import { startCatalogCron, stopCatalogCron } from './cron.js';
-
-// El término por defecto sale del .env, que es el que ya usa el resto de la app.
-const DEFAULT_TERM = process.env.TARGET_TERM || null;
+import { readEnrollmentWindows, syncEnrollmentWindows } from './peoplesoft/enrollmentWindows.js';
+import { dropClass } from './peoplesoft/dropClass.js';
+import { startBackupCron, stopBackupCron } from './backups.js';
+import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
@@ -88,6 +89,38 @@ app.post('/api/cart/sync', async (req, res) => {
   }
 });
 
+app.post('/api/cart/validate', async (req, res) => {
+  try {
+    scheduler.emitEvent({ type: 'log', message: 'Comprobando si PeopleSoft ofrece Validate…' });
+    const result = await withPage((page) => validateCart(page));
+    scheduler.emitEvent({ type: 'log', message: result.validate.supported ? 'Carrito validado' : result.validate.reason });
+    res.json(result);
+  } catch (err) {
+    scheduler.emitEvent({ type: 'log', message: `No se pudo comprobar Validate: ${err.message}` });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/enrollment-windows', (req, res) => {
+  const term = req.query.term ? String(req.query.term) : planningTerm(null, latestScheduledTerm());
+  res.json(readEnrollmentWindows(term));
+});
+
+app.post('/api/enrollment-windows/sync', async (req, res) => {
+  try {
+    const windows = await withPage((page) =>
+      syncEnrollmentWindows(page, {
+        onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
+      })
+    );
+    scheduler.emitEvent({ type: 'log', message: `Ventana de inscripción actualizada: ${windows.length} sesión(es)` });
+    res.json(readEnrollmentWindows(req.body?.term ? String(req.body.term) : null));
+  } catch (err) {
+    scheduler.emitEvent({ type: 'log', message: `Error leyendo Enrollment Dates: ${err.message}` });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Catálogo cacheado desde SQLite (<10ms). El ETag deriva de la última sync y
 // del volumen de secciones: mientras no cambie, el browser recibe 304 y el
 // índice MiniSearch no se reconstruye. El scraping en vivo va por otros
@@ -118,7 +151,7 @@ app.get('/api/terms', (req, res) => {
 // GET sirve siempre desde SQLite, aunque nunca se haya sincronizado: la UI
 // muestra lo cacheado con su StalenessTag y decide si refrescar. Nunca dispara
 // scraping solo por entrar a la pantalla.
-// El término se resuelve solo: lo pedido explícitamente, si no lo del .env, y
+// El término se resuelve solo: lo pedido explícitamente, si no el actual, y
 // si no el último que se haya sincronizado. Sin nada de eso devuelve un horario
 // vacío (no un error): la pantalla ofrece traerlo del portal, y el sync
 // descubre el término activo sin que nadie lo configure.
@@ -133,7 +166,7 @@ app.get('/api/my-schedule', (req, res) => {
   const current = readTerms().current;
   const term = req.query.term
     ? String(req.query.term)
-    : current?.term ?? DEFAULT_TERM ?? latestScheduledTerm();
+    : current?.term ?? latestScheduledTerm();
   res.json(readSchedule(term));
 });
 
@@ -166,6 +199,52 @@ app.post('/api/my-schedule/sync', async (req, res) => {
   }
 });
 
+// Única acción destructiva de la app. El contrato exige escribir el código
+// exacto; además corre sin retry automático para que un timeout posterior al
+// submit no ejecute la baja dos veces.
+app.post('/api/my-schedule/drop', async (req, res) => {
+  const term = req.body?.term ? String(req.body.term) : null;
+  const courseCode = req.body?.courseCode ? String(req.body.courseCode).trim().toUpperCase() : '';
+  const classNbr = req.body?.classNbr ? String(req.body.classNbr) : null;
+  const confirmCode = req.body?.confirmCode ? String(req.body.confirmCode).trim().toUpperCase() : '';
+  if (!term || !courseCode || confirmCode !== courseCode) {
+    return res.status(400).json({ error: 'Para dar de baja, escribí el código exacto de la materia' });
+  }
+  try {
+    const result = await withPage(
+      (page) =>
+        dropClass(page, {
+          term,
+          courseCode,
+          classNbr,
+          onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
+        }),
+      { retry: false }
+    );
+    if (!result.ok) return res.status(502).json(result);
+
+    // El resultado del Paso 3 confirmó la baja. Se retira del cache local sin
+    // depender de que Mi Horario siga ofreciendo ese ciclo inmediatamente.
+    removeEnrollmentCourse(term, courseCode);
+    scheduler.emitEvent({
+      type: 'notice',
+      title: `${courseCode} fue dada de baja`,
+      body: result.message,
+      key: `drop:${term}:${courseCode}`,
+    });
+    res.json({ ...result, schedule: readSchedule(term) });
+  } catch (err) {
+    scheduler.emitEvent({
+      type: 'notice',
+      level: 'error',
+      title: `No se pudo dar de baja ${courseCode}`,
+      body: err.message,
+      key: `drop-error:${term}:${courseCode}`,
+    });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Notas y avance (/academico) ─────────────────────────────────────────────
 // Mismo trato que Mi Horario: el GET sirve lo cacheado con su StalenessTag y
 // nunca dispara scraping por entrar a la pantalla. El índice se calcula acá
@@ -182,7 +261,9 @@ app.get('/api/grades', (req, res) => {
 
 app.post('/api/grades/sync', async (req, res) => {
   try {
+    const previous = readGrades();
     const { courses, mismatches } = await withPage((page) => fetchGrades(page));
+    const published = diffPublishedGrades(previous, courses);
     saveGrades(courses);
     // Las notas traen etiquetas de término que el modelo de tiempo no conocía.
     reconcileTerms();
@@ -191,6 +272,14 @@ app.post('/api/grades/sync', async (req, res) => {
     // número plausible y falso (ver checkAgainstPortal).
     for (const m of mismatches) {
       scheduler.emitEvent({ type: 'log', message: `⚠ El índice no cuadra con el portal — ${m}` });
+    }
+    for (const course of published) {
+      scheduler.emitEvent({
+        type: 'notice',
+        title: `Se publicó tu nota de ${course.code}: ${course.grade}`,
+        body: `${course.title ?? course.code} · ${course.term}`,
+        key: `grade:${course.term}:${course.code}:${course.grade}`,
+      });
     }
     scheduler.emitEvent({ type: 'log', message: `Notas actualizadas: ${courses.length} materia(s)` });
     res.json({
@@ -212,7 +301,7 @@ app.post('/api/grades/sync', async (req, res) => {
 // recon de Fase 4)— es "te falta y se está ofertando". La UI no puede decir
 // más que eso sin mentir.
 app.get('/api/pensum', (req, res) => {
-  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM || latestScheduledTerm();
+  const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm());
   const offered = new Set(
     term
       ? db
@@ -273,7 +362,7 @@ app.post('/api/pensum/sync', async (req, res) => {
 // informe de avance. Cada curso se enriquece con el courseId del catálogo (para
 // "agregar al plan") y si se oferta en el término pedido.
 app.get('/api/requirements', (req, res) => {
-  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM || latestScheduledTerm();
+  const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm());
   const root = readRequirementTree();
   if (!root) {
     return res.json({ term, syncedAt: lastSync('advisement'), profile: readProfile(), tree: null });
@@ -454,6 +543,38 @@ app.post('/api/search/add', async (req, res) => {
 // operación viva de un plan es mandarlo al carrito (más abajo).
 // Los errores de src/plans.js son de datos del usuario (plan inexistente,
 // materia duplicada, sección de otro término) → 400 con el mensaje tal cual.
+
+app.get('/api/recommendation', (req, res) => {
+  try {
+    const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm());
+    const maxCredits = req.query.maxCredits ?? DEFAULT_MAX_CREDITS;
+    res.json(recommendationForTerm(term, maxCredits));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/recommendation/plan', (req, res) => {
+  try {
+    const term = planningTerm(req.body?.term ? String(req.body.term) : null, latestScheduledTerm());
+    const proposal = recommendationForTerm(term, req.body?.maxCredits ?? DEFAULT_MAX_CREDITS);
+    if (!proposal.schedule.valid || proposal.recommendations.length === 0) {
+      throw new Error(proposal.caveats[0] ?? 'No hay una combinación recomendada para este ciclo');
+    }
+    const detail = plans.createPlanWithItems({
+      term: proposal.term,
+      name: req.body?.name?.trim() || 'Plan recomendado',
+      items: proposal.recommendations.map((item) => ({
+        courseId: item.courseId,
+        sectionId: item.section.id,
+        note: item.reason,
+      })),
+    });
+    res.json(detail);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 app.get('/api/plans', (req, res) => {
   res.json({ plans: plans.listPlans() });
@@ -668,11 +789,13 @@ const server = app.listen(PORT, HOST, () => {
   }
   // Apagado salvo que CATALOG_CRON_AT diga a qué hora (ver src/cron.js).
   startCatalogCron();
+  startBackupCron();
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
     stopCatalogCron();
+    stopBackupCron();
     await shutdown();
     server.close(() => process.exit(0));
   });
