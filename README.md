@@ -1,6 +1,6 @@
 # pucmm-autoenroll → mikampus
 
-Plataforma local que reemplaza el día a día de micampus.pucmm.edu.do: buscar materias, armar horario, planificar ciclos, inscribirse y ver notas/avance, desde una interfaz propia rápida. PeopleSoft queda como backend invisible al que se le hace scraping vía Playwright. El plan completo está en [`PLAN.md`](./PLAN.md).
+Plataforma local que reemplaza el día a día de micampus.pucmm.edu.do: buscar materias, armar horario, planificar ciclos, inscribirse y ver notas/avance, desde una interfaz propia rápida. PeopleSoft queda como backend invisible al que se le hace scraping vía Playwright. El plan implementado hasta hoy está en [`PLAN.md`](./PLAN.md); la visión de reemplazo total y su matriz de paridad están en [`PLAN-MIKAMPUS-TOTAL.md`](./PLAN-MIKAMPUS-TOTAL.md).
 
 Hoy funciona:
 
