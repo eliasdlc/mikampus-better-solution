@@ -21,9 +21,11 @@ import {
   earliestGradeTerm,
 } from './peoplesoft/advisement.js';
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
-import { summarizeGrades } from './shared/gpa.ts';
+import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
+import { computeInsights } from './shared/insights.ts';
 import { db, lastSync, clearPersonalData } from './db.js';
 import * as plans from './plans.js';
+import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
 import { startCatalogCron, stopCatalogCron } from './cron.js';
 
@@ -301,6 +303,70 @@ app.get('/api/requirements', (req, res) => {
 
 app.get('/api/profile', (req, res) => {
   res.json({ profile: readProfile(), syncedAt: lastSync('advisement') });
+});
+
+// ── Metas y señales (/academico, Fase 10 §12.7) ─────────────────────────────
+// El contexto de las metas: los totales del índice (de las notas) y los créditos
+// que faltan del pénsum (del árbol de requisitos). Una sola fuente para las
+// proyecciones y para cada meta, así ambos miden lo mismo. Todo es cálculo local
+// (<10ms), cero PeopleSoft: nunca dispara scraping por entrar a la pantalla.
+function goalsContext() {
+  const summary = summarizeGrades(readGrades());
+  const remainingCredits = readRequirementTree()?.units?.needed ?? 0;
+  return { summary, remainingCredits };
+}
+
+function goalsResponse() {
+  const ctx = goalsContext();
+  const hasBasis = ctx.summary.unitsTowardGpa > 0 || ctx.remainingCredits > 0;
+  return {
+    goals: goals.evaluateGoals(goals.listGoals(), ctx),
+    projection: hasBasis ? projectFinalGpa(ctx.summary, ctx.remainingCredits) : null,
+    basedOn: {
+      gpa: ctx.summary.gpa,
+      unitsTowardGpa: ctx.summary.unitsTowardGpa,
+      remainingCredits: ctx.remainingCredits,
+    },
+    syncedAt: lastSync('grades'),
+  };
+}
+
+app.get('/api/goals', (req, res) => res.json(goalsResponse()));
+
+// Las mutaciones devuelven la respuesta entera (metas + proyección reevaluadas):
+// la UI reemplaza el cache de un solo golpe, sin un segundo fetch.
+app.post('/api/goals', (req, res) => {
+  try {
+    goals.createGoal({ kind: req.body?.kind ?? 'gpa', target: req.body?.target, deadlineTerm: req.body?.deadlineTerm });
+    res.json(goalsResponse());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch('/api/goals/:id', (req, res) => {
+  try {
+    goals.updateGoal(Number(req.params.id), { target: req.body?.target, deadlineTerm: req.body?.deadlineTerm });
+    res.json(goalsResponse());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/goals/:id', (req, res) => {
+  try {
+    goals.deleteGoal(Number(req.params.id));
+    res.json(goalsResponse());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Señales descriptivas del histórico. Solo salen las que pasan su umbral de
+// datos (shared/insights.ts); un arreglo vacío es "todavía no hay qué decir".
+app.get('/api/insights', (req, res) => {
+  const courses = readGrades();
+  res.json({ insights: computeInsights(termSummaries(courses), courses), syncedAt: lastSync('grades') });
 });
 
 // Los códigos que le importan a TU carrera: todo lo del árbol de requisitos

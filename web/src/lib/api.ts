@@ -15,8 +15,12 @@ import {
   type RequirementsResponse,
   type ProfileResponse,
   holdsResponseSchema,
+  goalsResponseSchema,
+  insightsResponseSchema,
   accountInfoSchema,
   type AccountInfo,
+  type GoalsResponse,
+  type InsightsResponse,
   type AppState,
   type CartResponse,
   type CatalogResponse,
@@ -173,6 +177,30 @@ export async function removePlanItem(planId: number, itemId: number): Promise<Pl
 
 export async function sendPlanToCart(planId: number): Promise<PlanToCartResult> {
   return planToCartResultSchema.parse(await send(`/api/plans/${planId}/to-cart`, 'POST'));
+}
+
+// ── Metas y señales (/academico, Fase 10) ───────────────────────────────────
+export async function fetchGoals(): Promise<GoalsResponse> {
+  return goalsResponseSchema.parse(await getJSON('/api/goals'));
+}
+
+export async function createGoal(input: { target: number; deadlineTerm?: string | null }): Promise<GoalsResponse> {
+  return goalsResponseSchema.parse(await send('/api/goals', 'POST', input));
+}
+
+export async function updateGoal(
+  id: number,
+  input: { target?: number; deadlineTerm?: string | null }
+): Promise<GoalsResponse> {
+  return goalsResponseSchema.parse(await send(`/api/goals/${id}`, 'PATCH', input));
+}
+
+export async function deleteGoal(id: number): Promise<GoalsResponse> {
+  return goalsResponseSchema.parse(await send(`/api/goals/${id}`, 'DELETE'));
+}
+
+export async function fetchInsights(): Promise<InsightsResponse> {
+  return insightsResponseSchema.parse(await getJSON('/api/insights'));
 }
 
 // ── Notas, pénsum y holds ───────────────────────────────────────────────────
