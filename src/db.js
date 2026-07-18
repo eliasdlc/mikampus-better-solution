@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // MIKAMPUS_DB deja que los tests corran contra una DB desechable en vez de la
 // real (scripts/test-catalog-db.mjs). En uso normal no se define.
-const DB_PATH = process.env.MIKAMPUS_DB ?? path.join(__dirname, '..', 'data', 'mikampus.db');
+export const DB_PATH = process.env.MIKAMPUS_DB ?? path.join(__dirname, '..', 'data', 'mikampus.db');
 
 // node:sqlite (built-in de Node) en vez de better-sqlite3: API síncrona, un
 // solo archivo, sin compilación nativa. Un server local monousuario no gana
@@ -280,6 +280,20 @@ db.exec(`
     started_at   TEXT NOT NULL DEFAULT (datetime('now')),
     finished_at  TEXT
   );
+
+  -- Ventana que PeopleSoft publica bajo Enrollment Dates. El portal
+  -- reconocido en jul-2026 solo da FECHAS (sin hora); precision evita que una
+  -- medianoche inventada termine programando una inscripción a la hora falsa.
+  CREATE TABLE IF NOT EXISTS enrollment_windows (
+    term_code    TEXT NOT NULL,
+    session      TEXT NOT NULL DEFAULT 'Regular Academic Session',
+    starts_at    TEXT NOT NULL,
+    ends_at      TEXT NOT NULL,
+    precision    TEXT NOT NULL DEFAULT 'date', -- date / datetime
+    user_id      INTEGER NOT NULL DEFAULT 1,
+    synced_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, term_code, session)
+  );
 `);
 
 // CREATE TABLE IF NOT EXISTS no reforma una tabla que ya existe: una columna
@@ -309,10 +323,11 @@ addColumnIfMissing('grades', 'catalog_nbr', 'TEXT');
 const PERSONAL_TABLES = [
   'grades', 'enrollments', 'pensum', 'progress_items', 'holds', 'cart_rows',
   'requirement_groups', 'requirement_courses', 'profile',
+  'enrollment_windows',
 ];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
-const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart'];
+const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows'];
 
 // Borra todo lo que es de la persona anterior. Se llama al cambiar de cuenta:
 // sin esto la página seguiría sirviendo desde SQLite las notas/horario/pénsum

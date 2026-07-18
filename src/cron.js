@@ -3,6 +3,7 @@ import { withPage } from './session.js';
 import { syncCatalogSubject } from './peoplesoft/catalog.js';
 import { syncSubjectTitles } from './peoplesoft/browseCatalog.js';
 import * as scheduler from './scheduler.js';
+import { readTerms } from './terms.js';
 
 // Sync de catálogo programado (plan §7, Fase 5). El catálogo es lo único que
 // envejece solo — la universidad abre grupos, cambia profesores y mueve aulas
@@ -24,7 +25,6 @@ import * as scheduler from './scheduler.js';
 //      espera al otro cuatrimestre.
 
 const AT = process.env.CATALOG_CRON_AT ?? '';
-const TERM = process.env.SYNC_TERM || process.env.TARGET_TERM || '1930';
 const CAREER = process.env.SYNC_CAREER || 'GRDO';
 
 let timer = null;
@@ -73,7 +73,12 @@ export function subjectsToSync() {
 //
 // El LIKE es por el formato que escribe syncCatalogSubject: detail es el
 // subject, o "ICC (sin trocear: ...)" cuando algún prefijo excedió el límite.
-export function stalestSubject(subjects, term = TERM) {
+export function syncTerm() {
+  return process.env.SYNC_TERM || readTerms().next?.code || null;
+}
+
+export function stalestSubject(subjects, term = syncTerm()) {
+  if (!term) return null;
   const last = db.prepare(
     `SELECT MAX(finished_at) AS at FROM sync_log
      WHERE kind = 'catalog' AND term = ? AND (detail = ? OR detail LIKE ? || ' (%')`
@@ -98,19 +103,24 @@ async function run() {
     return schedule();
   }
 
-  const subject = stalestSubject(subjectsToSync());
+  const term = syncTerm();
+  if (!term) {
+    scheduler.emitEvent({ type: 'log', message: 'Sync de catálogo pospuesto — no se conoce el próximo ciclo' });
+    return schedule();
+  }
+  const subject = stalestSubject(subjectsToSync(), term);
   if (!subject) {
     scheduler.emitEvent({ type: 'log', message: 'Sync de catálogo: no hay subjects que refrescar' });
     return schedule();
   }
 
-  scheduler.emitEvent({ type: 'log', message: `Sync de catálogo: ${subject} (término ${TERM})…` });
+  scheduler.emitEvent({ type: 'log', message: `Sync de catálogo: ${subject} (término ${term})…` });
   try {
     // Un subject son dos pantallas: los títulos (una carga) y el barrido de
     // secciones (muchas, troceadas). syncCatalogSubject deja su rastro en
     // sync_log, que es de donde sale el StalenessTag y el orden de la rotación.
     const { saved: titulos } = await withPage((page) => syncSubjectTitles(page, { subject }));
-    const { saved, skipped } = await withPage((page) => syncCatalogSubject(page, { term: TERM, career: CAREER, subject }));
+    const { saved, skipped } = await withPage((page) => syncCatalogSubject(page, { term, career: CAREER, subject }));
 
     scheduler.emitEvent({
       type: 'log',

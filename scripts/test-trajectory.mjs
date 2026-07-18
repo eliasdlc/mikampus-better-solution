@@ -9,7 +9,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { cycleOrdinal, cyclesBetween, careerSummary, futureBlocks } from '../src/shared/trajectory.ts';
+import {
+  cycleOrdinal,
+  cyclesBetween,
+  careerSummary,
+  futureBlocks,
+  curriculumPeriodsPerYear,
+} from '../src/shared/trajectory.ts';
 
 // ── Aritmética de ciclos, pura (sin DB) ─────────────────────────────────────
 assert.equal(cycleOrdinal('2023-09'), 2023 * 3 + 2, 'Septiembre es el tercer ciclo del año (índice 2)');
@@ -43,6 +49,8 @@ const tree = parseAdvisementTree(raw, { knownSubjects: ['ICC', 'FIS', 'MAT', 'IL
 saveRequirementTree(tree, { cohortStartTerm: 'Septiembre de 2023' });
 const root = readRequirementTree();
 
+assert.equal(curriculumPeriodsPerYear(root), 3, 'el fixture ICC-2020 declara tres períodos por año');
+
 const summary = careerSummary(root, { cohortStartTerm: 'Septiembre de 2023', currentTermLabel: 'Abril de 2026' });
 
 // ── El encabezado cuadra con los totales del advisement (el corazón del gate) ─
@@ -67,6 +75,7 @@ assert.ok(
 const d = summary.delay;
 assert.equal(d.elapsedCycles, 9, 'nueve ciclos cursando desde la cohorte');
 assert.equal(d.totalPeriods, 12);
+assert.equal(d.curriculumPeriodsPerYear, 3, 'la cadencia sale del documento, no del calendario hardcodeado');
 assert.ok(d.satisfiedPeriods >= 1 && d.satisfiedPeriods < 12, 'algunos bloques cerrados, no todos');
 assert.ok(d.oldest, 'hay un bloque sin cerrar más viejo');
 assert.equal(d.oldest.index, summary.position.index, 'el bloque del atraso es donde estás parado');

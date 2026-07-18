@@ -68,6 +68,7 @@ export type CareerDelay = {
   elapsedCycles: number | null; // ciclos que llevás cursando, inclusive
   satisfiedPeriods: number;
   totalPeriods: number;
+  curriculumPeriodsPerYear: number | null;
   // El bloque sin cerrar más viejo: el hecho concreto y verificable del atraso.
   oldest: {
     year: number | null;
@@ -93,6 +94,21 @@ export type CareerSummary = {
 // carrera aunque otra etiqueta los nombre distinto).
 function periodsOf(root: RequirementGroup): RequirementGroup[] {
   return root.children.filter((g) => g.kind === 'periodo').sort((a, b) => a.position - b.position);
+}
+
+// Cadencia declarada por el propio documento: cuántos "Período N" hay por
+// año. No se hardcodea a los tres ciclos del calendario. Si los años del
+// fixture discrepan, null obliga a conservar la aritmética más conservadora.
+export function curriculumPeriodsPerYear(root: RequirementGroup): number | null {
+  const counts = new Map<number, Set<number>>();
+  for (const group of periodsOf(root)) {
+    if (group.year == null || group.period == null) continue;
+    if (!counts.has(group.year)) counts.set(group.year, new Set());
+    counts.get(group.year)!.add(group.period);
+  }
+  const values = [...counts.values()].map((periods) => periods.size).filter((count) => count > 0);
+  if (!values.length || !values.every((count) => count === values[0])) return null;
+  return values[0];
 }
 
 // Las obligatorias que faltan en un período: los items pendientes de sus grupos
@@ -128,6 +144,7 @@ export function careerSummary(
   const positionIndex = positionGroup ? periodos.indexOf(positionGroup) + 1 : 0;
 
   const elapsedCycles = cyclesBetween(opts.cohortStartTerm ?? null, opts.currentTermLabel ?? null);
+  const cadence = curriculumPeriodsPerYear(root);
 
   let oldest: CareerDelay['oldest'] = null;
   let behindCycles: number | null = null;
@@ -141,7 +158,11 @@ export function careerSummary(
     };
     // Ritmo nominal: el período i se cierra en el i-ésimo ciclo. Si llevás más
     // ciclos que eso y sigue abierto, ese es el atraso medido de ese bloque.
-    if (elapsedCycles !== null) behindCycles = Math.max(0, elapsedCycles - index);
+    if (elapsedCycles !== null) {
+      const expectedPeriod = cadence ? Math.ceil((elapsedCycles * cadence) / 3) : elapsedCycles;
+      const behindPeriods = Math.max(0, expectedPeriod - index);
+      behindCycles = cadence ? Math.ceil((behindPeriods * 3) / cadence) : behindPeriods;
+    }
   }
 
   return {
@@ -165,6 +186,7 @@ export function careerSummary(
       elapsedCycles,
       satisfiedPeriods,
       totalPeriods: total,
+      curriculumPeriodsPerYear: cadence,
       oldest,
       behindCycles,
     },

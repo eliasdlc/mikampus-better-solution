@@ -293,6 +293,18 @@ export function saveGrades(courses) {
   return courses;
 }
 
+// Nota publicada desde el último sync: antes no había calificación para esa
+// materia/término y ahora sí. Un histórico vacío es onboarding, no 46 noticias.
+export function diffPublishedGrades(previous, incoming) {
+  if (!previous.length) return [];
+  const known = new Map(previous.map((course) => [`${course.term ?? ''}\0${course.code}`, course]));
+  return incoming.filter((course) => {
+    if (!course.grade) return false;
+    const old = known.get(`${course.term ?? ''}\0${course.code}`);
+    return !old || !old.grade;
+  });
+}
+
 export function readGrades() {
   return db
     .prepare(
