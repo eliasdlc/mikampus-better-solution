@@ -4,17 +4,53 @@ import { useSSE } from '../lib/sse.tsx';
 import { ThemeToggle } from './ThemeToggle.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
 
-const NAV = [
-  { to: '/', label: 'Inicio', end: true },
-  { to: '/buscar', label: 'Buscar' },
-  { to: '/planner', label: 'Planner' },
-  { to: '/builder', label: 'Builder' },
-  { to: '/horario', label: 'Mi horario' },
-  { to: '/inscripcion', label: 'Inscripción' },
-  { to: '/academico', label: 'Notas y avance' },
-  { to: '/holds', label: 'Holds' },
-  { to: '/ajustes', label: 'Ajustes' },
+// Las tres zonas de tiempo del plan §11: ninguna pantalla mezcla ciclos sin
+// decirlo, y el sidebar responde tres preguntas distintas. "Ahora" (qué tengo
+// hoy), "Próximo ciclo" (qué inscribo) y "Mi carrera" (dónde estoy parado).
+// Ajustes queda suelto al pie: no es una zona de tiempo.
+const ZONES = [
+  {
+    label: 'Ahora',
+    items: [
+      { to: '/', label: 'Inicio', end: true },
+      { to: '/horario', label: 'Mi horario' },
+    ],
+  },
+  {
+    label: 'Próximo ciclo',
+    items: [
+      { to: '/buscar', label: 'Buscar' },
+      { to: '/planner', label: 'Planner' },
+      { to: '/builder', label: 'Builder' },
+      { to: '/inscripcion', label: 'Inscripción' },
+    ],
+  },
+  {
+    label: 'Mi carrera',
+    items: [
+      { to: '/trayectoria', label: 'Trayectoria' },
+      { to: '/academico', label: 'Notas y avance' },
+      { to: '/holds', label: 'Holds' },
+    ],
+  },
 ];
+const EXTRA = [{ to: '/ajustes', label: 'Ajustes', end: false }];
+
+function NavItem({ to, label, end }: { to: string; label: string; end?: boolean }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        `rounded-[var(--radius)] px-3 py-2 text-sm transition-colors duration-100 ${
+          isActive ? 'bg-accent text-accent-fg font-medium' : 'text-muted hover:bg-surface-2 hover:text-fg'
+        }`
+      }
+    >
+      {label}
+    </NavLink>
+  );
+}
 
 export function Layout({ children }: { children: ReactNode }) {
   const { connected } = useSSE();
@@ -59,24 +95,23 @@ export function Layout({ children }: { children: ReactNode }) {
           <kbd className="border-line bg-surface-2 tabular rounded border px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd>
         </button>
 
-        {/* flex-wrap: con seis secciones el nav ya no entra en una línea de
-            390px; que baje de línea antes que desbordar la página. */}
-        <nav className="order-3 flex w-full flex-wrap gap-1 md:order-none md:w-auto md:flex-col md:flex-nowrap">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                `rounded-[var(--radius)] px-3 py-2 text-sm transition-colors duration-100 ${
-                  isActive
-                    ? 'bg-accent text-accent-fg font-medium'
-                    : 'text-muted hover:bg-surface-2 hover:text-fg'
-                }`
-              }
-            >
-              {item.label}
-            </NavLink>
+        {/* flex-wrap: en mobile el nav es una barra horizontal que baja de línea
+            antes que desbordar 390px, y los títulos de zona se ocultan (no
+            entran en una sola fila). En desktop es una columna con las tres
+            zonas de tiempo del plan §11, cada una con su encabezado. */}
+        <nav className="order-3 flex w-full flex-wrap gap-1 md:order-none md:w-auto md:flex-col md:flex-nowrap md:gap-0">
+          {ZONES.map((zone) => (
+            <div key={zone.label} className="contents md:mb-4 md:flex md:flex-col md:last:mb-0">
+              <div className="text-muted hidden px-3 pt-2 pb-1 text-[10px] font-medium tracking-wide uppercase md:block">
+                {zone.label}
+              </div>
+              {zone.items.map((item) => (
+                <NavItem key={item.to} {...item} />
+              ))}
+            </div>
+          ))}
+          {EXTRA.map((item) => (
+            <NavItem key={item.to} {...item} />
           ))}
         </nav>
 

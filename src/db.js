@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // MIKAMPUS_DB deja que los tests corran contra una DB desechable en vez de la
 // real (scripts/test-catalog-db.mjs). En uso normal no se define.
-const DB_PATH = process.env.MIKAMPUS_DB ?? path.join(__dirname, '..', 'data', 'mikampus.db');
+export const DB_PATH = process.env.MIKAMPUS_DB ?? path.join(__dirname, '..', 'data', 'mikampus.db');
 
 // node:sqlite (built-in de Node) en vez de better-sqlite3: API síncrona, un
 // solo archivo, sin compilación nativa. Un server local monousuario no gana
@@ -206,6 +206,22 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_plan_items_plan ON plan_items(plan_id);
 
+  -- Metas del estudiante (Fase 10, §12.7). Por ahora solo 'gpa': un índice
+  -- objetivo, con un término límite opcional. Es un dato hecho a mano —como los
+  -- planes— así que no entra a PERSONAL_TABLES: no se borra al cambiar de cuenta.
+  -- user_id nace ya (constante 1) para abaratar el multi-usuario (§0). El
+  -- veredicto (alcanzable/inalcanzable) NO se guarda: se calcula en vivo con
+  -- shared/gpa.ts contra las notas del momento, para que no envejezca en la fila.
+  CREATE TABLE IF NOT EXISTS goals (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL DEFAULT 1,
+    kind           TEXT NOT NULL DEFAULT 'gpa',
+    target         REAL NOT NULL,
+    deadline_term  TEXT,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    achieved_at    TEXT
+  );
+
   -- El histórico de notas, leído de My Course History. Una materia repetida
   -- aparece dos veces con términos distintos, así que la identidad de una fila
   -- es término+código, no el código solo.
@@ -280,6 +296,20 @@ db.exec(`
     started_at   TEXT NOT NULL DEFAULT (datetime('now')),
     finished_at  TEXT
   );
+
+  -- Ventana que PeopleSoft publica bajo Enrollment Dates. El portal
+  -- reconocido en jul-2026 solo da FECHAS (sin hora); precision evita que una
+  -- medianoche inventada termine programando una inscripción a la hora falsa.
+  CREATE TABLE IF NOT EXISTS enrollment_windows (
+    term_code    TEXT NOT NULL,
+    session      TEXT NOT NULL DEFAULT 'Regular Academic Session',
+    starts_at    TEXT NOT NULL,
+    ends_at      TEXT NOT NULL,
+    precision    TEXT NOT NULL DEFAULT 'date', -- date / datetime
+    user_id      INTEGER NOT NULL DEFAULT 1,
+    synced_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, term_code, session)
+  );
 `);
 
 // CREATE TABLE IF NOT EXISTS no reforma una tabla que ya existe: una columna
@@ -309,10 +339,11 @@ addColumnIfMissing('grades', 'catalog_nbr', 'TEXT');
 const PERSONAL_TABLES = [
   'grades', 'enrollments', 'pensum', 'progress_items', 'holds', 'cart_rows',
   'requirement_groups', 'requirement_courses', 'profile',
+  'enrollment_windows',
 ];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
-const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart'];
+const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows'];
 
 // Borra todo lo que es de la persona anterior. Se llama al cambiar de cuenta:
 // sin esto la página seguiría sirviendo desde SQLite las notas/horario/pénsum

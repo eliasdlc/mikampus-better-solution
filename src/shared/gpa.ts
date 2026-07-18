@@ -88,6 +88,96 @@ export function formatGpa(gpa: number | null): string {
   return roundGpa(gpa).toFixed(3);
 }
 
+// ── Proyecciones (Fase 10, §12.7) ────────────────────────────────────────────
+// El índice final se modela sobre lo que falta del pénsum. Todo sale de dos
+// hechos ya verificados: la aritmética de summarizeGrades reproduce al portal, y
+// PUCMM PROMEDIA los intentos de una repetida (no reemplaza) — comprobado con
+// IIS-223 (F→D, ambos cuentan) contra los totales del portal. Por eso repetir no
+// es una palanca especial: cada crédito futuro entra al promedio igual que uno
+// nuevo, y proyectar sobre "créditos faltantes" es honesto sin caso aparte.
+//
+//   final(g) = (puntos + faltantes·g) / (créditosAlÍndice + faltantes)
+//
+// donde g es el promedio de grade points (0–4) que asumís en lo que falta.
+
+export type GpaLike = {
+  gradePoints: number;
+  unitsTowardGpa: number;
+};
+
+// El índice acumulado que tendrías si en los `remainingCredits` que te faltan
+// sacaras un promedio de `gradePoint` (0–4). Exacto, sin redondear: quien
+// redondea a la precisión del portal es la capa de presentación (roundGpa).
+export function projectGpa(summary: GpaLike, remainingCredits: number, gradePoint: number): number | null {
+  const units = summary.unitsTowardGpa + Math.max(0, remainingCredits);
+  if (units <= 0) return null;
+  return (summary.gradePoints + Math.max(0, remainingCredits) * gradePoint) / units;
+}
+
+export type GpaProjection = {
+  remainingCredits: number;
+  current: number | null;
+  // El abanico honesto, redondeado a la precisión del portal (un decimal).
+  best: number | null; // todo A de aquí en adelante
+  maintain: number | null; // mantenés tu promedio histórico
+  floor: number | null; // todo C (piso razonable, no todo F)
+};
+
+// El abanico best/maintain/floor. "maintain" usa el índice actual como grade
+// point asumido: es un punto fijo (final == actual), y por eso responde "si
+// seguís como vas, terminás igual" sin que sea coincidencia.
+export function projectFinalGpa(summary: GpaLike, remainingCredits: number): GpaProjection {
+  const current = summary.unitsTowardGpa > 0 ? summary.gradePoints / summary.unitsTowardGpa : null;
+  const round = (v: number | null) => (v === null ? null : roundGpa(v));
+  return {
+    remainingCredits: Math.max(0, remainingCredits),
+    current: round(current),
+    best: round(projectGpa(summary, remainingCredits, GRADE_POINTS.A)),
+    maintain: current === null ? null : round(projectGpa(summary, remainingCredits, current)),
+    floor: round(projectGpa(summary, remainingCredits, GRADE_POINTS.C)),
+  };
+}
+
+export type GoalVerdict =
+  | 'met' // el índice actual ya alcanza la meta y no hay créditos que la muevan
+  | 'secured' // llegás aunque saques F en todo lo que falta
+  | 'reachable' // llegás con un promedio alcanzable en lo restante
+  | 'tight' // llegás pero exige casi todo A
+  | 'unreachable'; // ni con todo A en lo que falta
+
+export type GoalFeasibility = {
+  verdict: GoalVerdict;
+  // El promedio de grade points (0–4) que exige lo que falta para dar la meta.
+  // null cuando no hay créditos restantes (nada que puedas hacer para cambiarlo).
+  requiredAverage: number | null;
+  target: number;
+};
+
+// Qué exige una meta de índice sobre los créditos que faltan, y si es posible.
+// El veredicto "unreachable" solo se emite porque la política de repetición está
+// verificada (§12.7): sabemos que no hay un truco de repetir que lo salve.
+export function feasibilityForGoal(summary: GpaLike, remainingCredits: number, target: number): GoalFeasibility {
+  const remaining = Math.max(0, remainingCredits);
+  const current = summary.unitsTowardGpa > 0 ? summary.gradePoints / summary.unitsTowardGpa : null;
+
+  // Sin créditos por delante, la meta ya está decidida: se compara contra el
+  // índice tal como lo publica el portal (redondeado), no el exacto.
+  if (remaining === 0) {
+    const met = current !== null && roundGpa(current) >= target - 1e-9;
+    return { verdict: met ? 'met' : 'unreachable', requiredAverage: null, target };
+  }
+
+  const requiredAverage = (target * (summary.unitsTowardGpa + remaining) - summary.gradePoints) / remaining;
+
+  let verdict: GoalVerdict;
+  if (requiredAverage <= 0) verdict = 'secured';
+  else if (requiredAverage > GRADE_POINTS.A + 1e-9) verdict = 'unreachable';
+  else if (requiredAverage > 3.7) verdict = 'tight';
+  else verdict = 'reachable';
+
+  return { verdict, requiredAverage, target };
+}
+
 // ── Términos ────────────────────────────────────────────────────────────────
 // El portal nombra los términos en español ("Enero de 2026") y los lista sin
 // orden útil. Ordenarlos por texto pone Abril antes que Enero y Septiembre de
