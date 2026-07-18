@@ -104,6 +104,254 @@ export function subjectsFromAdvisement(courses) {
   return [...new Set(courses.map((c) => c.subject))].sort();
 }
 
+// ── Parser v2: el árbol de requisitos ──────────────────────────────────────
+//
+// parseAdvisement (arriba) aplana el informe a una lista de materias y tira los
+// encabezados de grupo. Eso perdía la estructura que el portal SÍ da y que la
+// app necesita: el informe organiza todo como un árbol
+//
+//   Pénsum 2020 (raíz)
+//     └ Año N Período M            (período; Satisfied / Not Satisfied)
+//         ├ Cursos Obligatorios    (las que hay que cursar sí o sí)
+//         └ Electiva de X          (un slot: elegís 1 de una lista de candidatas)
+//
+// El anidamiento NO está en la contención del DOM (los GROUPBOX son casi todos
+// hermanos), sino en la PROFUNDIDAD del header dentro del documento: contra el
+// fixture real la raíz vive a 45 ancestros, los períodos a 54 y los subgrupos a
+// 72. Los números absolutos dependen del pénsum; lo que importa es el orden
+// relativo, así que el árbol se arma con una pila por profundidad, no con
+// umbrales fijos.
+//
+// Semántica de electivas (la clave del punto 3 del plan): una electiva
+// SATISFECHA el portal la pinta colapsada — sus candidatas ni entran al DOM —,
+// mientras que una PENDIENTE viene expandida con su header y su lista de
+// candidatas. O sea el propio informe ya oculta las candidatas de lo que ya
+// elegiste; solo hay que respetarlo y no inflar el pénsum con ellas.
+
+// Corre en el browser (evaluate): camina el documento en orden y emite un
+// registro por cada cosa que importa, con su profundidad. Interpretarlos y
+// armar el árbol es trabajo de node (parseAdvisementTree), que es como se
+// prueba contra el fixture sin portal.
+export function extractAdvisementTree() {
+  const strip = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
+  const depthOf = (el) => {
+    let d = 0;
+    for (let p = el.parentElement; p; p = p.parentElement) d++;
+    return d;
+  };
+
+  const records = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+  let node;
+  while ((node = walker.nextNode())) {
+    // Header de grupo: <strong>Satisfied/Not Satisfied</strong> LABEL
+    if (node.tagName === 'STRONG' && /atisfied/i.test(node.textContent)) {
+      const span = node.closest('span') || node.parentElement;
+      const strongTxt = strip(node);
+      const label = strip(span).replace(strongTxt, '').trim();
+      records.push({ type: 'header', depth: depthOf(node), satisfied: !/Not/i.test(strongTxt), label });
+      continue;
+    }
+    // Contadores del grupo: <ul><li>Units: … required, … taken, … needed</li>…
+    if (node.tagName === 'UL' && /required/i.test(node.textContent)) {
+      records.push({ type: 'counters', depth: depthOf(node), text: strip(node) });
+      continue;
+    }
+    // Fila de curso (misma trampa invertida que parseAdvisement: el elemento ES
+    // el $span$). El estado/nota/término se leen por id como en extractAdvisement.
+    if (node.tagName === 'SPAN' && node.id && node.id.startsWith('CRSE_NAME$span$')) {
+      const i = node.id.split('$').pop();
+      const img = document.querySelector(`[id="win0divCRSE_STAT$${i}"] img`);
+      records.push({
+        type: 'course',
+        depth: depthOf(node),
+        rawName: strip(node),
+        title: strip(document.getElementById(`CRSE_DESCR$${i}`)) || null,
+        units: strip(document.getElementById(`CRSE_UNITS$${i}`)) || null,
+        when: strip(document.getElementById(`CRSE_WHEN$${i}`)) || null,
+        grade: strip(document.getElementById(`SAA_ACRSE_AVLVW_CRSE_GRADE_OFF$${i}`)) || null,
+        statusAlt: img ? img.getAttribute('alt') : null,
+        statusSrc: img ? img.getAttribute('src') : null,
+      });
+      continue;
+    }
+    // Slot de electiva COLAPSADO (= satisfecho): el link de expandir de un
+    // GROUPBOX3. No tiene header ni candidatas en el DOM; capturamos el slot
+    // para poder mostrarlo satisfecho, sin candidatas.
+    if (
+      node.tagName === 'A' &&
+      node.id &&
+      /^DERIVED_SAA_DPR_GROUPBOX3\$\d+$/.test(node.id) &&
+      node.getAttribute('aria-expanded') === 'false'
+    ) {
+      const label = strip(node.parentElement);
+      if (/Electiva/i.test(label)) {
+        records.push({ type: 'electiva-collapsed', depth: depthOf(node), label });
+      }
+    }
+  }
+
+  return {
+    plan: strip(document.querySelector('[id^="DERIVED_SAA_DPR_DESCR254A"]')) || null,
+    generatedAt: (document.body.textContent.match(/generated on ([\d/]+\s+[\d:]+[AP]M)/i) ?? [])[1] ?? null,
+    records,
+  };
+}
+
+// "Units: 212.00 required, 131.00 taken, 81.00 needed  Courses: 64 required…
+//  GPA: 2.0 required, 2.8 actual" → números. Algunos grupos no traen la línea
+// de GPA; ausente = null, no cero.
+function parseCounters(text) {
+  const segment = (key, stops) => {
+    const re = new RegExp(`${key}:(.*?)(?:${[...stops, '$'].join('|')})`, 'i');
+    return (text.match(re) || [])[1] || '';
+  };
+  const pick = (seg, word) => {
+    const m = seg.match(new RegExp(`([\\d.]+)\\s+${word}`, 'i'));
+    return m ? Number.parseFloat(m[1]) : null;
+  };
+  const units = segment('Units', ['Courses:', 'GPA:']);
+  const cursos = segment('Courses', ['GPA:']);
+  const gpa = segment('GPA', []);
+  return {
+    unitsRequired: pick(units, 'required'),
+    unitsTaken: pick(units, 'taken'),
+    unitsNeeded: pick(units, 'needed'),
+    coursesRequired: pick(cursos, 'required'),
+    coursesTaken: pick(cursos, 'taken'),
+    coursesNeeded: pick(cursos, 'needed'),
+    gpaActual: pick(gpa, 'actual'),
+  };
+}
+
+function classifyGroup(label, hasParent) {
+  if (!hasParent) return 'root';
+  if (/Año\s+\d+\s+Período\s+\d+/i.test(label)) return 'periodo';
+  if (/Electiva/i.test(label)) return 'electiva';
+  if (/Obligatori/i.test(label)) return 'obligatorios';
+  return 'grupo';
+}
+
+// Una fila de curso del informe → materia con código canónico. Misma regla que
+// parseAdvisement, extraída para que el árbol y la lista plana coincidan.
+function parseCourseRow(row, subjects) {
+  const m = (row.rawName ?? '').match(/^([A-Z0-9-]{1,6})\s+(\S+)$/);
+  if (!m) return null;
+  const code = splitCourseCode(m[2], { subjectHint: m[1], knownSubjects: subjects });
+  if (!code) return null;
+  const units = Number.parseFloat(row.units);
+  return {
+    code: courseCodeToString(code),
+    subject: code.subject,
+    catalogNbr: code.catalogNbr,
+    title: row.title || null,
+    units: Number.isFinite(units) ? units : null,
+    status: normalizeStatus(row),
+    takenTerm: row.when || null,
+    grade: row.grade || null,
+  };
+}
+
+const EMPTY_COUNTERS = {
+  unitsRequired: null, unitsTaken: null, unitsNeeded: null,
+  coursesRequired: null, coursesTaken: null, coursesNeeded: null, gpaActual: null,
+};
+
+// Arma el árbol de requisitos a partir de los registros ordenados. Devuelve
+// grupos planos (con parentId por posición), sus cursos, y el perfil que sale
+// de la raíz. `position` es el orden del documento: la verdad sobre la
+// secuencia aunque otro pénsum renombre las etiquetas (§14).
+export function parseAdvisementTree(raw, { knownSubjects: subjects = [] } = {}) {
+  const groups = [];
+  const stack = [];
+  let currentGroup = null;
+  let pos = 0;
+
+  for (const rec of raw.records) {
+    if (rec.type === 'header') {
+      while (stack.length && stack[stack.length - 1].depth >= rec.depth) stack.pop();
+      const parent = stack[stack.length - 1] || null;
+      const kind = classifyGroup(rec.label, Boolean(parent));
+      const ym = rec.label.match(/Año\s+(\d+)\s+Período\s+(\d+)/i);
+      const group = {
+        position: pos++,
+        depth: rec.depth,
+        kind,
+        label: rec.label,
+        satisfied: rec.satisfied,
+        year: ym ? Number(ym[1]) : null,
+        period: ym ? Number(ym[2]) : null,
+        counters: null,
+        collapsed: false,
+        parent,
+        courses: [],
+      };
+      groups.push(group);
+      stack.push(group);
+      currentGroup = group;
+    } else if (rec.type === 'counters') {
+      if (currentGroup && !currentGroup.counters) currentGroup.counters = parseCounters(rec.text);
+    } else if (rec.type === 'course') {
+      if (!currentGroup) continue;
+      const parsed = parseCourseRow(rec, subjects);
+      if (parsed) currentGroup.courses.push({ ...parsed, isCandidate: currentGroup.kind === 'electiva' });
+    } else if (rec.type === 'electiva-collapsed') {
+      // Slot satisfecho: cuelga del período abierto, sin candidatas.
+      let periodo = null;
+      for (let k = stack.length - 1; k >= 0; k--) {
+        if (stack[k].kind === 'periodo') { periodo = stack[k]; break; }
+      }
+      groups.push({
+        position: pos++,
+        depth: (periodo ? periodo.depth : 0) + 2,
+        kind: 'electiva',
+        label: rec.label,
+        satisfied: true,
+        year: periodo ? periodo.year : null,
+        period: periodo ? periodo.period : null,
+        counters: null,
+        collapsed: true,
+        parent: periodo || stack[stack.length - 1] || null,
+        courses: [],
+      });
+    }
+  }
+
+  const flatGroups = groups.map((g) => ({
+    id: g.position,
+    parentId: g.parent ? g.parent.position : null,
+    kind: g.kind,
+    label: g.label,
+    satisfied: g.satisfied,
+    year: g.year,
+    period: g.period,
+    position: g.position,
+    collapsed: g.collapsed,
+    ...(g.counters || EMPTY_COUNTERS),
+  }));
+
+  const flatCourses = [];
+  for (const g of groups) {
+    for (const c of g.courses) flatCourses.push({ groupId: g.position, ...c });
+  }
+
+  return { profile: profileFromTree(groups), groups: flatGroups, courses: flatCourses };
+}
+
+// El perfil sale de la raíz: "Pénsum No. 2020 de INGENIERÍA EN CIENCIAS DE LA
+// COMPUTACIÓN" → número de pénsum + carrera. La cohorte (primer término con
+// notas) la aporta grades, no el informe: se llena en el save.
+function profileFromTree(groups) {
+  const root = groups.find((g) => g.kind === 'root');
+  if (!root) return null;
+  const m = root.label.match(/Pénsum\s+No\.?\s*(\S+)\s+de\s+(.+)/i);
+  return {
+    career: m ? m[2].trim() : null,
+    pensumNo: m ? m[1].trim() : null,
+    planLabel: root.label,
+  };
+}
+
 async function findFrame(page, selector, { timeout = 30000 } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
