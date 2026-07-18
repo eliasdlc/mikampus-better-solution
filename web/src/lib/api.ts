@@ -5,6 +5,7 @@ import {
   planDetailSchema,
   planSummarySchema,
   planToCartResultSchema,
+  recommendationResponseSchema,
   scheduleResponseSchema,
   termInfoSchema,
   termContextSchema,
@@ -18,15 +19,22 @@ import {
   goalsResponseSchema,
   insightsResponseSchema,
   accountInfoSchema,
+  cartValidationResponseSchema,
+  enrollmentWindowsResponseSchema,
+  dropResultSchema,
   type AccountInfo,
   type GoalsResponse,
   type InsightsResponse,
+  type CartValidationResponse,
+  type EnrollmentWindowsResponse,
+  type DropResult,
   type AppState,
   type CartResponse,
   type CatalogResponse,
   type PlanDetail,
   type PlanSummary,
   type PlanToCartResult,
+  type RecommendationResponse,
   type ScheduleResponse,
   type TermInfo,
   type TermContext,
@@ -66,6 +74,21 @@ export async function syncCart(): Promise<CartResponse> {
   return cartResponseSchema.parse(await send('/api/cart/sync', 'POST'));
 }
 
+export async function validateCart(): Promise<CartValidationResponse> {
+  return cartValidationResponseSchema.parse(await send('/api/cart/validate', 'POST'));
+}
+
+export async function fetchEnrollmentWindows(term?: string): Promise<EnrollmentWindowsResponse> {
+  const qs = term ? `?term=${encodeURIComponent(term)}` : '';
+  return enrollmentWindowsResponseSchema.parse(await getJSON(`/api/enrollment-windows${qs}`));
+}
+
+export async function syncEnrollmentWindows(term?: string): Promise<EnrollmentWindowsResponse> {
+  return enrollmentWindowsResponseSchema.parse(
+    await send('/api/enrollment-windows/sync', 'POST', term ? { term } : undefined)
+  );
+}
+
 export async function fetchState(): Promise<AppState> {
   return appStateSchema.parse(await getJSON('/api/state'));
 }
@@ -87,6 +110,15 @@ export async function fetchMySchedule(term?: string): Promise<ScheduleResponse> 
 // del portal (el arranque, cuando aún no se conoce el STRM del ciclo actual).
 export async function syncMySchedule(term?: string): Promise<ScheduleResponse> {
   return scheduleResponseSchema.parse(await send('/api/my-schedule/sync', 'POST', term ? { term } : undefined));
+}
+
+export async function dropScheduleCourse(input: {
+  term: string;
+  courseCode: string;
+  classNbr?: string | null;
+  confirmCode: string;
+}): Promise<DropResult> {
+  return dropResultSchema.parse(await send('/api/my-schedule/drop', 'POST', input));
 }
 
 export function scheduleAt(atISO: string) {
@@ -201,6 +233,20 @@ export async function deleteGoal(id: number): Promise<GoalsResponse> {
 
 export async function fetchInsights(): Promise<InsightsResponse> {
   return insightsResponseSchema.parse(await getJSON('/api/insights'));
+}
+
+// ── Recomendador (/planner, Fase 9) ─────────────────────────────────────────
+export async function fetchRecommendation(term: string, maxCredits: number): Promise<RecommendationResponse> {
+  const qs = new URLSearchParams({ term, maxCredits: String(maxCredits) });
+  return recommendationResponseSchema.parse(await getJSON(`/api/recommendation?${qs}`));
+}
+
+export async function createRecommendedPlan(input: {
+  term: string;
+  maxCredits: number;
+  name?: string;
+}): Promise<PlanDetail> {
+  return planDetailSchema.parse(await send('/api/recommendation/plan', 'POST', input));
 }
 
 // ── Notas, pénsum y holds ───────────────────────────────────────────────────

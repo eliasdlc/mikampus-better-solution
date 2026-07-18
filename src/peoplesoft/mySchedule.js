@@ -111,7 +111,7 @@ export function latestScheduledTerm() {
 }
 
 export function readSchedule(term) {
-  // Sin término (nunca se sincronizó y no hay TARGET_TERM) no es un error:
+  // Sin término (nunca se sincronizó) no es un error:
   // es un horario vacío, y la UI ofrece traerlo del portal.
   if (!term) {
     return { term: null, generatedAt: new Date().toISOString(), syncedAt: null, courses: [] };
@@ -164,6 +164,15 @@ export function readSchedule(term) {
     syncedAt: lastSync('mySchedule', term),
     courses: [...byCourse.values()],
   };
+}
+
+export function removeEnrollmentCourse(term, courseCode) {
+  return db
+    .prepare(
+      `DELETE FROM enrollments
+       WHERE term = ? AND course_id IN (SELECT id FROM courses WHERE code = ?)`
+    )
+    .run(term, courseCode).changes;
 }
 
 // ── Scraper ────────────────────────────────────────────────────────────────
