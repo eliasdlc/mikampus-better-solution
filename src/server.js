@@ -12,7 +12,14 @@ import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
 import { readTerms, reconcileTerms } from './terms.js';
 import { fetchGrades, saveGrades, readGrades, termSummaries } from './peoplesoft/grades.js';
-import { fetchAdvisement, savePensum, readPensum } from './peoplesoft/advisement.js';
+import {
+  fetchAdvisement,
+  readPensum,
+  saveRequirementTree,
+  readRequirementTree,
+  readProfile,
+  earliestGradeTerm,
+} from './peoplesoft/advisement.js';
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades } from './shared/gpa.ts';
 import { db, lastSync, clearPersonalData } from './db.js';
@@ -246,14 +253,54 @@ app.get('/api/pensum', (req, res) => {
 app.post('/api/pensum/sync', async (req, res) => {
   try {
     scheduler.emitEvent({ type: 'log', message: 'Generando el informe de avance (tarda: lo arma el portal)…' });
-    const { courses } = await withPage((page) => fetchAdvisement(page));
-    const saved = savePensum(courses);
-    scheduler.emitEvent({ type: 'log', message: `Pénsum actualizado: ${saved.length} materia(s)` });
-    res.json({ ok: true, courses: saved.length });
+    const { profile, groups, courses } = await withPage((page) => fetchAdvisement(page));
+    // La cohorte (primer término con notas) es de grades, no del informe.
+    const saved = saveRequirementTree({ profile, groups, courses }, { cohortStartTerm: earliestGradeTerm() });
+    scheduler.emitEvent({
+      type: 'log',
+      message: `Pénsum actualizado: ${saved.groups} grupos, ${saved.pensum} materia(s)`,
+    });
+    res.json({ ok: true, ...saved });
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el pénsum: ${err.message}` });
     res.status(500).json({ error: err.message });
   }
+});
+
+// El árbol de requisitos: período → obligatorios/electivas → cursos, tal cual el
+// informe de avance. Cada curso se enriquece con el courseId del catálogo (para
+// "agregar al plan") y si se oferta en el término pedido.
+app.get('/api/requirements', (req, res) => {
+  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM || latestScheduledTerm();
+  const root = readRequirementTree();
+  if (!root) {
+    return res.json({ term, syncedAt: lastSync('advisement'), profile: readProfile(), tree: null });
+  }
+
+  const courseIdByCode = new Map(db.prepare('SELECT code, id FROM courses').all().map((r) => [r.code, r.id]));
+  const offered = new Set(
+    term
+      ? db
+          .prepare('SELECT DISTINCT c.code FROM sections s JOIN courses c ON c.id = s.course_id WHERE s.term = ?')
+          .all(term)
+          .map((r) => r.code)
+      : []
+  );
+
+  const enrich = (node) => {
+    for (const item of node.items) {
+      item.courseId = courseIdByCode.get(item.code) ?? null;
+      item.offered = item.status === 'pending' && offered.has(item.code);
+    }
+    node.children.forEach(enrich);
+  };
+  enrich(root);
+
+  res.json({ term, syncedAt: lastSync('advisement'), profile: readProfile(), tree: root });
+});
+
+app.get('/api/profile', (req, res) => {
+  res.json({ profile: readProfile(), syncedAt: lastSync('advisement') });
 });
 
 app.get('/api/holds', (req, res) => {

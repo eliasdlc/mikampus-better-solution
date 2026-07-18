@@ -386,6 +386,83 @@ export const pensumResponseSchema = z.object({
 });
 export type PensumResponse = z.infer<typeof pensumResponseSchema>;
 
+// ── El árbol de requisitos (parser v2): período → obligatorios/electivas ──
+export const requirementKindSchema = z.enum(['root', 'periodo', 'obligatorios', 'electiva', 'grupo']);
+
+// Un curso dentro de un grupo. Es un pensumCourse + si es candidata de electiva
+// (una opción, no una obligatoria).
+export const requirementItemSchema = pensumCourseSchema.extend({
+  isCandidate: z.boolean(),
+});
+export type RequirementItem = z.infer<typeof requirementItemSchema>;
+
+const requirementCountsSchema = z.object({
+  required: z.number().nullable(),
+  taken: z.number().nullable(),
+  needed: z.number().nullable(),
+});
+
+// Recursivo: un grupo tiene hijos que son grupos. z.lazy + tipo explícito
+// porque Zod no infiere estructuras que se referencian a sí mismas.
+export type RequirementGroup = {
+  id: number;
+  kind: z.infer<typeof requirementKindSchema>;
+  label: string;
+  year: number | null;
+  period: number | null;
+  satisfied: boolean;
+  collapsed: boolean;
+  position: number;
+  units: z.infer<typeof requirementCountsSchema>;
+  courses: z.infer<typeof requirementCountsSchema>;
+  gpaActual: number | null;
+  items: RequirementItem[];
+  children: RequirementGroup[];
+};
+export const requirementGroupSchema: z.ZodType<RequirementGroup> = z.lazy(() =>
+  z.object({
+    id: z.number(),
+    kind: requirementKindSchema,
+    label: z.string(),
+    year: z.number().nullable(),
+    period: z.number().nullable(),
+    satisfied: z.boolean(),
+    collapsed: z.boolean(),
+    position: z.number(),
+    units: requirementCountsSchema,
+    courses: requirementCountsSchema,
+    gpaActual: z.number().nullable(),
+    items: z.array(requirementItemSchema),
+    children: z.array(requirementGroupSchema),
+  })
+);
+
+export const profileSchema = z
+  .object({
+    id: z.number(),
+    career: z.string().nullable(),
+    pensum_no: z.string().nullable(),
+    plan_label: z.string().nullable(),
+    cohort_start_term: z.string().nullable(),
+    updated_at: z.string(),
+  })
+  .nullable();
+export type Profile = z.infer<typeof profileSchema>;
+
+export const requirementsResponseSchema = z.object({
+  term: z.string().nullable(),
+  syncedAt: z.string().nullable(),
+  profile: profileSchema,
+  tree: requirementGroupSchema.nullable(),
+});
+export type RequirementsResponse = z.infer<typeof requirementsResponseSchema>;
+
+export const profileResponseSchema = z.object({
+  profile: profileSchema,
+  syncedAt: z.string().nullable(),
+});
+export type ProfileResponse = z.infer<typeof profileResponseSchema>;
+
 // 'unknown' no es "no bloquea": es "el portal no nos lo dijo". Ver
 // peoplesoft/holds.js — sin un hold real que mirar, la severidad no se inventa.
 export const holdSeveritySchema = z.enum(['blocking', 'info', 'unknown']);
