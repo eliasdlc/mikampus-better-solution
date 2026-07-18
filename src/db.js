@@ -79,6 +79,59 @@ db.exec(`
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- El árbol de requisitos del advisement (parser v2, peoplesoft/advisement.js):
+  -- período → obligatorios/electivas → cursos. La tabla pensum de arriba se
+  -- DERIVA de estas dos en cada sync — sigue viva para /api/pensum, el planner y
+  -- el cron, pero deja de mezclar obligatorias reales con candidatas de electiva.
+  -- El árbol entero se borra y reescribe en cada sync (como cart_rows): un grupo
+  -- que el portal ya no lista tampoco existe. id/parent_id son la POSICIÓN del
+  -- documento, estable dentro de un sync; la columna position es la verdad sobre
+  -- la secuencia aunque otro pénsum renombre las etiquetas (§14 del plan).
+  CREATE TABLE IF NOT EXISTS requirement_groups (
+    id               INTEGER PRIMARY KEY,          -- posición en el documento
+    parent_id        INTEGER REFERENCES requirement_groups(id) ON DELETE CASCADE,
+    kind             TEXT NOT NULL,                -- root / periodo / obligatorios / electiva / grupo
+    label            TEXT NOT NULL,
+    year             INTEGER,                      -- del "Año N Período M"
+    period           INTEGER,
+    satisfied        INTEGER NOT NULL DEFAULT 0,   -- booleano
+    collapsed        INTEGER NOT NULL DEFAULT 0,   -- electiva satisfecha, candidatas ocultas
+    position         INTEGER NOT NULL,             -- orden del documento
+    units_required   REAL,
+    units_taken      REAL,
+    units_needed     REAL,
+    courses_required INTEGER,
+    courses_taken    INTEGER,
+    courses_needed   INTEGER,
+    gpa_actual       REAL,
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS requirement_courses (
+    group_id     INTEGER NOT NULL REFERENCES requirement_groups(id) ON DELETE CASCADE,
+    code         TEXT NOT NULL,                    -- canónico, ej. "FIS-1FIS139"
+    subject      TEXT,
+    catalog_nbr  TEXT,
+    title        TEXT,
+    units        REAL,
+    status       TEXT NOT NULL,                    -- taken / in_progress / planned / pending
+    is_candidate INTEGER NOT NULL DEFAULT 0,       -- candidata de electiva, no obligatoria
+    taken_term   TEXT,
+    grade        TEXT,
+    PRIMARY KEY (group_id, code)
+  );
+
+  -- Una sola fila: quién es el estudiante. Carrera y número de pénsum salen del
+  -- advisement; la cohorte (primer término con notas) la aporta grades.
+  CREATE TABLE IF NOT EXISTS profile (
+    id                 INTEGER PRIMARY KEY CHECK (id = 1),
+    career             TEXT,
+    pensum_no          TEXT,
+    plan_label         TEXT,
+    cohort_start_term  TEXT,
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS sections (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
@@ -253,7 +306,10 @@ addColumnIfMissing('grades', 'catalog_nbr', 'TEXT');
 // Datos que pertenecen a una cuenta concreta: notas, horario inscrito, pénsum,
 // avance, holds y carrito. El catálogo (courses/subjects/sections/seats) y los
 // planes que armaste a mano son independientes de la cuenta y NO se tocan.
-const PERSONAL_TABLES = ['grades', 'enrollments', 'pensum', 'progress_items', 'holds', 'cart_rows'];
+const PERSONAL_TABLES = [
+  'grades', 'enrollments', 'pensum', 'progress_items', 'holds', 'cart_rows',
+  'requirement_groups', 'requirement_courses', 'profile',
+];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
 const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart'];
