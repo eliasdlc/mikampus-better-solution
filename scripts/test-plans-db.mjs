@@ -73,6 +73,29 @@ try {
   assert.equal(summary.itemCount, 2);
   assert.equal(summary.credits, 8);
 
+  // El recomendador persiste su combinación completa en una transacción: cada
+  // item nace planned, con sección y con el porqué como nota editable.
+  const recommended = plans.createPlanWithItems({
+    term: '1930',
+    name: 'Plan recomendado',
+    items: [
+      { courseId: 1, sectionId: 10, note: 'Pendiente del período más viejo.' },
+      { courseId: 2, sectionId: 12, note: 'Se oferta y cabe sin choques.' },
+    ],
+  });
+  planDetailSchema.parse(recommended);
+  assert.equal(recommended.items.length, 2);
+  assert.ok(recommended.items.every((entry) => entry.status === 'planned' && entry.section));
+  assert.match(recommended.items[0].note, /período más viejo/);
+  const beforeInvalid = plans.listPlans().length;
+  assert.throws(
+    () => plans.createPlanWithItems({
+      term: '1930', name: 'Inválido', items: [{ courseId: 1, sectionId: 13 }],
+    }),
+    /otro término/
+  );
+  assert.equal(plans.listPlans().length, beforeInvalid, 'una propuesta inválida no deja plan parcial');
+
   // Duplicar copia items con sección, nota y candado.
   const copy = plans.duplicatePlan(plan.id);
   assert.equal(copy.name, 'Ago–Dic 2026 (copia)');
@@ -86,7 +109,7 @@ try {
   assert.equal(orphans, 0);
   assert.throws(() => plans.readPlan(copy.id), /no existe/);
 
-  console.log('✓ Capa de planes OK (estado↔sección, guardas, duplicado, cascade).');
+  console.log('✓ Capa de planes OK (estado↔sección, recomendado transaccional, guardas, duplicado, cascade).');
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

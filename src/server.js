@@ -29,6 +29,7 @@ import { startCatalogCron, stopCatalogCron } from './cron.js';
 import { readEnrollmentWindows, syncEnrollmentWindows } from './peoplesoft/enrollmentWindows.js';
 import { dropClass } from './peoplesoft/dropClass.js';
 import { startBackupCron, stopBackupCron } from './backups.js';
+import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
@@ -476,6 +477,38 @@ app.post('/api/search/add', async (req, res) => {
 // operación viva de un plan es mandarlo al carrito (más abajo).
 // Los errores de src/plans.js son de datos del usuario (plan inexistente,
 // materia duplicada, sección de otro término) → 400 con el mensaje tal cual.
+
+app.get('/api/recommendation', (req, res) => {
+  try {
+    const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm());
+    const maxCredits = req.query.maxCredits ?? DEFAULT_MAX_CREDITS;
+    res.json(recommendationForTerm(term, maxCredits));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/recommendation/plan', (req, res) => {
+  try {
+    const term = planningTerm(req.body?.term ? String(req.body.term) : null, latestScheduledTerm());
+    const proposal = recommendationForTerm(term, req.body?.maxCredits ?? DEFAULT_MAX_CREDITS);
+    if (!proposal.schedule.valid || proposal.recommendations.length === 0) {
+      throw new Error(proposal.caveats[0] ?? 'No hay una combinación recomendada para este ciclo');
+    }
+    const detail = plans.createPlanWithItems({
+      term: proposal.term,
+      name: req.body?.name?.trim() || 'Plan recomendado',
+      items: proposal.recommendations.map((item) => ({
+        courseId: item.courseId,
+        sectionId: item.section.id,
+        note: item.reason,
+      })),
+    });
+    res.json(detail);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 app.get('/api/plans', (req, res) => {
   res.json({ plans: plans.listPlans() });

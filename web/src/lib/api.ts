@@ -5,6 +5,7 @@ import {
   planDetailSchema,
   planSummarySchema,
   planToCartResultSchema,
+  recommendationResponseSchema,
   scheduleResponseSchema,
   termInfoSchema,
   termContextSchema,
@@ -29,6 +30,7 @@ import {
   type PlanDetail,
   type PlanSummary,
   type PlanToCartResult,
+  type RecommendationResponse,
   type ScheduleResponse,
   type TermInfo,
   type TermContext,
@@ -203,6 +205,19 @@ export async function removePlanItem(planId: number, itemId: number): Promise<Pl
 
 export async function sendPlanToCart(planId: number): Promise<PlanToCartResult> {
   return planToCartResultSchema.parse(await send(`/api/plans/${planId}/to-cart`, 'POST'));
+}
+
+export async function fetchRecommendation(term: string, maxCredits: number): Promise<RecommendationResponse> {
+  const qs = new URLSearchParams({ term, maxCredits: String(maxCredits) });
+  return recommendationResponseSchema.parse(await getJSON(`/api/recommendation?${qs}`));
+}
+
+export async function createRecommendedPlan(input: {
+  term: string;
+  maxCredits: number;
+  name?: string;
+}): Promise<PlanDetail> {
+  return planDetailSchema.parse(await send('/api/recommendation/plan', 'POST', input));
 }
 
 // ── Notas, pénsum y holds ───────────────────────────────────────────────────
