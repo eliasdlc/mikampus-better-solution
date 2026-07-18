@@ -17,7 +17,7 @@ export function CourseChip({
 }) {
   const color = courseColor(code);
   return (
-    <div className="flex items-center gap-2.5">
+    <div className="flex min-w-0 items-center gap-2.5">
       <span className="h-6 w-1 shrink-0 rounded-full" style={{ background: color }} aria-hidden />
       <div className="min-w-0">
         <div className={`truncate font-medium ${size === 'sm' ? 'text-sm' : 'text-[15px]'}`}>{title}</div>

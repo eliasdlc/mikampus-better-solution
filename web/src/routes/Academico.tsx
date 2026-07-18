@@ -1,10 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchGrades, syncGrades, fetchPensum, syncPensum } from '../lib/api.ts';
+import { fetchGrades, syncGrades, fetchRequirements, syncPensum } from '../lib/api.ts';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import { GRADE_POINTS, formatGpa, roundGpa, summarizeGrades } from '../../../src/shared/gpa.ts';
-import type { GradesResponse, PensumResponse, TermGrades } from '../../../src/shared/schemas.ts';
+import type {
+  GradesResponse,
+  RequirementsResponse,
+  RequirementGroup,
+  RequirementItem,
+  TermGrades,
+} from '../../../src/shared/schemas.ts';
 
 // Notas y avance (plan §5.6). Dos tabs: el histórico con el índice y el
 // simulador what-if, y el pénsum con el estado de cada materia.
@@ -233,43 +239,164 @@ const ESTADO_LABEL: Record<string, string> = {
   pending: 'Pendiente',
 };
 
-function Avance({ data }: { data: PensumResponse }) {
-  const [soloPendientes, setSoloPendientes] = useState(false);
+// El puntito de color a la izquierda de cada materia: dice su estado de un
+// vistazo con el mismo lenguaje de color de los cupos (verde aprobada, azul en
+// curso, hueco pendiente).
+function EstadoDot({ item }: { item: RequirementItem }) {
+  const cls =
+    item.status === 'taken'
+      ? 'bg-open'
+      : item.status === 'in_progress'
+        ? 'bg-accent'
+        : item.offered
+          ? 'bg-open/40'
+          : 'border-line border bg-transparent';
+  return <span className={`inline-block size-2 shrink-0 rounded-full ${cls}`} aria-hidden />;
+}
 
-  // El plan quería el pénsum en columnas por semestre, pero el advisement
-  // report no dice a qué semestre pertenece cada materia. Se agrupa por
-  // subject, que es lo que el portal sí publica.
-  const porSubject = useMemo(() => {
-    const m = new Map<string, PensumResponse['courses']>();
-    for (const c of data.courses) {
-      if (soloPendientes && c.status !== 'pending') continue;
-      if (!m.has(c.subject)) m.set(c.subject, []);
-      m.get(c.subject)!.push(c);
+function MateriaFila({ item }: { item: RequirementItem }) {
+  return (
+    <div className="flex min-h-9 items-center justify-between gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <EstadoDot item={item} />
+        <CourseChip code={item.code} title={item.title ?? item.code} size="sm" />
+      </div>
+      <span className="text-muted flex shrink-0 items-center gap-1.5 text-xs">
+        {item.grade ? (
+          <span className="tabular font-mono">{item.grade}</span>
+        ) : item.status === 'pending' && item.offered ? (
+          <span className="text-open">se oferta</span>
+        ) : (
+          <span>{ESTADO_LABEL[item.status] ?? item.status}</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+// El nombre humano de una electiva sin el prefijo de código: "ICC-E01-T
+// Electiva de Inteligencia Artificial" → "Electiva de Inteligencia Artificial".
+function nombreElectiva(label: string): string {
+  const m = label.match(/(Electiva.*)$/i);
+  return m ? m[1] : label;
+}
+
+// Un slot de electiva: elegís 1 de N. Satisfecho = ya elegiste (el portal
+// oculta las candidatas, y las respetamos: no las hay). Pendiente = se listan
+// las candidatas, plegadas para no inflar la vista.
+function ElectivaSlot({ group }: { group: RequirementGroup }) {
+  return (
+    <div className="border-line rounded-[var(--radius)] border border-dashed p-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm">{nombreElectiva(group.label)}</span>
+        {group.satisfied ? (
+          <span className="text-open shrink-0 text-xs">✓ satisfecha</span>
+        ) : (
+          <span className="text-muted tabular shrink-0 text-xs">elegí 1 · {group.items.length} opciones</span>
+        )}
+      </div>
+      {!group.satisfied && group.items.length > 0 && (
+        <details className="mt-1.5">
+          <summary className="text-muted hover:text-fg cursor-pointer text-xs">Ver candidatas</summary>
+          <div className="mt-1.5 space-y-1">
+            {group.items.map((it) => (
+              <MateriaFila key={it.code} item={it} />
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function PeriodoCard({ periodo }: { periodo: RequirementGroup }) {
+  const obligatorios = periodo.children.find((g) => g.kind === 'obligatorios');
+  const electivas = periodo.children.filter((g) => g.kind === 'electiva');
+  const cr = periodo.units;
+
+  return (
+    <article
+      className={`space-y-2 rounded-[var(--radius)] border p-3 ${
+        periodo.satisfied ? 'border-line bg-surface-2' : 'border-line'
+      }`}
+    >
+      <header className="flex items-baseline justify-between gap-2">
+        <h4 className="font-display text-sm font-semibold tracking-tight">Período {periodo.period}</h4>
+        {periodo.satisfied ? (
+          <span className="text-open text-xs font-medium">✓ completo</span>
+        ) : (
+          <span className="text-muted tabular text-xs">
+            {cr.taken ?? 0}/{cr.required ?? 0} cr
+          </span>
+        )}
+      </header>
+
+      {obligatorios && obligatorios.items.length > 0 && (
+        <div className="divide-line divide-y">
+          {obligatorios.items.map((it) => (
+            <MateriaFila key={it.code} item={it} />
+          ))}
+        </div>
+      )}
+
+      {electivas.map((e) => (
+        <ElectivaSlot key={e.id} group={e} />
+      ))}
+
+      {/* Un período satisfecho viene colapsado en el informe: sus materias no
+          están en el DOM. No mentimos con una lista vacía; el ✓ ya lo dice. */}
+      {periodo.satisfied && !obligatorios && electivas.length === 0 && (
+        <p className="text-muted text-xs">Período aprobado.</p>
+      )}
+    </article>
+  );
+}
+
+function Avance({ data }: { data: RequirementsResponse }) {
+  const [soloFalta, setSoloFalta] = useState(false);
+  const root = data.tree;
+
+  const porAnio = useMemo(() => {
+    if (!root) return [];
+    const periodos = root.children.filter((g) => g.kind === 'periodo');
+    const visibles = soloFalta ? periodos.filter((p) => !p.satisfied) : periodos;
+    const m = new Map<number, RequirementGroup[]>();
+    for (const p of visibles) {
+      const y = p.year ?? 0;
+      if (!m.has(y)) m.set(y, []);
+      m.get(y)!.push(p);
     }
-    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [data, soloPendientes]);
+    for (const list of m.values()) list.sort((a, b) => (a.period ?? 0) - (b.period ?? 0));
+    return [...m.entries()].sort((a, b) => a[0] - b[0]);
+  }, [root, soloFalta]);
 
-  const pendientes = data.courses.filter((c) => c.status === 'pending');
-  const ofertadas = pendientes.filter((c) => c.offered);
+  if (!root) {
+    return <p className="text-muted text-sm">El árbol de requisitos aparece cuando sincronices el avance.</p>;
+  }
+
+  const cr = root.units;
+  const materias = root.courses;
 
   return (
     <div className="space-y-5">
-      <div className="border-line flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius)] border p-4">
-        <div className="flex flex-wrap gap-5">
-          <BigNumber label="Aprobadas" value={String(data.courses.filter((c) => c.status === 'taken').length)} />
-          <BigNumber label="Pendientes" value={String(pendientes.length)} />
+      <div className="border-line flex flex-wrap items-center justify-between gap-4 rounded-[var(--radius)] border p-4">
+        <div className="flex flex-wrap gap-6">
           <BigNumber
-            label="Se ofertan"
-            value={String(ofertadas.length)}
-            hint={data.term ? `pendientes con grupos en ${data.term}` : 'sin término activo'}
+            label="Créditos"
+            value={`${cr.taken ?? 0}/${cr.required ?? 0}`}
+            hint={cr.needed ? `${cr.needed} faltantes` : 'completo'}
           />
+          <BigNumber label="Materias faltantes" value={String(materias.needed ?? 0)} />
+          {data.profile?.pensum_no && (
+            <BigNumber label="Pénsum" value={data.profile.pensum_no} hint={data.profile.career ?? undefined} />
+          )}
         </div>
         <button
           type="button"
-          onClick={() => setSoloPendientes((v) => !v)}
-          aria-pressed={soloPendientes}
+          onClick={() => setSoloFalta((v) => !v)}
+          aria-pressed={soloFalta}
           className={`min-h-8 rounded-full px-3 py-1 text-xs transition-colors duration-100 ${
-            soloPendientes ? 'bg-accent text-accent-fg font-medium' : 'border-line text-muted hover:text-fg border'
+            soloFalta ? 'bg-accent text-accent-fg font-medium' : 'border-line text-muted hover:text-fg border'
           }`}
         >
           Solo lo que me falta
@@ -283,33 +410,13 @@ function Avance({ data }: { data: PensumResponse }) {
         portal no publica los prerequisitos.
       </p>
 
-      <div className="space-y-5">
-        {porSubject.map(([subject, courses]) => (
-          <section key={subject}>
-            <h3 className="text-muted mb-2 font-mono text-xs tracking-wide">{subject}</h3>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {courses.map((c) => (
-                <article
-                  key={c.code}
-                  className={`rounded-[var(--radius)] border p-2.5 ${
-                    c.status === 'taken'
-                      ? 'border-line bg-surface-2'
-                      : c.status === 'in_progress'
-                        ? 'border-accent'
-                        : c.offered
-                          ? 'border-open border-dashed'
-                          : 'border-line border-dashed'
-                  }`}
-                >
-                  <CourseChip code={c.code} title={c.title ?? c.code} size="sm" />
-                  <div className="text-muted mt-1.5 flex items-center justify-between gap-2 text-xs">
-                    <span>
-                      {ESTADO_LABEL[c.status] ?? c.status}
-                      {c.grade && <span className="tabular font-mono"> · {c.grade}</span>}
-                    </span>
-                    {c.status === 'pending' && c.offered && <span className="text-open">se oferta</span>}
-                  </div>
-                </article>
+      <div className="space-y-6">
+        {porAnio.map(([anio, periodos]) => (
+          <section key={anio}>
+            <h3 className="text-muted mb-2 text-xs font-medium tracking-wide uppercase">Año {anio}</h3>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {periodos.map((p) => (
+                <PeriodoCard key={p.id} periodo={p} />
               ))}
             </div>
           </section>
@@ -324,7 +431,7 @@ export function Academico() {
   const queryClient = useQueryClient();
 
   const grades = useQuery({ queryKey: ['grades'], queryFn: fetchGrades });
-  const pensum = useQuery({ queryKey: ['pensum'], queryFn: () => fetchPensum() });
+  const requirements = useQuery({ queryKey: ['requirements'], queryFn: () => fetchRequirements() });
 
   const syncG = useMutation({
     mutationFn: syncGrades,
@@ -332,12 +439,16 @@ export function Academico() {
   });
   const syncP = useMutation({
     mutationFn: syncPensum,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pensum'] }),
+    // El sync reconstruye el árbol Y deriva el pénsum plano: refrescar ambos.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['requirements'] });
+      queryClient.invalidateQueries({ queryKey: ['pensum'] });
+    },
   });
 
-  const activa = tab === 'notas' ? grades : pensum;
+  const activa = tab === 'notas' ? grades : requirements;
   const sync = tab === 'notas' ? syncG : syncP;
-  const vacio = tab === 'notas' ? !grades.data?.terms.length : !pensum.data?.courses.length;
+  const vacio = tab === 'notas' ? !grades.data?.terms.length : !requirements.data?.tree;
 
   return (
     <div className="space-y-5">
@@ -388,7 +499,7 @@ export function Academico() {
       ) : tab === 'notas' ? (
         <Notas data={grades.data!} />
       ) : (
-        <Avance data={pensum.data!} />
+        <Avance data={requirements.data!} />
       )}
     </div>
   );
