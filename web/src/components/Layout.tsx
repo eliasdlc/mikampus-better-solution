@@ -1,8 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSSE } from '../lib/sse.tsx';
 import { ThemeToggle } from './ThemeToggle.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
+import { refreshExpiredData } from '../lib/api.ts';
 
 // Las tres zonas de tiempo del plan §11: ninguna pantalla mezcla ciclos sin
 // decirlo, y el sidebar responde tres preguntas distintas. "Ahora" (qué tengo
@@ -54,7 +56,30 @@ function NavItem({ to, label, end }: { to: string; label: string; end?: boolean 
 
 export function Layout({ children }: { children: ReactNode }) {
   const { connected } = useSSE();
+  const queryClient = useQueryClient();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const startedInitialRefresh = useRef(false);
+  const refresh = useMutation({
+    mutationFn: refreshExpiredData,
+    onSuccess: () => {
+      for (const key of ['cart', 'grades', 'holds', 'my-schedule', 'pensum', 'requirements', 'profile', 'plans', 'state']) {
+        queryClient.invalidateQueries({ queryKey: [key] });
+      }
+      queryClient.invalidateQueries({ queryKey: ['account-overview'] });
+    },
+  });
+
+  // Principio 4: entrar nunca espera a PeopleSoft. Las rutas leen SQLite de
+  // inmediato; una vez montada la app, esta pasada silenciosa trae solo lo que
+  // venció. El primer login pasa por el mismo flujo y respeta su prioridad.
+  useEffect(() => {
+    if (startedInitialRefresh.current) return;
+    startedInitialRefresh.current = true;
+    refresh.mutate();
+    // Solo al entrar a la app; un refetch de React Query no debe disparar otro
+    // scraping. `refresh` es estable para esta mutación.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // El atajo se escucha en la ventana y no en un componente: ⌘K es global
   // (plan §5.2), tiene que abrir estés donde estés. Ctrl+K para el mismo gesto
@@ -120,6 +145,15 @@ export function Layout({ children }: { children: ReactNode }) {
             <span className={`size-2 rounded-full ${connected ? 'bg-open' : 'bg-closed'}`} />
             {connected ? 'en vivo' : 'sin conexión'}
           </span>
+          <button
+            type="button"
+            onClick={() => refresh.mutate()}
+            disabled={refresh.isPending}
+            className="text-muted hover:text-fg text-xs disabled:opacity-50"
+            title="Actualizar los datos vencidos"
+          >
+            {refresh.isPending ? 'actualizando…' : 'actualizar'}
+          </button>
           <ThemeToggle />
         </div>
       </aside>

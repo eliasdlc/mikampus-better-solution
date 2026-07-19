@@ -10,8 +10,27 @@ import { Academico } from './routes/Academico.tsx';
 import { Trayectoria } from './routes/Trayectoria.tsx';
 import { Holds } from './routes/Holds.tsx';
 import { Ajustes } from './routes/Ajustes.tsx';
+import { Landing } from './routes/Landing.tsx';
+import { Login } from './routes/Login.tsx';
+import { useAuth } from './lib/auth.tsx';
 
 export function App() {
+  const { loading, authenticated } = useAuth();
+
+  if (loading) {
+    return <main className="text-muted flex min-h-full items-center justify-center text-sm">Abriendo mikampus…</main>;
+  }
+
+  if (!authenticated) {
+    return (
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/entrar" element={<Login />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <Layout>
       <Routes>

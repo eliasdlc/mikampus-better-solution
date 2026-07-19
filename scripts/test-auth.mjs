@@ -24,6 +24,7 @@ const {
   noteLoginFailure,
   noteLoginSuccess,
   authMiddleware,
+  isInvited,
   SESSION_COOKIE,
   CSRF_HEADER,
 } = await import('../src/auth.js');
@@ -61,6 +62,21 @@ assert.ok(!sessionCookieHeader('abc123', { secure: false }).includes('Secure'), 
 assert.match(clearedSessionCookieHeader({ secure: true }), /Max-Age=0/);
 assert.equal(cookieValue(`otra=x; ${SESSION_COOKIE}=abc123; mas=y`, SESSION_COOKIE), 'abc123');
 assert.equal(cookieValue(undefined, SESSION_COOKIE), null);
+
+// ── Allowlist hosted: una beta pública no acepta usuarios por accidente. ──
+const previousMode = process.env.MIKAMPUS_MODE;
+const previousAllowlist = process.env.MIKAMPUS_ALLOWLIST;
+process.env.MIKAMPUS_MODE = 'hosted';
+process.env.MIKAMPUS_ALLOWLIST = 'elias, ANA ';
+assert.equal(isInvited('Elias'), true, 'la allowlist no depende de mayúsculas');
+assert.equal(isInvited('ana'), true, 'la allowlist recorta espacios');
+assert.equal(isInvited('beto'), false, 'un usuario fuera de invitación no llega al portal');
+process.env.MIKAMPUS_ALLOWLIST = '';
+assert.equal(isInvited('elias'), false, 'hosted sin allowlist queda cerrado por defecto');
+if (previousMode == null) delete process.env.MIKAMPUS_MODE;
+else process.env.MIKAMPUS_MODE = previousMode;
+if (previousAllowlist == null) delete process.env.MIKAMPUS_ALLOWLIST;
+else process.env.MIKAMPUS_ALLOWLIST = previousAllowlist;
 
 // ── Rate-limit: 5 fallos bloquean 15 minutos; el éxito limpia. ──
 for (let i = 0; i < 4; i++) noteLoginFailure('elias');

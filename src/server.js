@@ -24,10 +24,10 @@ import {
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
 import { computeInsights } from './shared/insights.ts';
-import { db, lastSync, clearPersonalData, logAction, readActions } from './db.js';
+import { db, lastSync, clearPersonalData, deleteAllUserData, logAction, readActions } from './db.js';
 import { LOCAL_USER_ID, adoptLocalUsername, getUser } from './users.js';
 import * as auth from './auth.js';
-import { purgeExpiredCredentials } from './credentialVault.js';
+import { credentialInfo, deleteCredential, purgeExpiredCredentials } from './credentialVault.js';
 import * as plans from './plans.js';
 import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
@@ -50,6 +50,52 @@ app.use(express.static(DIST_DIR));
 //   su token CSRF (auth.js); ningún handler lee datos sin dueño.
 const MODE = process.env.MIKAMPUS_MODE ?? 'local';
 const SECURE_COOKIES = MODE === 'hosted';
+
+const REFRESH_POLICY = [
+  { kind: 'mySchedule', label: 'Horario', maxAgeMs: 12 * 60 * 60_000 },
+  { kind: 'cart', label: 'Carrito', maxAgeMs: 10 * 60_000 },
+  { kind: 'grades', label: 'Notas', maxAgeMs: 24 * 60 * 60_000 },
+  { kind: 'advisement', label: 'Avance', maxAgeMs: 7 * 24 * 60 * 60_000 },
+  { kind: 'holds', label: 'Holds', maxAgeMs: 12 * 60 * 60_000 },
+];
+const refreshInFlight = new Map();
+
+async function refreshExpired(userId, { force = false } = {}) {
+  const results = [];
+  for (const item of REFRESH_POLICY) {
+    const syncedAt = lastSync(item.kind, { userId });
+    const expired = !syncedAt || Date.now() - new Date(syncedAt).getTime() >= item.maxAgeMs;
+    if (!force && !expired) {
+      results.push({ ...item, status: 'fresh', syncedAt });
+      continue;
+    }
+
+    scheduler.emitEvent({ type: 'log', userId, message: `Actualizando ${item.label.toLowerCase()}…` });
+    try {
+      if (item.kind === 'mySchedule') {
+        await withPage(userId, (page) => syncSchedule(page, { userId, onStep: (message) => scheduler.emitEvent({ type: 'log', userId, message }) }));
+        reconcileTerms();
+      } else if (item.kind === 'cart') {
+        await withPage(userId, (page) => syncCart(page, { userId }));
+      } else if (item.kind === 'grades') {
+        const { courses } = await withPage(userId, (page) => fetchGrades(page, { userId }));
+        saveGrades(userId, courses);
+        reconcileTerms();
+      } else if (item.kind === 'advisement') {
+        const data = await withPage(userId, (page) => fetchAdvisement(page, { userId }));
+        saveRequirementTree(userId, data, { cohortStartTerm: earliestGradeTerm(userId) });
+      } else if (item.kind === 'holds') {
+        const parsed = await withPage(userId, (page) => fetchHolds(page, { userId }));
+        saveHolds(userId, parsed.holds);
+      }
+      results.push({ ...item, status: 'updated', syncedAt: lastSync(item.kind, { userId }) });
+    } catch (err) {
+      scheduler.emitEvent({ type: 'log', userId, message: `No se pudo actualizar ${item.label.toLowerCase()}: ${err.message}` });
+      results.push({ ...item, status: 'error', syncedAt, error: err.message });
+    }
+  }
+  return results;
+}
 
 if (MODE === 'hosted') {
   // Detrás de Caddy: el proto real viene en X-Forwarded-Proto.
@@ -95,10 +141,65 @@ app.get('/api/auth/me', (req, res) => {
   });
 });
 
+// La información de confianza que Ajustes muestra siempre: el estado de la
+// excepción de credencial persistida, las últimas syncs y el audit log viven
+// detrás de la misma sesión del usuario; ninguno filtra datos entre cuentas.
+app.get('/api/account/overview', (req, res) => {
+  const syncKinds = [
+    ['mySchedule', 'Horario'],
+    ['cart', 'Carrito'],
+    ['grades', 'Notas'],
+    ['advisement', 'Avance'],
+    ['holds', 'Holds'],
+  ];
+  res.json({
+    user: getUser(req.userId),
+    credential: credentialInfo(req.userId),
+    syncs: syncKinds.map(([kind, label]) => ({ kind, label, syncedAt: lastSync(kind, { userId: req.userId }) })),
+  });
+});
+
+app.delete('/api/account/data', async (req, res) => {
+  try {
+    // Primero se corta todo lo que pueda tocar el portal; después se borra la
+    // identidad local. Así una carrera con un timer restaurado no puede revivir
+    // una cuenta que ya pidió desaparecer.
+    // Una actualización silenciosa que arrancó al entrar puede seguir en la
+    // cola de Playwright. Esperarla evita que escriba filas nuevas después del
+    // borrado solicitado.
+    await refreshInFlight.get(req.userId);
+    scheduler.cancelSchedule(req.userId);
+    scheduler.stopWatcher(req.userId);
+    await resetSession(req.userId);
+    deleteCredential(req.userId);
+    auth.revokeAllSessions(req.userId);
+    deleteAllUserData(req.userId);
+    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: SECURE_COOKIES }));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Un solo refresh global: sirve cache de inmediato en el cliente y solo sale
+// al portal por lo vencido. El orden de la política declara el primer sync
+// (horario → carrito → notas → avance → holds), aunque cada tarea usa la cola
+// del context del usuario y por tanto no bloquea a otros estudiantes.
+app.post('/api/refresh', async (req, res) => {
+  let pending = refreshInFlight.get(req.userId);
+  if (!pending) {
+    pending = refreshExpired(req.userId, { force: Boolean(req.body?.force) }).finally(() => refreshInFlight.delete(req.userId));
+    refreshInFlight.set(req.userId, pending);
+  }
+  const results = await pending;
+  res.json({ results });
+});
+
 // ── Cuenta ───────────────────────────────────────────────────────────────────
 // Devuelve el usuario vigente y de dónde sale (account.json o .env), nunca la
 // contraseña. La pantalla de Ajustes lo usa para mostrar con qué cuenta estás.
 app.get('/api/account', (req, res) => {
+  if (MODE === 'hosted') return res.status(404).json({ error: 'Esta ruta solo existe en modo local' });
   res.json(getAccountInfo());
 });
 
@@ -108,6 +209,7 @@ app.get('/api/account', (req, res) => {
 // personal en SQLite (si no, la página seguiría mostrando a la persona
 // anterior, porque los GET sirven disco). Los datos se retraen con "sync".
 app.post('/api/account', async (req, res) => {
+  if (MODE === 'hosted') return res.status(404).json({ error: 'Esta ruta solo existe en modo local' });
   const { username, password } = req.body ?? {};
   if (!username || !password) {
     return res.status(400).json({ error: 'Faltan usuario o contraseña' });
