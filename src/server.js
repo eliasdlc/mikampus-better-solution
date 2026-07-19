@@ -25,7 +25,9 @@ import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
 import { computeInsights } from './shared/insights.ts';
 import { db, lastSync, clearPersonalData } from './db.js';
-import { LOCAL_USER_ID, adoptLocalUsername } from './users.js';
+import { LOCAL_USER_ID, adoptLocalUsername, getUser } from './users.js';
+import * as auth from './auth.js';
+import { purgeExpiredCredentials } from './credentialVault.js';
 import * as plans from './plans.js';
 import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
@@ -41,12 +43,56 @@ const app = express();
 app.use(express.json());
 app.use(express.static(DIST_DIR));
 
-// Quién pide. En modo local no hay login: todo request es del usuario 1 (la
-// cuenta del .env/account.json). El middleware existe desde ya para que ningún
-// handler lea datos sin dueño; el modo hosted lo reemplaza por auth real (§5).
-app.use('/api', (req, res, next) => {
-  req.userId = LOCAL_USER_ID;
-  next();
+// Quién pide. MIKAMPUS_MODE decide (§2, "es el mismo código con MODE=local"):
+//   local (default) — sin login: todo request es del usuario 1, la cuenta del
+//   .env/account.json. Es el comportamiento single-user de siempre.
+//   hosted — toda /api exige la cookie de sesión de mikampus y toda mutación
+//   su token CSRF (auth.js); ningún handler lee datos sin dueño.
+const MODE = process.env.MIKAMPUS_MODE ?? 'local';
+const SECURE_COOKIES = MODE === 'hosted';
+
+if (MODE === 'hosted') {
+  // Detrás de Caddy: el proto real viene en X-Forwarded-Proto.
+  app.set('trust proxy', 1);
+  app.use('/api', auth.authMiddleware);
+} else {
+  app.use('/api', (req, res, next) => {
+    req.userId = LOCAL_USER_ID;
+    next();
+  });
+}
+
+// ── Auth (§5): el login de mikampus ES el login del portal ──────────────────
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { user, token, csrfToken, expiresAt } = await auth.loginWithPortal(req.body ?? {});
+    scheduler.emitEvent({ type: 'log', message: `Sesión iniciada: ${user.portalUsername}` });
+    res.set('Set-Cookie', auth.sessionCookieHeader(token, { secure: SECURE_COOKIES }));
+    res.json({ ok: true, user: { id: user.id, username: user.portalUsername }, csrfToken, expiresAt });
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    await auth.logout(auth.cookieValue(req.headers.cookie, auth.SESSION_COOKIE));
+    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: SECURE_COOKIES }));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Quién soy + el CSRF token de mi sesión: lo primero que pide la SPA al abrir.
+app.get('/api/auth/me', (req, res) => {
+  const user = getUser(req.userId);
+  const session = req.sessionToken ? auth.sessionFor(req.sessionToken) : null;
+  res.json({
+    mode: MODE,
+    user: user ? { id: user.id, username: user.portalUsername } : null,
+    csrfToken: session?.csrfToken ?? null,
+  });
 });
 
 // ── Cuenta ───────────────────────────────────────────────────────────────────
@@ -817,6 +863,9 @@ reconcileTerms();
 // La fila migrada del usuario 1 deja de ser anónima: en modo local, la cuenta
 // configurada ES el usuario 1.
 adoptLocalUsername(getAccountInfo().username);
+// Higiene al arrancar: sesiones vencidas fuera, credenciales vencidas fuera.
+auth.purgeExpiredSessions();
+purgeExpiredCredentials();
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);
