@@ -1,0 +1,34 @@
+services:
+  app:
+    build:
+      context: .
+    env_file: .env.hosted
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4173
+      MIKAMPUS_DB: /data/mikampus.db
+      MIKAMPUS_ACCOUNT: /data/account.json
+    volumes:
+      - mikampus_data:/data
+    init: true
+    shm_size: 1gb
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.8.4-alpine
+    env_file: .env.hosted
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  mikampus_data:
+  caddy_data:
+  caddy_config:
