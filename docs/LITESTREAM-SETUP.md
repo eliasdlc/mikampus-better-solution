@@ -29,10 +29,10 @@ Litestream replica continuamente `mikampus.db` a un bucket S3-compatible (Digita
 
 ## Pasos en el Droplet
 
-Conéctate al Droplet:
+Conéctate al Droplet usando la IPv4 reservada configurada para `DOMAIN`:
 
 ```bash
-ssh -i ~/.ssh/mikampus_do root@68.183.106.223
+ssh -i <tu-clave> root@<ipv4-reservada>
 cd /root/mikampus
 ```
 
@@ -102,13 +102,12 @@ Desde la consola de DigitalOcean, entra a tu bucket `mikampus-litestream`. Deber
 
 ### 5. Probar restauración (sin tocar DB activa)
 
-En el Droplet, prueba restaurar en un archivo temporal para verificar que funciona:
-
-```bash
 La restauración requiere la identidad privada, que no vive en el Droplet. Haz
 esta prueba desde la máquina confiable que la guarda, o cópiala de forma
 temporal al Droplet, restaura y bórrala antes de cerrar la sesión. No dejes una
 identidad privada dentro del contenedor ni en el volumen de la aplicación.
+
+Restaura sobre un archivo temporal que no sea la base activa:
 
 ```bash
 litestream restore -o /tmp/restore-test.db s3://<bucket-name>/mikampus.db \
@@ -120,13 +119,13 @@ litestream restore -o /tmp/restore-test.db s3://<bucket-name>/mikampus.db \
 Verifica que el archivo de prueba existe:
 
 ```bash
-docker compose exec app ls -lh /tmp/restore-test.db
+ls -lh /tmp/restore-test.db
 ```
 
 Borra el archivo de prueba:
 
 ```bash
-docker compose exec app rm /tmp/restore-test.db
+rm /tmp/restore-test.db
 ```
 
 ## Resumen final para Fase 1
@@ -137,8 +136,8 @@ Cuando se completen los pasos anteriores:
 2. ✅ Access key limitado creado.
 3. ✅ Age identity privada guardada **fuera del Droplet**.
 4. ✅ `.env.hosted` completado con `LITESTREAM_ENABLED=true`.
-5. ✅ Replica escribiéndose en Spaces cada 24h (snapshot).
-6. ✅ Restauración probada (o pendiente de necesidad).
+5. ✅ Réplica continua escribiéndose en Spaces, con snapshot diario.
+6. ✅ Restauración temporal probada antes de depender de ella.
 
 Entonces Fase 1 se considera **completa** y lista para mergear a `dev`.
 
