@@ -662,11 +662,18 @@ export type HoldsResponse = z.infer<typeof holdsResponseSchema>;
 
 // Estado del scheduler + watcher (GET /api/state).
 export const appStateSchema = z.object({
-  schedule: z.object({ atISO: z.string() }).nullable(),
-  // lastCheckAt null = activo pero todavía sin mirar el carrito, que no es lo
-  // mismo que haberlo mirado recién.
+  schedule: z.object({ atISO: z.string(), prewarmAtISO: z.string(), prewarmed: z.boolean() }).nullable(),
+  // intervalMs es el ciclo efectivo de la materia en el loop compartido;
+  // lastCheckAt null = activo pero todavía sin consultar su materia.
   watcher: z
-    .object({ intervalMs: z.number(), lastCheckAt: z.string().nullable().default(null) })
+    .object({
+      intervalMs: z.number(),
+      lastCheckAt: z.string().nullable().default(null),
+      autoEnroll: z.boolean().default(false),
+      activationOrder: z.number().int().nullable().default(null),
+      appointmentAt: z.string().nullable().default(null),
+      queue: z.array(z.object({ courseCode: z.string(), position: z.number().int(), total: z.number().int() })).default([]),
+    })
     .nullable(),
 });
 export type AppState = z.infer<typeof appStateSchema>;

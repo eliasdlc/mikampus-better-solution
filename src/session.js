@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { loginContext } from './login.js';
 import { getCredentials } from './credentials.js';
-import { getCredential as vaultCredential } from './credentialVault.js';
+import { getCredential as vaultCredential, storeCredential } from './credentialVault.js';
 import { LOCAL_USER_ID } from './users.js';
 
 // El pool de sesiones del portal (LANZAMIENTO §1): UN Chromium compartido y un
@@ -34,6 +34,28 @@ export function setRamCredential(userId, { username, password }) {
 
 export function clearRamCredential(userId) {
   ramCredentials.delete(userId);
+}
+
+// La contraseña nunca sale de este módulo. Cuando el usuario acepta una
+// feature desatendida, copiamos la credencial que ya vive en RAM al vault
+// cifrado; el endpoint no recibe ni reenvía una contraseña por segunda vez.
+export function persistRamCredential(userId, options) {
+  const credentials = ramCredentials.get(userId);
+  if (!credentials) {
+    const err = new Error('Volvé a iniciar sesión para autorizar una función desatendida');
+    err.needsCredentials = true;
+    throw err;
+  }
+  storeCredential(userId, credentials, options);
+}
+
+export function hasLiveCredentials(userId) {
+  try {
+    return Boolean(credentialsFor(userId));
+  } catch (err) {
+    if (err?.needsCredentials) return false;
+    throw err;
+  }
 }
 
 // ¿Con qué re-loguear a este usuario? RAM → almacén cifrado → y solo para el

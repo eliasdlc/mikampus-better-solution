@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { deleteAllMyData, fetchAccountOverview, fetchActions, refreshExpiredData } from '../lib/api.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { ThemeToggle } from '../components/ThemeToggle.tsx';
+import { enablePush, disablePush, getPushState } from '../lib/push.ts';
 import { ago } from '../lib/time.ts';
 
 const PERSONAL_QUERIES = ['cart', 'grades', 'holds', 'my-schedule', 'pensum', 'requirements', 'profile', 'plans', 'state'];
@@ -85,6 +86,8 @@ export function Ajustes() {
         </div>
       </section>
 
+      <NotificacionesSection />
+
       <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
         <h2 className="text-sm font-medium">Historial</h2>
         <p className="text-muted mt-1 text-xs">Cada acción que mikampus hizo sobre tu matrícula y la respuesta literal del portal.</p>
@@ -145,5 +148,75 @@ export function Ajustes() {
         </div>
       </section>
     </div>
+  );
+}
+
+// Notificaciones push (§5.5): la mitad accionable del watcher. Sin esto, "apareció
+// cupo" solo existe si tenés la app abierta. El permiso lo da el usuario con un
+// gesto (no se pide a ciegas), y en iPhone solo funciona con la app instalada al
+// inicio — la UI lo dice en vez de dejar un botón que no hace nada.
+function NotificacionesSection() {
+  const queryClient = useQueryClient();
+  const state = useQuery({ queryKey: ['push-state'], queryFn: getPushState, staleTime: 0 });
+
+  const enable = useMutation({
+    mutationFn: enablePush,
+    onSuccess: (s) => queryClient.setQueryData(['push-state'], s),
+  });
+  const disable = useMutation({
+    mutationFn: disablePush,
+    onSuccess: (s) => queryClient.setQueryData(['push-state'], s),
+  });
+
+  const s = state.data;
+  const busy = enable.isPending || disable.isPending;
+
+  return (
+    <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+      <h2 className="text-sm font-medium">Notificaciones</h2>
+      <p className="text-muted mt-1 text-xs leading-5">
+        Cuando abra un cupo de una materia que vigilás, mikampus te avisa al instante — aunque tengas la app cerrada.
+      </p>
+
+      <div className="border-line mt-3 flex flex-wrap items-center justify-between gap-4 border-t pt-3">
+        {!s ? (
+          <p className="text-muted text-sm">Revisando…</p>
+        ) : !s.supported ? (
+          <p className="text-muted text-sm leading-6">
+            Este dispositivo no puede recibir notificaciones push. En iPhone necesitás{' '}
+            <span className="text-fg">instalar mikampus en tu pantalla de inicio</span> (Compartir → Agregar a inicio) y abrirla desde ahí.
+          </p>
+        ) : s.permission === 'denied' ? (
+          <p className="text-muted text-sm leading-6">
+            Bloqueaste las notificaciones para mikampus. Activalas de nuevo desde los ajustes de tu navegador para este sitio.
+          </p>
+        ) : s.subscribed ? (
+          <>
+            <p className="text-open text-sm">Activadas en este dispositivo.</p>
+            <button
+              type="button"
+              onClick={() => disable.mutate()}
+              disabled={busy}
+              className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-3 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {disable.isPending ? 'Desactivando…' : 'Desactivar'}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-muted text-sm">Todavía no las activaste en este dispositivo.</p>
+            <button
+              type="button"
+              onClick={() => enable.mutate()}
+              disabled={busy}
+              className="bg-fg text-bg rounded-[var(--radius)] px-3 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {enable.isPending ? 'Activando…' : 'Activar notificaciones'}
+            </button>
+          </>
+        )}
+      </div>
+      {enable.error && <p className="text-closed mt-2 text-sm">{enable.error.message}</p>}
+    </section>
   );
 }
