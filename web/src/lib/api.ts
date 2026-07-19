@@ -150,14 +150,14 @@ export async function dropScheduleCourse(input: {
   return dropResultSchema.parse(await send('/api/my-schedule/drop', 'POST', input));
 }
 
-export function scheduleAt(atISO: string) {
-  return send('/api/schedule', 'POST', { atISO });
+export function scheduleAt(input: { atISO: string; term?: string; consent?: boolean }) {
+  return send('/api/schedule', 'POST', input);
 }
 export function cancelSchedule() {
   return send('/api/schedule', 'DELETE');
 }
-export function setWatcher(enabled: boolean) {
-  return send('/api/watch', 'POST', { enabled });
+export function setWatcher(input: { enabled: boolean; autoEnroll?: boolean; appointmentAt?: string | null; term?: string; consent?: boolean }) {
+  return send('/api/watch', 'POST', input);
 }
 export function enrollNow() {
   return send('/api/enroll', 'POST');

@@ -66,7 +66,13 @@ export function Inscripcion() {
     onSuccess: (fresh) => qc.setQueryData(['cart'], fresh),
   });
   const schedule = useMutation({
-    mutationFn: () => scheduleAt(new Date(at).toISOString()),
+    mutationFn: () => {
+      const expiresAt = windows.data?.windows[0]?.endsAt ?? 'el cierre de inscripción';
+      if (!window.confirm(`Para ejecutar el disparo aunque cierres la app, mikampus guardará tu credencial cifrada hasta ${expiresAt}. ¿Aceptás?`)) {
+        return Promise.reject(new Error('No autorizaste el disparo programado.'));
+      }
+      return scheduleAt({ atISO: new Date(at).toISOString(), term: nextTerm, consent: true });
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
   });
   const unschedule = useMutation({
@@ -74,11 +80,23 @@ export function Inscripcion() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
   });
   const watch = useMutation({
-    mutationFn: (enabled: boolean) => setWatcher(enabled),
+    mutationFn: (input: { enabled: boolean; autoEnroll?: boolean }) => {
+      const expiresAt = windows.data?.windows[0]?.endsAt ?? 'el cierre de inscripción';
+      if (input.autoEnroll && !window.confirm(`Auto-inscripción puede modificar tu matrícula sin que estés frente a la app. Se guardará tu credencial cifrada hasta ${expiresAt}. ¿Aceptás?`)) {
+        return Promise.reject(new Error('No autorizaste la auto-inscripción.'));
+      }
+      return setWatcher({
+        ...input,
+        term: nextTerm,
+        appointmentAt: scheduledAt ?? null,
+        consent: input.autoEnroll === true,
+      });
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
   });
 
   const watcherOn = !!state.data?.watcher;
+  const autoEnrollOn = state.data?.watcher?.autoEnroll ?? false;
   const scheduledAt = state.data?.schedule?.atISO;
   const rows = cart.data?.rows ?? [];
   const blocks = useMemo(() => cartBlocks(rows), [rows]);
@@ -226,6 +244,11 @@ export function Inscripcion() {
                     cancelar
                   </button>
                 </div>
+                <p className="text-muted text-xs">
+                  {state.data?.schedule?.prewarmed
+                    ? 'El asistente ya está preparado; a la hora exacta solo se enviará.'
+                    : `Preparación automática desde ${new Date(state.data?.schedule?.prewarmAtISO ?? scheduledAt).toLocaleString('es-DO')}.`}
+                </p>
               </div>
             ) : (
               <div className="flex flex-col gap-2">
@@ -277,7 +300,7 @@ export function Inscripcion() {
               <button
                 role="switch"
                 aria-checked={watcherOn}
-                onClick={() => watch.mutate(!watcherOn)}
+                onClick={() => watch.mutate({ enabled: !watcherOn, autoEnroll: false })}
                 className={`h-6 w-10 rounded-full p-0.5 transition-colors duration-100 ${watcherOn ? 'bg-accent' : 'bg-surface-2 border-line border'}`}
               >
                 <span className={`block size-5 rounded-full bg-white transition-transform duration-100 ${watcherOn ? 'translate-x-4' : ''}`} />
@@ -289,6 +312,31 @@ export function Inscripcion() {
                 : 'Consulta compartida: una sola cuenta revisa las materias vigiladas de todos.'}
             </p>
             <p className="text-muted text-xs">El intervalo se ajusta al presupuesto del servidor durante el pico.</p>
+            {watcherOn && (
+              <label className="border-line flex items-start gap-2 rounded-[var(--radius)] border p-2.5 text-xs">
+                <input
+                  type="checkbox"
+                  checked={autoEnrollOn}
+                  disabled={watch.isPending}
+                  onChange={(event) => watch.mutate({ enabled: true, autoEnroll: event.target.checked })}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-medium">Inscribirme al instante si abre cupo</span>
+                  <span className="text-muted">
+                    {autoEnrollOn
+                      ? 'Activo con cola FIFO. Si no conocemos tu hora exacta, solo te avisará hasta que abra.'
+                      : 'Por defecto solo avisa; activarlo pide consentimiento explícito.'}
+                  </span>
+                </span>
+              </label>
+            )}
+            {state.data?.watcher?.queue.map((item) => (
+              <p key={item.courseCode} className="text-muted text-xs">
+                Fila de {item.courseCode}: posición {item.position} de {item.total}.
+              </p>
+            ))}
+            {watch.error && <p className="text-closed text-xs">{watch.error.message}</p>}
           </div>
 
           <button
