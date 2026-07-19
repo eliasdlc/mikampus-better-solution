@@ -80,6 +80,20 @@ async function send(url: string, method: string, body?: unknown): Promise<unknow
   return data;
 }
 
+// ── Web Push (§5.5) ─────────────────────────────────────────────────────────
+export async function fetchVapidKey(): Promise<string | null> {
+  const data = (await getJSON('/api/push/vapid-key')) as { publicKey: string | null };
+  return data.publicKey ?? null;
+}
+
+export async function subscribePush(subscription: PushSubscriptionJSON): Promise<void> {
+  await send('/api/push/subscribe', 'POST', { subscription });
+}
+
+export async function unsubscribePush(endpoint: string): Promise<void> {
+  await send('/api/push/unsubscribe', 'POST', { endpoint });
+}
+
 // Desde cache (<10ms). El refresh contra el portal es syncCart y es explícito.
 export async function fetchCart(): Promise<CartResponse> {
   return cartResponseSchema.parse(await getJSON('/api/cart'));
