@@ -1,4 +1,4 @@
-# pucmm-autoenroll → mikampus
+# mikampus
 
 Plataforma local que reemplaza el día a día de micampus.pucmm.edu.do: buscar materias, armar horario, planificar ciclos, inscribirse y ver notas/avance, desde una interfaz propia rápida. PeopleSoft queda como backend invisible al que se le hace scraping vía Playwright. El plan completo está en [`PLAN.md`](./PLAN.md).
 
