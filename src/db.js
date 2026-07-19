@@ -358,6 +358,39 @@ db.exec(`
     finished_at  TEXT
   );
 
+  -- El disparo programado y el watcher de cada usuario, PERSISTIDOS: si el
+  -- server se reinicia a las 5:59am, el disparo de las 6:00 tiene que
+  -- sobrevivir (§0). Antes vivían en memoria (scheduler.js); ahora la memoria
+  -- solo tiene los setTimeout, que se rearman desde acá al arrancar.
+  CREATE TABLE IF NOT EXISTS schedules (
+    user_id     INTEGER PRIMARY KEY,
+    at_iso      TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS watchers (
+    user_id       INTEGER PRIMARY KEY,
+    interval_ms   INTEGER NOT NULL,
+    last_check_at TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- El audit log (§8): cada acción que mikampus ejecutó sobre matrícula real,
+  -- con la respuesta literal del portal. Cuando el auto-enroll haga algo que
+  -- un usuario no esperaba — y va a pasar—, la diferencia entre "confío" y
+  -- "desinstalo" es poder mostrarle exactamente qué se hizo y qué contestó.
+  CREATE TABLE IF NOT EXISTS action_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    action          TEXT NOT NULL,              -- enroll / drop / add-to-cart
+    detail          TEXT,                       -- materia / NRC / contexto
+    portal_response TEXT,                       -- literal, sin interpretar
+    ok              INTEGER,                    -- NULL = no se sabe (timeout)
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_action_log_user ON action_log(user_id, created_at);
+
   -- Ventana que PeopleSoft publica bajo Enrollment Dates. El portal
   -- reconocido en jul-2026 solo da FECHAS (sin hora); precision evita que una
   -- medianoche inventada termine programando una inscripción a la hora falsa.
@@ -682,7 +715,7 @@ export function deleteAllUserData(userId) {
   clearPersonalData(userId);
   db.exec('BEGIN');
   try {
-    for (const table of ['plans', 'goals']) {
+    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions']) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
     }
     db.prepare('DELETE FROM sync_log WHERE user_id = ?').run(userId);
@@ -692,6 +725,26 @@ export function deleteAllUserData(userId) {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+// Una acción sobre matrícula real, con la respuesta literal del portal. Se
+// escribe en el momento de la acción, pase lo que pase después: es la feature
+// de confianza del §8, no un log de debug.
+export function logAction({ userId, action, detail = null, response = null, ok = null }) {
+  db.prepare(
+    `INSERT INTO action_log (user_id, action, detail, portal_response, ok)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(userId, action, detail, response, ok === null ? null : ok ? 1 : 0);
+}
+
+export function readActions(userId, limit = 100) {
+  return db
+    .prepare(
+      `SELECT id, action, detail, portal_response AS portalResponse, ok, created_at AS createdAt
+       FROM action_log WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`
+    )
+    .all(userId, limit)
+    .map((r) => ({ ...r, ok: r.ok === null ? null : r.ok === 1 }));
 }
 
 // Registra el resultado de una corrida de scraping para poder mostrar

@@ -35,10 +35,20 @@ try {
   assert.equal(nextRun({ hour: 3, minute: 0 }, mediodia).getDate(), 17, 'las 03:00 ya pasaron: mañana');
   assert.equal(nextRun({ hour: 12, minute: 0 }, mediodia).getDate(), 17, 'la hora exacta actual ya pasó: mañana');
 
-  // La guarda dura: nada de barrer el portal con una inscripción en juego.
-  assert.equal(blockedBecause({ schedule: null, watcher: null }), null, 'sin nada en juego, vía libre');
-  assert.match(blockedBecause({ schedule: { atISO: '2026-08-01T11:00:00Z' }, watcher: null }), /inscripción programada/);
-  assert.match(blockedBecause({ schedule: null, watcher: { intervalMs: 45000 } }), /watcher/);
+  // La guarda dura, versión multi-usuario (§5.7): los watchers ya no bloquean
+  // (con N usuarios siempre hay alguno y cada quien tiene su context); lo
+  // sagrado es el disparo — uno inminente de CUALQUIER usuario frena el barrido.
+  assert.equal(blockedBecause(), null, 'sin disparos programados, vía libre');
+  db.prepare('INSERT INTO schedules (user_id, at_iso) VALUES (2, ?)').run(
+    new Date(Date.now() + 10 * 60_000).toISOString()
+  );
+  assert.match(blockedBecause(), /disparo/, 'un disparo en 10 minutos frena el barrido (pre-warm incluido)');
+  db.exec('DELETE FROM schedules');
+  db.prepare('INSERT INTO schedules (user_id, at_iso) VALUES (2, ?)').run(
+    new Date(Date.now() + 3 * 3600_000).toISOString()
+  );
+  assert.equal(blockedBecause(), null, 'un disparo en 3 horas no frena el barrido nocturno');
+  db.exec('DELETE FROM schedules');
 
   // Qué refrescar: lo que te falta cursar, del pénsum local (sin tocar el portal).
   db.exec(`

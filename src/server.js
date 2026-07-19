@@ -24,7 +24,7 @@ import {
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
 import { computeInsights } from './shared/insights.ts';
-import { db, lastSync, clearPersonalData } from './db.js';
+import { db, lastSync, clearPersonalData, logAction, readActions } from './db.js';
 import { LOCAL_USER_ID, adoptLocalUsername, getUser } from './users.js';
 import * as auth from './auth.js';
 import { purgeExpiredCredentials } from './credentialVault.js';
@@ -281,6 +281,13 @@ app.post('/api/my-schedule/drop', async (req, res) => {
         }),
       { retry: false }
     );
+    logAction({
+      userId: req.userId,
+      action: 'drop',
+      detail: `${courseCode} (${term})`,
+      response: result.message ?? (result.ok ? 'ok' : 'fallo sin mensaje'),
+      ok: result.ok,
+    });
     if (!result.ok) return res.status(502).json(result);
 
     // El resultado del Paso 3 confirmó la baja. Se retira del cache local sin
@@ -294,6 +301,7 @@ app.post('/api/my-schedule/drop', async (req, res) => {
     });
     res.json({ ...result, schedule: readSchedule(req.userId, term) });
   } catch (err) {
+    logAction({ userId: req.userId, action: 'drop', detail: `${courseCode} (${term})`, response: err.message, ok: null });
     scheduler.emitEvent({
       type: 'notice',
       level: 'error',
@@ -574,7 +582,7 @@ app.post('/api/holds/sync', async (req, res) => {
 
 app.post('/api/enroll', async (req, res) => {
   try {
-    const result = await scheduler.runEnrollNow('manual');
+    const result = await scheduler.runEnrollNow(req.userId, 'manual');
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -612,6 +620,13 @@ app.post('/api/search/add', async (req, res) => {
     const result = await withPage(req.userId, (page) =>
       addExactSectionToCart(page, { term, career, courseNumber, classNbr, relatedClassNbr })
     );
+    logAction({
+      userId: req.userId,
+      action: 'add-to-cart',
+      detail: `${career} ${courseNumber} · NRC ${classNbr} (${term})`,
+      response: result.alreadyInCart ? 'ya estaba en el carrito' : 'agregada al carrito',
+      ok: true,
+    });
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -758,12 +773,26 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
           classNbr: item.section.classNbr,
         });
         const alreadyInCart = !!r.alreadyInCart;
+        logAction({
+          userId: req.userId,
+          action: 'add-to-cart',
+          detail: `${item.code} · NRC ${item.section.classNbr} (${plan.term})`,
+          response: alreadyInCart ? 'ya estaba en el carrito' : 'agregada al carrito',
+          ok: true,
+        });
         out.push({ itemId: item.id, code: item.code, title: item.title, ok: true, alreadyInCart, error: null });
         scheduler.emitEvent({
           type: 'log',
           message: alreadyInCart ? `${item.title}: ya estaba en el carrito` : `${item.title}: agregada al carrito ✓`,
         });
       } catch (err) {
+        logAction({
+          userId: req.userId,
+          action: 'add-to-cart',
+          detail: `${item.code} · NRC ${item.section.classNbr} (${plan.term})`,
+          response: err.message,
+          ok: false,
+        });
         out.push({ itemId: item.id, code: item.code, title: item.title, ok: false, alreadyInCart: false, error: err.message });
         scheduler.emitEvent({ type: 'log', message: `${item.title}: falló — ${err.message}` });
       }
@@ -779,12 +808,18 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
 });
 
 app.get('/api/state', (req, res) => {
-  res.json(scheduler.getState());
+  res.json(scheduler.getState(req.userId));
+});
+
+// El Historial de Ajustes (§8): qué hizo mikampus sobre tu matrícula y qué
+// contestó el portal, literal.
+app.get('/api/actions', (req, res) => {
+  res.json({ actions: readActions(req.userId) });
 });
 
 app.post('/api/schedule', (req, res) => {
   try {
-    scheduler.scheduleFixedTime(req.body.atISO);
+    scheduler.scheduleFixedTime(req.userId, req.body.atISO);
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -792,16 +827,16 @@ app.post('/api/schedule', (req, res) => {
 });
 
 app.delete('/api/schedule', (req, res) => {
-  scheduler.cancelSchedule();
+  scheduler.cancelSchedule(req.userId);
   res.json({ ok: true });
 });
 
 app.post('/api/watch', (req, res) => {
   const { enabled, intervalMs } = req.body;
   if (enabled) {
-    scheduler.startWatcher(intervalMs || 45000);
+    scheduler.startWatcher(req.userId, intervalMs || 45000);
   } else {
-    scheduler.stopWatcher();
+    scheduler.stopWatcher(req.userId);
   }
   res.json({ ok: true });
 });
@@ -815,7 +850,12 @@ app.get('/api/events', (req, res) => {
   res.flushHeaders();
   res.write('retry: 2000\n\n');
 
-  const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  // Un evento personal (lleva userId) solo va al SSE de su dueño; los de la
+  // app entera (sin userId) los ven todos.
+  const send = (event) => {
+    if (event.userId != null && event.userId !== req.userId) return;
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
   const unsubscribe = scheduler.onEvent(send);
   const keepAlive = setInterval(() => res.write(': ping\n\n'), 20000);
 
@@ -866,6 +906,12 @@ adoptLocalUsername(getAccountInfo().username);
 // Higiene al arrancar: sesiones vencidas fuera, credenciales vencidas fuera.
 auth.purgeExpiredSessions();
 purgeExpiredCredentials();
+// Los disparos y watchers persistidos se rearman: el reboot de las 5:59 no
+// puede costar el cupo de las 6:00.
+const timers = scheduler.restoreTimers();
+if (timers.schedules || timers.watchers) {
+  console.log(`[scheduler] restaurado: ${timers.schedules} disparo(s), ${timers.watchers} watcher(s)`);
+}
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);
