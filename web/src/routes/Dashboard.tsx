@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   fetchCart,
@@ -438,7 +439,7 @@ function CollapsibleFeed() {
         aria-expanded={open}
         className="text-muted hover:text-fg flex items-center gap-1.5 text-xs"
       >
-        <span aria-hidden>{open ? '▾' : '▸'}</span> Actividad
+        {open ? <ChevronDown className="size-3.5" aria-hidden /> : <ChevronRight className="size-3.5" aria-hidden />} Actividad
       </button>
       {open && (
         <div className="mt-2">

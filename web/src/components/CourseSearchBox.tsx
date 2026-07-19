@@ -12,11 +12,13 @@ export function CourseSearchBox({
   onPick,
   placeholder = 'Agregar materia…',
   exclude = [],
+  suggestions = [],
 }: {
   courses: CatalogCourse[];
-  onPick: (course: CatalogCourse) => void;
+  onPick?: (course: CatalogCourse) => void;
   placeholder?: string;
   exclude?: number[]; // ids de materias ya agregadas — no se reofrecen
+  suggestions?: CatalogCourse[];
 }) {
   const [q, setQ] = useState('');
   const [detail, setDetail] = useState<CatalogCourse | null>(null);
@@ -24,13 +26,13 @@ export function CourseSearchBox({
   const byId = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
 
   const results = useMemo(() => {
-    if (!q.trim()) return [];
+    if (!q.trim()) return suggestions.filter((c) => !exclude.includes(c.id)).slice(0, 6);
     return index
       .search(q)
       .map((r) => byId.get(r.id as number))
       .filter((c): c is CatalogCourse => !!c && !exclude.includes(c.id))
       .slice(0, 8);
-  }, [q, index, byId, exclude]);
+  }, [q, index, byId, exclude, suggestions]);
 
   return (
     <div className="relative">
@@ -42,11 +44,13 @@ export function CourseSearchBox({
       />
       {results.length > 0 && (
         <ul className="border-line bg-surface absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-[var(--radius)] border shadow-none">
+          {!q.trim() && <li className="text-muted border-line border-b px-3 py-2 text-xs">Lo que te toca cursar este ciclo</li>}
           {results.map((course) => (
             <li key={course.id} className="flex items-stretch">
               {/* onMouseDown y no onClick: dispara antes del blur del input,
                   que si no cierra el dropdown antes de que llegue el click. */}
               <button
+                type="button"
                 onMouseDown={() => {
                   setDetail(course);
                   setQ('');
@@ -56,18 +60,20 @@ export function CourseSearchBox({
                 <CourseChip code={course.code} title={course.title} size="sm" />
                 <span className="text-muted text-xs whitespace-nowrap">{course.sections.length} secc.</span>
               </button>
-              <button
-                type="button"
-                onMouseDown={() => {
-                  onPick(course);
-                  setQ('');
-                }}
-                className="border-line text-muted hover:bg-surface-2 border-l px-3 text-xs"
-                aria-label={`Agregar ${course.title}`}
-                title="Agregar materia"
-              >
-                +
-              </button>
+              {onPick && (
+                <button
+                  type="button"
+                  onMouseDown={() => {
+                    onPick(course);
+                    setQ('');
+                  }}
+                  className="border-line text-muted hover:bg-surface-2 border-l px-3 text-xs"
+                  aria-label={`Agregar ${course.title}`}
+                  title="Agregar materia"
+                >
+                  +
+                </button>
+              )}
             </li>
           ))}
         </ul>
