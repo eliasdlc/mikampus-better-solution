@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Check, ChevronDown, ChevronUp, X } from 'lucide-react';
 import {
   addPlanItem,
   createPlan,
@@ -78,7 +79,7 @@ function PendientesDelPensum({
         <span className="text-sm font-medium">Pendientes de tu pénsum</span>
         <span className="text-muted flex items-center gap-2 text-xs">
           <span className="tabular">{sugeridas.length} se ofertan</span>
-          <span aria-hidden>{open ? '▲' : '▼'}</span>
+          {open ? <ChevronUp className="size-4" aria-hidden /> : <ChevronDown className="size-4" aria-hidden />}
         </span>
       </button>
       {open && (
@@ -775,7 +776,7 @@ function SectionOption({
       <span className="flex items-center gap-2">
         {section.instructor && <span className="text-muted">{section.instructor}</span>}
         {section.seats && <SeatBadge status={section.seats.status} />}
-        {chosen && <span aria-hidden>✓</span>}
+        {chosen && <Check className="size-3.5 text-open" aria-label="Seleccionada" />}
       </span>
     </button>
   );
@@ -787,7 +788,7 @@ function ToCartResults({ result }: { result: PlanToCartResult }) {
       {result.results.map((r) => (
         <li key={r.itemId} className="flex items-center justify-between gap-3 px-4 py-2">
           <span>
-            {r.ok ? (r.alreadyInCart ? '· ' : '✓ ') : '✗ '}
+            {r.ok ? (r.alreadyInCart ? '· ' : <Check className="mr-1 inline size-3.5 text-open" aria-hidden />) : <X className="mr-1 inline size-3.5 text-closed" aria-hidden />}
             {r.title}
           </span>
           <span className={`text-xs ${r.ok ? 'text-muted' : 'text-closed'}`}>

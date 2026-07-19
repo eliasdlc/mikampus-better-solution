@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   fetchCatalog,
   addToCart,
@@ -186,7 +187,7 @@ function CourseRow({
           {course.credits != null && <span className="tabular">{course.credits} cr</span>}
           <span>{visibles.length} secc.</span>
           {ocultas > 0 && <span className="text-waitlist">{ocultas} chocan</span>}
-          <span aria-hidden>{open ? '▲' : '▼'}</span>
+          {open ? <ChevronUp className="size-4" aria-hidden /> : <ChevronDown className="size-4" aria-hidden />}
         </span>
       </button>
       {open && (
@@ -238,7 +239,8 @@ function SectionRow({ section, course }: { section: CatalogSection; course: Cata
           disabled={add.isPending || add.isSuccess}
           className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2.5 py-1 text-xs disabled:opacity-50"
         >
-          {add.isSuccess ? 'En el carrito ✓' : add.isPending ? 'Agregando…' : add.isError ? 'Reintentar' : 'Agregar al carrito'}
+          {add.isSuccess && <Check className="size-3.5" aria-hidden />}
+          {add.isSuccess ? 'En el carrito' : add.isPending ? 'Agregando…' : add.isError ? 'Reintentar' : 'Agregar al carrito'}
         </button>
       </div>
       {add.isError && <p className="text-closed w-full text-xs">{(add.error as Error).message}</p>}
@@ -268,7 +270,7 @@ function AddToPlanButton({ course, section }: { course: CatalogCourse; section: 
         onClick={() => setOpen(!open)}
         className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2.5 py-1 text-xs"
       >
-        {add.isSuccess ? 'En el plan ✓' : 'Al plan ▾'}
+        {add.isSuccess ? <><Check className="size-3.5" aria-hidden />En el plan</> : <>Al plan<ChevronDown className="size-3.5" aria-hidden /></>}
       </button>
       {open && (
         <div className="border-line bg-surface absolute right-0 z-30 mt-1 w-52 rounded-[var(--radius)] border">

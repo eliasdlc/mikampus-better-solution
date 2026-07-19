@@ -110,10 +110,10 @@ export function WeeklyGrid({ blocks, animate = false }: { blocks: Block[]; anima
           {HOURS.map((h, i) => (
             <div
               key={h}
-              className="bg-surface border-line/60 text-muted tabular sticky left-0 z-20 border-t pr-2 text-right font-mono text-[10px]"
+              className="bg-surface border-line/60 text-muted tabular sticky left-0 z-20 flex translate-y-1/2 items-end justify-end border-t pr-2 text-right font-mono text-[10px]"
               style={{ gridColumn: 1, gridRow: hourRow(i) }}
             >
-              <span className="relative -top-1.5">{String(h).padStart(2, '0')}:00</span>
+              <span>{String(h).padStart(2, '0')}:00</span>
             </div>
           ))}
 

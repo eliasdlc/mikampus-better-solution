@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Check, Lock, LockKeyholeOpen, X } from 'lucide-react';
 import {
   addPlanItem,
   addToCart,
@@ -241,7 +242,7 @@ export function Builder({
           {toCart.data.map((r) => (
             <li key={r.code} className="flex items-center justify-between gap-3 px-4 py-2">
               <span>
-                {r.ok ? '✓ ' : '✗ '}
+                {r.ok ? <Check className="mr-1 inline size-3.5 text-open" aria-hidden /> : <X className="mr-1 inline size-3.5 text-closed" aria-hidden />}
                 {r.title}
               </span>
               <span className={`text-xs ${r.ok ? 'text-muted' : 'text-closed'}`}>{r.error ?? 'agregada'}</span>
@@ -312,7 +313,7 @@ export function Builder({
                 title={loadedPlanId ? undefined : 'Elegí un plan primero'}
                 className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-3 py-2 text-sm disabled:opacity-50"
               >
-                {saveToPlan.isPending ? 'Guardando…' : saveToPlan.isSuccess ? 'Guardado ✓' : 'Guardar en plan'}
+                {saveToPlan.isPending ? 'Guardando…' : saveToPlan.isSuccess ? <><Check className="mr-1 inline size-3.5" aria-hidden />Guardado</> : 'Guardar en plan'}
               </button>
               <button
                 disabled={selectedCount === 0 || toCart.isPending}
@@ -377,7 +378,7 @@ function CandidateCard({
               aria-pressed={locked}
               className={`rounded-[var(--radius)] px-1.5 py-0.5 text-sm ${locked ? 'bg-surface-2' : 'opacity-40 hover:opacity-100'}`}
             >
-              {locked ? '🔒' : '🔓'}
+              {locked ? <Lock className="size-4" aria-hidden /> : <LockKeyholeOpen className="size-4" aria-hidden />}
             </button>
           )}
           <button
@@ -386,7 +387,7 @@ function CandidateCard({
             aria-label={`Quitar ${course.title}`}
             className="text-muted hover:text-closed px-1 text-sm"
           >
-            ×
+            <X className="size-4" aria-hidden />
           </button>
         </div>
       </div>
@@ -416,7 +417,7 @@ function CandidateCard({
                 <span className="flex items-center gap-2">
                   {section.instructor && <span className="text-muted">{section.instructor}</span>}
                   {section.seats && <SeatBadge status={section.seats.status} />}
-                  {chosen && <span aria-hidden>✓</span>}
+                  {chosen && <Check className="size-3.5 text-open" aria-label="Seleccionada" />}
                 </span>
               </button>
             );
