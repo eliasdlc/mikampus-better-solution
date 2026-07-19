@@ -49,11 +49,10 @@ export function parseEnrollmentWindows(raw) {
     startsAt: portalDateToISO(row.startsAt),
     endsAt: portalDateToISO(row.endsAt),
     precision: 'date',
-    userId: 1,
   }));
 }
 
-export function saveEnrollmentWindows(windows) {
+export function saveEnrollmentWindows(userId, windows) {
   const insert = db.prepare(
     `INSERT INTO enrollment_windows
        (term_code, session, starts_at, ends_at, precision, user_id, synced_at)
@@ -73,7 +72,7 @@ export function saveEnrollmentWindows(windows) {
         window.startsAt,
         window.endsAt,
         window.precision,
-        window.userId ?? 1
+        userId
       );
     }
     db.exec('COMMIT');
@@ -81,19 +80,19 @@ export function saveEnrollmentWindows(windows) {
     db.exec('ROLLBACK');
     throw error;
   }
-  logSync({ kind: 'enrollmentWindows', status: 'ok', rows: windows.length, detail: windows[0]?.termCode ?? null });
+  logSync({ userId, kind: 'enrollmentWindows', status: 'ok', rows: windows.length, detail: windows[0]?.termCode ?? null });
   return windows.length;
 }
 
-export function readEnrollmentWindows(termCode = null) {
+export function readEnrollmentWindows(userId, termCode = null) {
   const rows = db
     .prepare(
       `SELECT term_code, session, starts_at, ends_at, precision, user_id, synced_at
        FROM enrollment_windows
-       WHERE user_id = 1 ${termCode ? 'AND term_code = ?' : ''}
+       WHERE user_id = ? ${termCode ? 'AND term_code = ?' : ''}
        ORDER BY starts_at, session`
     )
-    .all(...(termCode ? [termCode] : []))
+    .all(userId, ...(termCode ? [termCode] : []))
     .map((row) =>
       enrollmentWindowSchema.parse({
         termCode: row.term_code,
@@ -105,7 +104,7 @@ export function readEnrollmentWindows(termCode = null) {
         syncedAt: row.synced_at,
       })
     );
-  return { syncedAt: lastSync('enrollmentWindows'), windows: rows };
+  return { syncedAt: lastSync('enrollmentWindows', { userId }), windows: rows };
 }
 
 async function findFrame(page, selector, timeout = 12_000) {
@@ -123,7 +122,7 @@ async function findFrame(page, selector, timeout = 12_000) {
   return null;
 }
 
-export async function syncEnrollmentWindows(page, { onStep = () => {} } = {}) {
+export async function syncEnrollmentWindows(page, { userId, onStep = () => {} }) {
   try {
     onStep('abriendo Enrollment Dates…');
     await page.goto(STUDENT_CENTER_URL, { waitUntil: 'commit' });
@@ -142,10 +141,10 @@ export async function syncEnrollmentWindows(page, { onStep = () => {} } = {}) {
     if (!frame) throw new Error('PeopleSoft abrió Enrollment Dates sin fechas legibles');
     onStep('leyendo la ventana publicada…');
     const windows = parseEnrollmentWindows(await frame.evaluate(extractEnrollmentWindows));
-    saveEnrollmentWindows(windows);
+    saveEnrollmentWindows(userId, windows);
     return windows;
   } catch (error) {
-    logSync({ kind: 'enrollmentWindows', status: 'error', detail: error.message });
+    logSync({ userId, kind: 'enrollmentWindows', status: 'error', detail: error.message });
     throw error;
   }
 }

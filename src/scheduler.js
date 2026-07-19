@@ -2,6 +2,7 @@ import { syncCart, readCart } from './peoplesoft/cart.js';
 import { enrollFromCart } from './peoplesoft/enroll.js';
 import { withPage } from './session.js';
 import { notifyFromEvent } from './notify.js';
+import { LOCAL_USER_ID } from './users.js';
 
 const listeners = new Set();
 export function onEvent(fn) {
@@ -116,7 +117,9 @@ export function startWatcher(intervalMs = 45000) {
     try {
       // El watcher ya está leyendo el carrito cada 45s: que su tick alimente el
       // cache deja el resto de la app fresca sin pedirle nada extra al portal.
-      rows = await withPage((page) => syncCart(page));
+      // Un solo watcher por ahora (el del usuario local); se vuelve por-usuario
+      // con los timers persistidos de la Fase 2.
+      rows = await withPage((page) => syncCart(page, { userId: LOCAL_USER_ID }));
     } catch (err) {
       // Un watcher que no puede leer el carrito no está vigilando nada, y creer
       // que sí es peor que saber que está roto. El dedupe evita los 80 popups
@@ -132,7 +135,7 @@ export function startWatcher(intervalMs = 45000) {
     }
     // El watcher puede haberse apagado mientras este tick esperaba al portal.
     if (state.watcher) state.watcher.lastCheckAt = new Date().toISOString();
-    emit({ type: 'cart-status', rows, syncedAt: readCart().syncedAt });
+    emit({ type: 'cart-status', rows, syncedAt: readCart(LOCAL_USER_ID).syncedAt });
 
     let openedSomething = false;
     for (const row of rows) {

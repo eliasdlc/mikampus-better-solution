@@ -31,7 +31,7 @@ const { upsertTerm, reconcileTerms, readTerms } = await import('../src/terms.js'
   await p.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
   const raw = await p.evaluate(extractAdvisementTree);
   const tree = parseAdvisementTree(raw, { knownSubjects: ['ICC', 'FIS', 'MAT', 'ILE', 'ITT', 'GFA', 'FIL'] });
-  const saved = saveRequirementTree(tree, { cohortStartTerm: 'Septiembre de 2023' });
+  const saved = saveRequirementTree(1, tree, { cohortStartTerm: 'Septiembre de 2023' });
 
   // 2. El histórico de notas: da los términos del pasado y el presente (en curso).
   await p.setContent(await readFile('fixtures/recon-course-history.html', 'utf8'));
@@ -40,7 +40,7 @@ const { upsertTerm, reconcileTerms, readTerms } = await import('../src/terms.js'
   const courses = parseCourseHistory(rawGrades.rows, {
     knownSubjects: ['ICC', 'ESG', 'ART', 'DEP', 'ET', 'ILE', 'GFA', 'IIS'],
   });
-  saveGrades(courses);
+  saveGrades(1, courses);
   console.log('sembrado:', saved, '·', courses.length, 'notas');
 }
 

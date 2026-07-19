@@ -369,7 +369,7 @@ async function findFrame(page, selector, { timeout = 30000 } = {}) {
 }
 
 // Abre el informe y devuelve el pensum del estudiante con su estado.
-export async function fetchAdvisement(page) {
+export async function fetchAdvisement(page, { userId }) {
   await page.goto(MY_ACAD_URL, { waitUntil: 'commit' });
   await page.waitForTimeout(7000);
 
@@ -389,14 +389,17 @@ export async function fetchAdvisement(page) {
   const tree = parseAdvisementTree(raw, { knownSubjects: knownSubjects() });
   const subjects = subjectsFromAdvisement(tree.courses);
 
-  logSync({ kind: 'advisement', term: null, status: 'ok', detail: raw.plan ?? 'pensum', rows: tree.courses.length });
+  logSync({ userId, kind: 'advisement', term: null, status: 'ok', detail: raw.plan ?? 'pensum', rows: tree.courses.length });
   return { plan: raw.plan, generatedAt: raw.generatedAt, subjects, ...tree };
 }
 
 // La cohorte del estudiante: su primer término con notas. Sale de grades, no del
 // informe de avance, así que se calcula acá para pasársela al save del árbol.
-export function earliestGradeTerm() {
-  const labels = db.prepare('SELECT DISTINCT term FROM grades WHERE term IS NOT NULL').all().map((r) => r.term);
+export function earliestGradeTerm(userId) {
+  const labels = db
+    .prepare('SELECT DISTINCT term FROM grades WHERE user_id = ? AND term IS NOT NULL')
+    .all(userId)
+    .map((r) => r.term);
   let best = null;
   let bestKey = null;
   for (const label of labels) {
@@ -538,9 +541,9 @@ const insertReqCourseStmt = db.prepare(`
 `);
 
 const upsertProfileStmt = db.prepare(`
-  INSERT INTO profile (id, career, pensum_no, plan_label, cohort_start_term, updated_at)
-  VALUES (1, ?, ?, ?, ?, datetime('now'))
-  ON CONFLICT(id) DO UPDATE SET
+  INSERT INTO profile (user_id, career, pensum_no, plan_label, cohort_start_term, updated_at)
+  VALUES (?, ?, ?, ?, ?, datetime('now'))
+  ON CONFLICT(user_id) DO UPDATE SET
     career = excluded.career,
     pensum_no = excluded.pensum_no,
     plan_label = excluded.plan_label,
@@ -553,7 +556,7 @@ const upsertProfileStmt = db.prepare(`
 // no lista tampoco existe. Los grupos van en orden de documento, que es orden
 // topológico (padre antes que hijo), así que la FK parent_id se respeta sin
 // ordenar aparte. Deriva el pénsum al final, todo en una transacción.
-export function saveRequirementTree({ profile, groups, courses }, { cohortStartTerm = null } = {}) {
+export function saveRequirementTree(userId, { profile, groups, courses }, { cohortStartTerm = null } = {}) {
   db.exec('BEGIN');
   try {
     db.exec('DELETE FROM requirement_courses');
@@ -574,7 +577,7 @@ export function saveRequirementTree({ profile, groups, courses }, { cohortStartT
       );
     }
     if (profile) {
-      upsertProfileStmt.run(profile.career, profile.pensumNo, profile.planLabel, cohortStartTerm);
+      upsertProfileStmt.run(userId, profile.career, profile.pensumNo, profile.planLabel, cohortStartTerm);
     }
 
     const pensum = derivePensum();
@@ -586,8 +589,8 @@ export function saveRequirementTree({ profile, groups, courses }, { cohortStartT
   }
 }
 
-export function readProfile() {
-  return db.prepare('SELECT * FROM profile WHERE id = 1').get() ?? null;
+export function readProfile(userId) {
+  return db.prepare('SELECT * FROM profile WHERE user_id = ?').get(userId) ?? null;
 }
 
 // El árbol anidado para la UI: cada grupo con sus hijos y sus cursos. Los

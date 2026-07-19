@@ -21,7 +21,7 @@ const fixturePage = await browser.newPage();
 await fixturePage.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
 const raw = await fixturePage.evaluate(extractAdvisementTree);
 await fixturePage.close();
-saveRequirementTree(parseAdvisementTree(raw, {
+saveRequirementTree(1, parseAdvisementTree(raw, {
   knownSubjects: ['ICC', 'FIS', 'MAT', 'ILE', 'ITT', 'GFA', 'FIL'],
 }));
 
