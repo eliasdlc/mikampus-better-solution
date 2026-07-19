@@ -1,54 +1,45 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  CalendarDays,
+  CalendarRange,
+  ChartLine,
+  GraduationCap,
+  House,
+  RefreshCw,
+  Search,
+  Settings,
+  type LucideIcon,
+} from 'lucide-react';
 import { useSSE } from '../lib/sse.tsx';
 import { ThemeToggle } from './ThemeToggle.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
 import { refreshExpiredData } from '../lib/api.ts';
 
-// Las tres zonas de tiempo del plan §11: ninguna pantalla mezcla ciclos sin
-// decirlo, y el sidebar responde tres preguntas distintas. "Ahora" (qué tengo
-// hoy), "Próximo ciclo" (qué inscribo) y "Mi carrera" (dónde estoy parado).
-// Ajustes queda suelto al pie: no es una zona de tiempo.
-const ZONES = [
-  {
-    label: 'Ahora',
-    items: [
-      { to: '/', label: 'Inicio', end: true },
-      { to: '/horario', label: 'Mi horario' },
-    ],
-  },
-  {
-    label: 'Próximo ciclo',
-    items: [
-      { to: '/buscar', label: 'Buscar' },
-      { to: '/planner', label: 'Planner' },
-      { to: '/builder', label: 'Builder' },
-      { to: '/inscripcion', label: 'Inscripción' },
-    ],
-  },
-  {
-    label: 'Mi carrera',
-    items: [
-      { to: '/trayectoria', label: 'Trayectoria' },
-      { to: '/academico', label: 'Notas y avance' },
-      { to: '/holds', label: 'Holds' },
-    ],
-  },
+// La navegación nombra las seis tareas, no las pantallas que el proyecto fue
+// acumulando. Buscar, holds y elegir grupos siguen existiendo donde se usan.
+const NAV: Array<{ to: string; label: string; icon: LucideIcon; end?: boolean }> = [
+  { to: '/', label: 'Inicio', icon: House, end: true },
+  { to: '/planear', label: 'Planear', icon: CalendarRange },
+  { to: '/horario', label: 'Mi horario', icon: CalendarDays },
+  { to: '/inscripcion', label: 'Inscripción', icon: GraduationCap },
+  { to: '/academico', label: 'Notas y avance', icon: ChartLine },
+  { to: '/ajustes', label: 'Ajustes', icon: Settings },
 ];
-const EXTRA = [{ to: '/ajustes', label: 'Ajustes', end: false }];
 
-function NavItem({ to, label, end }: { to: string; label: string; end?: boolean }) {
+function NavItem({ to, label, icon: Icon, end }: { to: string; label: string; icon: LucideIcon; end?: boolean }) {
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
-        `rounded-[var(--radius)] px-3 py-2 text-sm transition-colors duration-100 ${
+        `flex items-center gap-2 rounded-[var(--radius)] px-3 py-2 text-sm transition-colors duration-100 ${
           isActive ? 'bg-accent text-accent-fg font-medium' : 'text-muted hover:bg-surface-2 hover:text-fg'
         }`
       }
     >
+      <Icon className="size-4 shrink-0" aria-hidden />
       {label}
     </NavLink>
   );
@@ -100,9 +91,8 @@ export function Layout({ children }: { children: ReactNode }) {
   // columna y desbordaba la página entera en tablet.
   return (
     <div className="app-shell min-h-full md:grid md:grid-cols-[220px_minmax(0,1fr)]">
-      {/* En mobile esto es una barra superior. Con cuatro secciones el nav ya
-          no entra al lado del logo en 390px, así que baja a su propia línea
-          (order + w-full) en vez de desbordar la página a lo ancho. */}
+      {/* En mobile esto es una barra superior. El nav baja a su propia línea
+          para que cada destino siga siendo tocable a 390px. */}
       {/* print:hidden — la navegación no existe en papel (plan §5.5). */}
       <aside className="border-line bg-surface flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b px-4 py-3 print:hidden md:h-screen md:flex-nowrap md:flex-col md:items-stretch md:justify-start md:border-r md:border-b-0 md:px-4 md:py-5">
         <div className="flex items-center gap-2 md:mb-4">
@@ -116,26 +106,13 @@ export function Layout({ children }: { children: ReactNode }) {
           onClick={() => setPaletteOpen(true)}
           className="border-line text-muted hover:bg-surface-2 hover:text-fg order-4 flex w-full items-center justify-between gap-2 rounded-[var(--radius)] border px-3 py-2 text-sm transition-colors duration-100 md:order-none md:mb-6"
         >
-          Buscar…
+          <span className="flex items-center gap-2"><Search className="size-4" aria-hidden />Buscar…</span>
           <kbd className="border-line bg-surface-2 tabular rounded border px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd>
         </button>
 
-        {/* flex-wrap: en mobile el nav es una barra horizontal que baja de línea
-            antes que desbordar 390px, y los títulos de zona se ocultan (no
-            entran en una sola fila). En desktop es una columna con las tres
-            zonas de tiempo del plan §11, cada una con su encabezado. */}
+        {/* En mobile puede envolver sin desbordar; en desktop es una columna. */}
         <nav className="order-3 flex w-full flex-wrap gap-1 md:order-none md:w-auto md:flex-col md:flex-nowrap md:gap-0">
-          {ZONES.map((zone) => (
-            <div key={zone.label} className="contents md:mb-4 md:flex md:flex-col md:last:mb-0">
-              <div className="text-muted hidden px-3 pt-2 pb-1 text-[10px] font-medium tracking-wide uppercase md:block">
-                {zone.label}
-              </div>
-              {zone.items.map((item) => (
-                <NavItem key={item.to} {...item} />
-              ))}
-            </div>
-          ))}
-          {EXTRA.map((item) => (
+          {NAV.map((item) => (
             <NavItem key={item.to} {...item} />
           ))}
         </nav>
@@ -149,9 +126,10 @@ export function Layout({ children }: { children: ReactNode }) {
             type="button"
             onClick={() => refresh.mutate()}
             disabled={refresh.isPending}
-            className="text-muted hover:text-fg text-xs disabled:opacity-50"
+            className="text-muted hover:text-fg flex items-center gap-1.5 text-xs disabled:opacity-50"
             title="Actualizar los datos vencidos"
           >
+            <RefreshCw className={`size-3 ${refresh.isPending ? 'animate-spin' : ''}`} aria-hidden />
             {refresh.isPending ? 'actualizando…' : 'actualizar'}
           </button>
           <ThemeToggle />
