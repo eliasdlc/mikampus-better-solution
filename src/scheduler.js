@@ -133,6 +133,35 @@ function recordEnrollResult(userId, result, reason) {
 
 const PREWARM_LEAD_MS = 8 * 60_000;
 const PREWARM_RETRY_MS = 60_000;
+// Los logins de una misma escuela llegan concentrados a la misma hora. Si
+// todos los pre-warms arrancan exactamente en T-8, solo movimos el pico de
+// las 6:00 a las 5:52. El offset es estable por usuario+disparo: reparte CPU
+// y tráfico, y un reinicio no reordena ni vuelve a concentrar los logins.
+const PREWARM_JITTER_MS = positiveEnv('PREWARM_JITTER_MS', 3 * 60_000, 0);
+
+function stableJitter(userId, atISO, maximum) {
+  if (!maximum) return 0;
+  let hash = 2166136261;
+  for (const char of `${userId}:${atISO}`) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % (maximum + 1);
+}
+
+// Se exporta para que el ensayo del día-D pueda comprobar la distribución sin
+// esperar timers reales ni abrir una sesión de PeopleSoft.
+export function prewarmAtFor(userId, atISO, now = Date.now()) {
+  const at = new Date(atISO).getTime();
+  if (Number.isNaN(at)) throw new Error('Fecha/hora inválida');
+  // Reservamos al menos un minuto antes de T0 para que un fallo de pre-warm
+  // tenga una oportunidad de reintento. Un disparo creado con menos margen
+  // empieza a preparar de inmediato, que es mejor que esperar al jitter.
+  const latest = at - PREWARM_RETRY_MS;
+  const jitter = Math.min(PREWARM_JITTER_MS, Math.max(0, PREWARM_LEAD_MS - PREWARM_RETRY_MS));
+  const staggered = at - PREWARM_LEAD_MS + stableJitter(userId, atISO, jitter);
+  return new Date(Math.max(now, Math.min(staggered, latest))).toISOString();
+}
 
 async function prewarmSchedule(userId, schedule) {
   if (schedule.prewarmed || Date.now() >= new Date(schedule.atISO).getTime()) return;
@@ -178,8 +207,9 @@ function armSchedule(userId, atISO) {
   clearTimeout(s.schedule?.timer);
   clearTimeout(s.schedule?.prewarmTimer);
   const ms = new Date(atISO).getTime() - Date.now();
-  const prewarmAt = Math.max(0, ms - PREWARM_LEAD_MS);
-  const schedule = { atISO, prewarmAtISO: new Date(Date.now() + prewarmAt).toISOString(), prewarmed: false, prewarmTimer: null, timer: null };
+  const prewarmAtISO = prewarmAtFor(userId, atISO);
+  const prewarmAt = Math.max(0, new Date(prewarmAtISO).getTime() - Date.now());
+  const schedule = { atISO, prewarmAtISO, prewarmed: false, prewarmTimer: null, timer: null };
   schedule.prewarmTimer = setTimeout(() => prewarmSchedule(userId, schedule), prewarmAt);
   schedule.timer = setTimeout(() => fireSchedule(userId, schedule).catch(() => {}), Math.max(ms, 0));
   s.schedule = schedule;
