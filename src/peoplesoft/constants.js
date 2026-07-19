@@ -28,8 +28,8 @@ export const VIEW_SCHEDULE_URL =
 
 // Dar de baja una materia (plan §5.5). Mismo patrón de URL clásica que el
 // carrito y Mi Horario, en la misma carpeta de Enrollment del portal.
-// RECON PENDIENTE: nadie corrió src/recon-drop.js todavía, así que no hay
-// scraper de baja — solo la URL por la que empezar a mirar.
+// Recon cerrado en Fase 8.5: el flujo vive en dropClass.js con fixtures de
+// ambos pasos (recon-drop-landing / recon-drop-paso2-confirmacion).
 export const DROP_URL =
   'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SSR_SSENRL_DROP.GBL?FolderPath=PORTAL_ROOT_OBJECT.CO_EMPLOYEE_SELF_SERVICE.HCCC_ENROLLMENT.HC_SSR_SSENRL_DROP_GBL&IsFolder=false&IgnoreParamTempl=FolderPath%2cIsFolder';
 
