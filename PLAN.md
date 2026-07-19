@@ -6,9 +6,9 @@
 
 ## 0. Estado real del plan
 
-> Se actualiza al cerrar cada fase. Última actualización: 18-jul-2026 (integración de Fases 8–10).
+> Se actualiza al cerrar cada fase. Última actualización: 19-jul-2026 (cierre de LANZAMIENTO L7).
 
-**Completadas:** Fases 1–10. Esta rama integra las Fases 8, 8.5, 9 y 10 sobre la base de `dev`; está lista para revisión e integración a `dev`. El único módulo funcionalmente pendiente es Documentos (§12.6), que espera el pénsum oficial 2020 para extraer prerequisitos sin inventarlos.
+**Completadas:** Fases 1–10, integradas en `dev`, igual que las fases L0–L7 de LANZAMIENTO.md. El único módulo funcionalmente pendiente es Documentos (§12.6), que espera el pénsum oficial 2020 para extraer prerequisitos sin inventarlos.
 
 **Deuda reconciliada por Fase 8.5:** Drop ya existe con doble confirmación; Change Term quedó reconocido; `TARGET_TERM` murió y los defaults salen del modelo de tiempo; notas nuevas notifican y la DB local tiene backup nocturno. Los recons también corrigieron dos supuestos: PUCMM no habilita Validate ni un control/posición de waitlist en su wizard, y Enrollment Dates publica fecha pero no hora — la UI lo dice y nunca inventa medianoche.
 
