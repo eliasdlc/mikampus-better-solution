@@ -85,6 +85,19 @@ const attempts = new Map(); // usernameLower → { count, blockedUntil }
 const MAX_ATTEMPTS = 5;
 const BLOCK_MS = 15 * 60_000;
 
+// Hosted no es un directorio público de estudiantes. La lista se mantiene en
+// el entorno de la instancia, nunca en la base de datos ni en el bundle web.
+// Exigir que exista evita que publicar el DNS convierta por accidente la beta
+// de 10–20 personas en una puerta abierta para toda la universidad.
+export function isInvited(username) {
+  if ((process.env.MIKAMPUS_MODE ?? 'local') !== 'hosted') return true;
+  const invited = (process.env.MIKAMPUS_ALLOWLIST ?? '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return invited.includes(String(username ?? '').trim().toLowerCase());
+}
+
 export function loginBlocked(username, now = Date.now()) {
   const entry = attempts.get(username.toLowerCase());
   if (!entry) return false;
@@ -111,6 +124,9 @@ export function noteLoginSuccess(username) {
 export async function loginWithPortal({ username, password }) {
   const user = String(username ?? '').trim();
   if (!user || !password) throw Object.assign(new Error('Faltan usuario o contraseña'), { status: 400 });
+  if (!isInvited(user)) {
+    throw Object.assign(new Error('Esta beta es solo por invitación'), { status: 403 });
+  }
   if (loginBlocked(user)) {
     throw Object.assign(
       new Error('Demasiados intentos fallidos: esperá 15 minutos antes de reintentar'),
