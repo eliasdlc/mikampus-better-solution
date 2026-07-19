@@ -88,11 +88,17 @@ export function stalestSubject(subjects, term = syncTerm()) {
     .sort((a, b) => (a.at ?? '') .localeCompare(b.at ?? ''))[0]?.subject ?? null;
 }
 
-// La guarda dura. Devuelve el motivo por el que NO se puede correr, o null si
-// hay vía libre.
-export function blockedBecause(state = scheduler.getState()) {
-  if (state.schedule) return 'hay una inscripción programada: la sesión del portal tiene que estar libre';
-  if (state.watcher) return 'el watcher está vigilando cupos';
+// La guarda dura, reescrita para multi-usuario (§5.7): con N usuarios siempre
+// hay ALGÚN watcher, así que los watchers ya no bloquean — cada usuario tiene
+// su propio context y la cola de servicio es aparte. Lo único sagrado es el
+// disparo (principio 5): si CUALQUIER usuario tiene una inscripción programada
+// dentro de la ventana (pre-warm de §5.6 incluido), el barrido cede el paso.
+const FIRE_WINDOW_MS = 20 * 60_000;
+
+export function blockedBecause(now = Date.now()) {
+  const horizon = new Date(now + FIRE_WINDOW_MS).toISOString();
+  const inminentes = db.prepare('SELECT COUNT(*) AS n FROM schedules WHERE at_iso <= ?').get(horizon).n;
+  if (inminentes > 0) return 'hay un disparo de inscripción inminente: el portal queda para los que inscriben';
   return null;
 }
 
