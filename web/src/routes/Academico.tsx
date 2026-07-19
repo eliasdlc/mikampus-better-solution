@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Check } from 'lucide-react';
 import {
   fetchGrades,
   syncGrades,
@@ -532,7 +533,7 @@ function ElectivaSlot({ group }: { group: RequirementGroup }) {
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm">{nombreElectiva(group.label)}</span>
         {group.satisfied ? (
-          <span className="text-open shrink-0 text-xs">✓ satisfecha</span>
+          <span className="text-open flex shrink-0 items-center gap-1 text-xs"><Check className="size-3.5" aria-hidden />satisfecha</span>
         ) : (
           <span className="text-muted tabular shrink-0 text-xs">elegí 1 · {group.items.length} opciones</span>
         )}
@@ -565,7 +566,7 @@ function PeriodoCard({ periodo }: { periodo: RequirementGroup }) {
       <header className="flex items-baseline justify-between gap-2">
         <h4 className="font-display text-sm font-semibold tracking-tight">Período {periodo.period}</h4>
         {periodo.satisfied ? (
-          <span className="text-open text-xs font-medium">✓ completo</span>
+          <span className="text-open flex items-center gap-1 text-xs font-medium"><Check className="size-3.5" aria-hidden />completo</span>
         ) : (
           <span className="text-muted tabular text-xs">
             {cr.taken ?? 0}/{cr.required ?? 0} cr
@@ -586,7 +587,7 @@ function PeriodoCard({ periodo }: { periodo: RequirementGroup }) {
       ))}
 
       {/* Un período satisfecho viene colapsado en el informe: sus materias no
-          están en el DOM. No mentimos con una lista vacía; el ✓ ya lo dice. */}
+          están en el DOM. No mentimos con una lista vacía; el estado ya lo dice. */}
       {periodo.satisfied && !obligatorios && electivas.length === 0 && (
         <p className="text-muted text-xs">Período aprobado.</p>
       )}
