@@ -63,7 +63,7 @@ try {
     const { courses, subjects, plan } = await fetchAdvisement(page);
     // El informe repite materias entre bloques de requisito: lo guardado son
     // los códigos únicos, siempre menos que las filas leídas.
-    const guardadas = savePensum(courses);
+    const guardadas = savePensum(1, courses);
     const pendientes = guardadas.filter((c) => c.status === 'pending');
     console.log(
       `✓ ${plan ?? 'pensum'}: ${guardadas.length} materias (${courses.length} filas en el informe), ${pendientes.length} pendientes`

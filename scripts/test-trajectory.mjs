@@ -47,7 +47,7 @@ await browser.close();
 
 const tree = parseAdvisementTree(raw, { knownSubjects: ['ICC', 'FIS', 'MAT', 'ILE', 'ITT', 'GFA', 'FIL'] });
 saveRequirementTree(1, tree, { cohortStartTerm: 'Septiembre de 2023' });
-const root = readRequirementTree();
+const root = readRequirementTree(1);
 
 assert.equal(curriculumPeriodsPerYear(root), 3, 'el fixture ICC-2020 declara tres períodos por año');
 

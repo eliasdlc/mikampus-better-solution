@@ -12,7 +12,7 @@ export function recommendationForTerm(userId, term, maxCredits = DEFAULT_MAX_CRE
   if (!term?.trim()) throw new Error('No hay próximo término con secciones para recomendar');
   const load = Number(maxCredits);
   const result = recommendCourses({
-    requirements: readRequirementTree(),
+    requirements: readRequirementTree(userId),
     history: readGrades(userId).map((course) => ({ courseCode: course.code, status: course.status })),
     catalog: readCatalog(term.trim()).courses,
     maxCredits: load,

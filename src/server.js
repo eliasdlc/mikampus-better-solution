@@ -17,6 +17,7 @@ import {
   readPensum,
   saveRequirementTree,
   readRequirementTree,
+  requirementCodes,
   readProfile,
   earliestGradeTerm,
 } from './peoplesoft/advisement.js';
@@ -332,9 +333,10 @@ app.get('/api/pensum', (req, res) => {
       `SELECT p.code, p.subject, p.catalog_nbr, p.units, p.status, p.taken_term, p.grade,
               c.id AS course_id, c.title
        FROM pensum p LEFT JOIN courses c ON c.code = p.code
+       WHERE p.user_id = ?
        ORDER BY p.code`
     )
-    .all()
+    .all(req.userId)
     .map((r) => ({
       code: r.code,
       subject: r.subject,
@@ -379,7 +381,7 @@ app.post('/api/pensum/sync', async (req, res) => {
 // "agregar al plan") y si se oferta en el término pedido.
 app.get('/api/requirements', (req, res) => {
   const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
-  const root = readRequirementTree();
+  const root = readRequirementTree(req.userId);
   if (!root) {
     return res.json({
       term,
@@ -422,7 +424,7 @@ app.get('/api/profile', (req, res) => {
 // (<10ms), cero PeopleSoft: nunca dispara scraping por entrar a la pantalla.
 function goalsContext(userId) {
   const summary = summarizeGrades(readGrades(userId));
-  const remainingCredits = readRequirementTree()?.units?.needed ?? 0;
+  const remainingCredits = readRequirementTree(userId)?.units?.needed ?? 0;
   return { summary, remainingCredits };
 }
 
@@ -484,7 +486,7 @@ app.get('/api/insights', (req, res) => {
 // que acota la búsqueda carrera-first (§11): el índice arranca por acá y el chip
 // "Todo el catálogo" abre el resto.
 app.get('/api/pensum/codes', (req, res) => {
-  const reqCodes = db.prepare('SELECT DISTINCT code FROM requirement_courses').all().map((r) => r.code);
+  const reqCodes = requirementCodes(req.userId);
   const enrolled = db
     .prepare(
       `SELECT DISTINCT c.code FROM enrollments e JOIN courses c ON c.id = e.course_id

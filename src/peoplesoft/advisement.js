@@ -442,13 +442,13 @@ export function mergeDuplicateCourses(courses) {
   return [...byCode.values()];
 }
 
-// Guarda el pensum: qué materias exige la carrera y en qué va el estudiante.
-// Sin `title` acá — el título es del catálogo (browseCatalog) y esta tabla no
-// tiene por qué competir con él.
+// Guarda el pensum personal: en qué va el estudiante con cada materia de su
+// carrera. Sin `title` acá — el título es del catálogo (browseCatalog) y esta
+// tabla no tiene por qué competir con él.
 const upsertPensumStmt = db.prepare(`
-  INSERT INTO pensum (code, subject, catalog_nbr, units, status, taken_term, grade, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  ON CONFLICT(code) DO UPDATE SET
+  INSERT INTO pensum (user_id, code, subject, catalog_nbr, units, status, taken_term, grade, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  ON CONFLICT(user_id, code) DO UPDATE SET
     units = excluded.units,
     status = excluded.status,
     taken_term = excluded.taken_term,
@@ -456,89 +456,100 @@ const upsertPensumStmt = db.prepare(`
     updated_at = datetime('now')
 `);
 
-export function savePensum(courses) {
+export function savePensum(userId, courses) {
   const merged = mergeDuplicateCourses(courses);
   for (const c of merged) {
-    upsertPensumStmt.run(c.code, c.subject, c.catalogNbr, c.units, c.status, c.takenTerm, c.grade);
+    upsertPensumStmt.run(userId, c.code, c.subject, c.catalogNbr, c.units, c.status, c.takenTerm, c.grade);
   }
   return merged;
 }
 
-export function readPensum() {
-  return db.prepare('SELECT * FROM pensum ORDER BY code').all();
+export function readPensum(userId) {
+  return db.prepare('SELECT * FROM pensum WHERE user_id = ? ORDER BY code').all(userId);
 }
 
 // Lo que falta cursar: la lista corta que de verdad importa al inscribirse.
-export function pendingCourses() {
-  return db.prepare("SELECT code FROM pensum WHERE status = 'pending' ORDER BY code").all().map((r) => r.code);
+export function pendingCourses(userId) {
+  return db
+    .prepare("SELECT code FROM pensum WHERE user_id = ? AND status = 'pending' ORDER BY code")
+    .all(userId)
+    .map((r) => r.code);
+}
+
+// ── El plan compartido (§3.1) ──────────────────────────────────────────────
+// El árbol de requisitos es de la carrera+versión, no del estudiante: se keyea
+// por plan_key (carrera|número, o la etiqueta del informe como respaldo) y lo
+// alimenta el advisement de cualquier estudiante de ese plan.
+
+function planKeyFor(profile) {
+  if (profile?.career && profile?.pensumNo) return `${profile.career}|${profile.pensumNo}`;
+  return profile?.planLabel ?? null;
+}
+
+function ensurePensumPlan(profile) {
+  const key = planKeyFor(profile) ?? 'desconocido';
+  db.prepare(
+    `INSERT INTO pensum_plans (plan_key, career, pensum_no, plan_label) VALUES (?, ?, ?, ?)
+     ON CONFLICT(plan_key) DO UPDATE SET plan_label = excluded.plan_label, updated_at = datetime('now')`
+  ).run(key, profile?.career ?? null, profile?.pensumNo ?? null, profile?.planLabel ?? null);
+  return db.prepare('SELECT id FROM pensum_plans WHERE plan_key = ?').get(key).id;
+}
+
+// El plan del usuario sale de su perfil (escrito por su propio advisement).
+function userPlanId(userId) {
+  const prof = readProfile(userId);
+  if (!prof) return null;
+  const key = prof.career && prof.pensum_no ? `${prof.career}|${prof.pensum_no}` : prof.plan_label;
+  if (!key) return null;
+  return db.prepare('SELECT id FROM pensum_plans WHERE plan_key = ?').get(key)?.id ?? null;
 }
 
 // ── Guardado del árbol v2 + pénsum derivado ────────────────────────────────
 
-// Reconstruye la tabla plana `pensum` a partir del árbol. La regla que arregla
-// el punto 2 del plan: una candidata de electiva que nunca cursaste NO es una
-// pendiente que debas inscribir, es una opción entre varias. Al pénsum solo
-// entra lo obligatorio (aparece en un grupo no-electiva) o lo que ya cursaste.
-// Así `pendingCourses()` deja de devolver 44 materias infladas.
-export function derivePensum() {
-  const rows = db
-    .prepare(
-      `SELECT code, subject, catalog_nbr, units, status, is_candidate, taken_term, grade
-       FROM requirement_courses`
-    )
-    .all();
-
+// Reconstruye el pénsum personal a partir de los cursos scrapeados. La regla
+// que arregla el punto 2 del plan: una candidata de electiva que nunca cursaste
+// NO es una pendiente que debas inscribir, es una opción entre varias. Al
+// pénsum solo entra lo obligatorio (aparece en un grupo no-electiva) o lo que
+// ya cursaste. Así `pendingCourses()` deja de devolver 44 materias infladas.
+// Entre copias del mismo código gana el estado más avanzado (una aprobada no
+// puede quedar como pending por reaparecer de candidata); la nota y el término
+// los aporta la copia que la cursó.
+function derivePensum(userId, courses) {
   const byCode = new Map();
-  for (const r of rows) {
+  for (const r of courses) {
     let e = byCode.get(r.code);
     if (!e) {
       e = {
-        code: r.code, subject: r.subject, catalogNbr: r.catalog_nbr, units: r.units,
-        status: r.status, takenTerm: r.taken_term, grade: r.grade,
-        obligatoria: r.is_candidate === 0,
+        code: r.code, subject: r.subject, catalogNbr: r.catalogNbr, units: r.units,
+        status: r.status, takenTerm: r.takenTerm, grade: r.grade,
+        obligatoria: !r.isCandidate,
       };
       byCode.set(r.code, e);
       continue;
     }
-    // Entre copias del mismo código gana el estado más avanzado (una aprobada
-    // no puede quedar como pending por reaparecer de candidata); la nota y el
-    // término los aporta la copia que la cursó.
     if (STATUS_PRECEDENCE.indexOf(r.status) > STATUS_PRECEDENCE.indexOf(e.status)) {
       e.status = r.status;
       if (r.grade) e.grade = r.grade;
-      if (r.taken_term) e.takenTerm = r.taken_term;
+      if (r.takenTerm) e.takenTerm = r.takenTerm;
     }
     e.grade ??= r.grade;
-    e.takenTerm ??= r.taken_term;
+    e.takenTerm ??= r.takenTerm;
     e.units ??= r.units;
     e.subject ??= r.subject;
-    e.catalogNbr ??= r.catalog_nbr;
-    if (r.is_candidate === 0) e.obligatoria = true;
+    e.catalogNbr ??= r.catalogNbr;
+    if (!r.isCandidate) e.obligatoria = true;
   }
 
-  db.exec('DELETE FROM pensum');
+  db.prepare('DELETE FROM pensum WHERE user_id = ?').run(userId);
   let n = 0;
   for (const e of byCode.values()) {
     const cursada = STATUS_PRECEDENCE.indexOf(e.status) >= STATUS_PRECEDENCE.indexOf('in_progress');
     if (!e.obligatoria && !cursada) continue; // candidata pura → no es del pénsum
-    upsertPensumStmt.run(e.code, e.subject, e.catalogNbr, e.units, e.status, e.takenTerm, e.grade);
+    upsertPensumStmt.run(userId, e.code, e.subject, e.catalogNbr, e.units, e.status, e.takenTerm, e.grade);
     n++;
   }
   return n;
 }
-
-const insertGroupStmt = db.prepare(`
-  INSERT INTO requirement_groups
-    (id, parent_id, kind, label, year, period, satisfied, collapsed, position,
-     units_required, units_taken, units_needed, courses_required, courses_taken, courses_needed, gpa_actual)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
-
-const insertReqCourseStmt = db.prepare(`
-  INSERT OR IGNORE INTO requirement_courses
-    (group_id, code, subject, catalog_nbr, title, units, status, is_candidate, taken_term, grade)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
 
 const upsertProfileStmt = db.prepare(`
   INSERT INTO profile (user_id, career, pensum_no, plan_label, cohort_start_term, updated_at)
@@ -552,35 +563,109 @@ const upsertProfileStmt = db.prepare(`
     updated_at = datetime('now')
 `);
 
-// Borra y reescribe el árbol entero (como cart_rows): un grupo que el portal ya
-// no lista tampoco existe. Los grupos van en orden de documento, que es orden
-// topológico (padre antes que hijo), así que la FK parent_id se respeta sin
-// ordenar aparte. Deriva el pénsum al final, todo en una transacción.
+// Guarda un advisement scrapeado: el perfil y el progreso son del usuario; la
+// estructura alimenta el plan compartido con MERGE CONSERVADOR — un grupo
+// guardado con candidatas visibles nunca se pisa con la versión colapsada del
+// mismo grupo (el informe de un estudiante de término alto oculta las
+// candidatas de sus electivas ya satisfechas; el de un freshman las trae).
+// Todo en una transacción; deriva el pénsum personal al final.
 export function saveRequirementTree(userId, { profile, groups, courses }, { cohortStartTerm = null } = {}) {
+  const coursesByGroup = new Map();
+  for (const c of courses) {
+    const list = coursesByGroup.get(c.groupId) ?? [];
+    list.push(c);
+    coursesByGroup.set(c.groupId, list);
+  }
+
   db.exec('BEGIN');
   try {
-    db.exec('DELETE FROM requirement_courses');
-    db.exec('DELETE FROM requirement_groups');
-
-    for (const g of groups) {
-      insertGroupStmt.run(
-        g.id, g.parentId, g.kind, g.label, g.year, g.period,
-        g.satisfied ? 1 : 0, g.collapsed ? 1 : 0, g.position,
-        g.unitsRequired, g.unitsTaken, g.unitsNeeded,
-        g.coursesRequired, g.coursesTaken, g.coursesNeeded, g.gpaActual
-      );
-    }
-    for (const c of courses) {
-      insertReqCourseStmt.run(
-        c.groupId, c.code, c.subject, c.catalogNbr, c.title, c.units,
-        c.status, c.isCandidate ? 1 : 0, c.takenTerm, c.grade
-      );
-    }
     if (profile) {
       upsertProfileStmt.run(userId, profile.career, profile.pensumNo, profile.planLabel, cohortStartTerm);
     }
+    const planId = ensurePensumPlan(profile);
 
-    const pensum = derivePensum();
+    // Qué grupos guardados son más ricos que lo que llega: mismo label, la
+    // versión entrante colapsada y la guardada no → se conserva la guardada
+    // (candidatas y contadores estructurales incluidos).
+    const stored = new Map(
+      db
+        .prepare(
+          'SELECT id, position, label, collapsed, units_required, courses_required FROM requirement_groups WHERE plan_id = ?'
+        )
+        .all(planId)
+        .map((g) => [g.position, g])
+    );
+    const storedCoursesStmt = db.prepare(
+      'SELECT code, subject, catalog_nbr, title, units, is_candidate FROM requirement_courses WHERE group_id = ?'
+    );
+    const kept = new Map();
+    for (const g of groups) {
+      const prev = stored.get(g.position);
+      if (prev && prev.label === g.label && g.collapsed && !prev.collapsed) {
+        kept.set(g.position, { group: prev, courses: storedCoursesStmt.all(prev.id) });
+      }
+    }
+
+    // El árbol del plan se reescribe entero (un grupo que el portal ya no lista
+    // tampoco existe), reinsertando la versión guardada de los grupos ricos.
+    db.prepare('DELETE FROM requirement_groups WHERE plan_id = ?').run(planId);
+
+    const insertGroup = db.prepare(
+      `INSERT INTO requirement_groups
+         (plan_id, parent_id, kind, label, year, period, position, collapsed, units_required, courses_required)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const insertCourse = db.prepare(
+      `INSERT OR IGNORE INTO requirement_courses (group_id, code, subject, catalog_nbr, title, units, is_candidate)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    const idByPosition = new Map();
+    for (const g of groups) {
+      const keep = kept.get(g.position);
+      const parentDbId = g.parentId == null ? null : idByPosition.get(g.parentId) ?? null;
+      const { lastInsertRowid } = insertGroup.run(
+        planId,
+        parentDbId,
+        g.kind,
+        g.label,
+        g.year,
+        g.period,
+        g.position,
+        keep ? 0 : g.collapsed ? 1 : 0,
+        keep ? keep.group.units_required : g.unitsRequired,
+        keep ? keep.group.courses_required : g.coursesRequired
+      );
+      const groupId = Number(lastInsertRowid);
+      idByPosition.set(g.position, groupId);
+
+      if (keep) {
+        for (const c of keep.courses) {
+          insertCourse.run(groupId, c.code, c.subject, c.catalog_nbr, c.title, c.units, c.is_candidate);
+        }
+      } else {
+        for (const c of coursesByGroup.get(g.id) ?? []) {
+          insertCourse.run(groupId, c.code, c.subject, c.catalogNbr, c.title, c.units, c.isCandidate ? 1 : 0);
+        }
+      }
+    }
+
+    // El progreso personal se reemplaza entero: es la foto de SU informe.
+    db.prepare('DELETE FROM requirement_progress WHERE user_id = ? AND plan_id = ?').run(userId, planId);
+    const insertProgress = db.prepare(
+      `INSERT INTO requirement_progress
+         (user_id, plan_id, position, satisfied, collapsed, units_taken, units_needed, courses_taken, courses_needed, gpa_actual)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const g of groups) {
+      insertProgress.run(
+        userId, planId, g.position,
+        g.satisfied ? 1 : 0, g.collapsed ? 1 : 0,
+        g.unitsTaken, g.unitsNeeded, g.coursesTaken, g.coursesNeeded, g.gpaActual
+      );
+    }
+
+    const pensum = derivePensum(userId, courses);
     db.exec('COMMIT');
     return { groups: groups.length, courses: courses.length, pensum };
   } catch (err) {
@@ -593,34 +678,83 @@ export function readProfile(userId) {
   return db.prepare('SELECT * FROM profile WHERE user_id = ?').get(userId) ?? null;
 }
 
-// El árbol anidado para la UI: cada grupo con sus hijos y sus cursos. Los
-// grupos vienen ordenados por posición del documento, que es la secuencia real.
-export function readRequirementTree() {
-  const groups = db.prepare('SELECT * FROM requirement_groups ORDER BY position').all();
+// Todos los códigos que le importan a la carrera del usuario (obligatorias +
+// candidatas de electiva del plan compartido). Acota la búsqueda carrera-first.
+export function requirementCodes(userId) {
+  const planId = userPlanId(userId);
+  if (!planId) return [];
+  return db
+    .prepare(
+      `SELECT DISTINCT rc.code FROM requirement_courses rc
+       JOIN requirement_groups rg ON rg.id = rc.group_id
+       WHERE rg.plan_id = ?`
+    )
+    .all(planId)
+    .map((r) => r.code);
+}
+
+// El árbol anidado para la UI: la estructura compartida del plan del usuario,
+// con SU progreso encima (satisfecho, créditos tomados, estado por materia).
+// Los grupos vienen ordenados por posición del documento, la secuencia real.
+export function readRequirementTree(userId) {
+  const planId = userPlanId(userId);
+  if (!planId) return null;
+
+  const groups = db
+    .prepare('SELECT * FROM requirement_groups WHERE plan_id = ? ORDER BY position')
+    .all(planId);
   if (groups.length === 0) return null;
 
+  const progress = new Map(
+    db
+      .prepare('SELECT * FROM requirement_progress WHERE user_id = ? AND plan_id = ?')
+      .all(userId, planId)
+      .map((p) => [p.position, p])
+  );
+  // El estado por materia es del pénsum personal; una materia del plan que el
+  // usuario no tiene en su pénsum (candidata que nunca cursó) está pendiente.
+  const personal = new Map(
+    db
+      .prepare('SELECT code, status, taken_term, grade FROM pensum WHERE user_id = ?')
+      .all(userId)
+      .map((r) => [r.code, r])
+  );
+
   const courses = db
-    .prepare('SELECT * FROM requirement_courses ORDER BY is_candidate, code')
-    .all();
+    .prepare(
+      `SELECT rc.* FROM requirement_courses rc
+       JOIN requirement_groups rg ON rg.id = rc.group_id
+       WHERE rg.plan_id = ?
+       ORDER BY rc.is_candidate, rc.code`
+    )
+    .all(planId);
   const coursesByGroup = new Map();
   for (const c of courses) {
+    const mine = personal.get(c.code);
     const list = coursesByGroup.get(c.group_id) ?? [];
     list.push({
       code: c.code, subject: c.subject, catalogNbr: c.catalog_nbr, title: c.title,
-      units: c.units, status: c.status, isCandidate: c.is_candidate === 1,
-      takenTerm: c.taken_term, grade: c.grade,
+      units: c.units, status: mine?.status ?? 'pending', isCandidate: c.is_candidate === 1,
+      takenTerm: mine?.taken_term ?? null, grade: mine?.grade ?? null,
     });
     coursesByGroup.set(c.group_id, list);
   }
 
   const nodes = new Map();
   for (const g of groups) {
+    const mine = progress.get(g.position);
     nodes.set(g.id, {
       id: g.id, kind: g.kind, label: g.label, year: g.year, period: g.period,
-      satisfied: g.satisfied === 1, collapsed: g.collapsed === 1, position: g.position,
-      units: { required: g.units_required, taken: g.units_taken, needed: g.units_needed },
-      courses: { required: g.courses_required, taken: g.courses_taken, needed: g.courses_needed },
-      gpaActual: g.gpa_actual,
+      satisfied: mine ? mine.satisfied === 1 : false,
+      collapsed: mine ? mine.collapsed === 1 : g.collapsed === 1,
+      position: g.position,
+      units: { required: g.units_required, taken: mine?.units_taken ?? null, needed: mine?.units_needed ?? null },
+      courses: {
+        required: g.courses_required,
+        taken: mine?.courses_taken ?? null,
+        needed: mine?.courses_needed ?? null,
+      },
+      gpaActual: mine?.gpa_actual ?? null,
       items: coursesByGroup.get(g.id) ?? [],
       children: [],
     });

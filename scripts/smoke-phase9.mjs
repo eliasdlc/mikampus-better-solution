@@ -30,7 +30,7 @@ const visit = (group) => {
   for (const item of group.items) if (item.status === 'pending') pending.push(item);
   group.children.forEach(visit);
 };
-visit(readRequirementTree());
+visit(readRequirementTree(1));
 const offerings = [...new Map(pending.map((item) => [item.code, item])).values()].slice(0, 24);
 const days = [['Mo'], ['Tu'], ['We'], ['Th'], ['Fr'], ['Sa']];
 offerings.forEach((item, index) => {

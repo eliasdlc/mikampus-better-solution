@@ -129,7 +129,7 @@ const raw = await page.evaluate(extractAdvisementTree);
 await browser.close();
 const parsed = parseAdvisementTree(raw, { knownSubjects: ['ICC', 'FIS', 'MAT', 'ILE', 'ITT', 'GFA', 'FIL'] });
 saveRequirementTree(1, parsed);
-const realTree = readRequirementTree();
+const realTree = readRequirementTree(1);
 
 const pendingReal = [];
 const visit = (g) => {

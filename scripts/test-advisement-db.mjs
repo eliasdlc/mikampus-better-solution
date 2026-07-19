@@ -39,7 +39,7 @@ assert.equal(saved.groups, tree.groups.length, 'se guardan todos los grupos');
 assert.equal(saved.courses, tree.courses.length, 'se guardan todos los cursos del árbol');
 
 // ── El árbol se relee anidado, con la raíz arriba y los períodos como hijos. ──
-const root = readRequirementTree();
+const root = readRequirementTree(1);
 assert.ok(root, 'el árbol se relee de la base');
 assert.equal(root.kind, 'root', 'la raíz es del kind root');
 assert.equal(root.units.needed, 81, 'los 81 créditos faltantes sobreviven el viaje a la base');
@@ -56,16 +56,16 @@ assert.ok(conElectivaSat, 'hay al menos una electiva satisfecha en el árbol rel
 assert.equal(conElectivaSat.items.length, 0, 'la electiva satisfecha no trae candidatas');
 
 // ── La regla de derivación: la candidata pura no contamina el pénsum. ──
-const pensum = readPensum();
+const pensum = readPensum(1);
 const pensumCodes = new Set(pensum.map((r) => r.code));
 
 // Toda materia del pénsum, o es obligatoria en algún grupo, o ya se cursó.
-const rows = db
-  .prepare('SELECT code, is_candidate, status FROM requirement_courses')
-  .all();
+// La estructura (obligatoria/candidata) vive en la tabla compartida; el estado
+// por materia es personal y viene del scrape.
+const rows = db.prepare('SELECT code, is_candidate FROM requirement_courses').all();
 const obligatoriaCodes = new Set(rows.filter((r) => r.is_candidate === 0).map((r) => r.code));
 const cursadaCodes = new Set(
-  rows.filter((r) => r.status === 'taken' || r.status === 'in_progress').map((r) => r.code)
+  tree.courses.filter((c) => c.status === 'taken' || c.status === 'in_progress').map((c) => c.code)
 );
 for (const code of pensumCodes) {
   assert.ok(
@@ -87,7 +87,7 @@ assert.ok(
 );
 
 // ── Las pendientes del pénsum son must-takes reales (obligatorias). ──
-const pend = pendingCourses();
+const pend = pendingCourses(1);
 assert.ok(pend.length > 0, 'hay pendientes reales');
 assert.ok(
   pend.every((c) => obligatoriaCodes.has(c)),
@@ -108,10 +108,68 @@ assert.equal(
   'un re-sync sin cohorte conserva la anterior'
 );
 
+// ── Merge conservador (§3.1): el informe pobre no empobrece el plan. ──
+// El usuario 2 es de la misma carrera pero su informe llega con una electiva
+// que el usuario 1 tenía expandida ahora COLAPSADA (ya la satisfizo: sus
+// candidatas no vienen en el DOM). El plan compartido conserva las candidatas
+// que el usuario 1 aportó; lo único que cambia para el usuario 2 es SU progreso.
+const electivaRica = tree.groups.find(
+  (g) => g.kind === 'electiva' && !g.collapsed && tree.courses.some((c) => c.groupId === g.id)
+);
+assert.ok(electivaRica, 'el fixture trae una electiva con candidatas visibles');
+const candidatasAntes = tree.courses.filter((c) => c.groupId === electivaRica.id).length;
+
+const treePobre = {
+  profile: tree.profile,
+  groups: tree.groups.map((g) =>
+    g.id === electivaRica.id ? { ...g, collapsed: true, satisfied: true } : g
+  ),
+  courses: tree.courses.filter((c) => c.groupId !== electivaRica.id),
+};
+saveRequirementTree(2, treePobre, {});
+
+const findByPosition = (node, position) => {
+  if (!node) return null;
+  if (node.position === position) return node;
+  for (const child of node.children) {
+    const hit = findByPosition(child, position);
+    if (hit) return hit;
+  }
+  return null;
+};
+
+const root2 = readRequirementTree(2);
+const electivaUser2 = findByPosition(root2, electivaRica.position);
+assert.equal(
+  electivaUser2.items.length,
+  candidatasAntes,
+  'las candidatas que aportó el usuario 1 sobreviven al informe colapsado del usuario 2'
+);
+assert.ok(electivaUser2.satisfied, 'el progreso del usuario 2 sí la marca satisfecha');
+
+const root1Despues = readRequirementTree(1);
+const electivaUser1 = findByPosition(root1Despues, electivaRica.position);
+assert.equal(electivaUser1.satisfied, false, 'el progreso del usuario 1 no se contamina');
+assert.equal(
+  electivaUser1.items.length,
+  candidatasAntes,
+  'el usuario 1 sigue viendo sus candidatas'
+);
+
+// Y ningún dato personal cruzó de un usuario a otro por el plan compartido.
+assert.equal(
+  db.prepare('SELECT COUNT(*) AS n FROM pensum_plans').get().n,
+  1,
+  'los dos usuarios comparten UN plan'
+);
+
 await rm(dir, { recursive: true, force: true });
 console.log(
   `✓ árbol en DB: ${saved.groups} grupos, ${saved.courses} cursos → pénsum derivado de ${pensum.length} materias (${pend.length} pendientes reales)`
 );
 console.log(
   `✓ derivación: ${candidatasPuras.length} candidatas puras excluidas del pénsum, ${obligatoriaCodes.size} códigos obligatorios`
+);
+console.log(
+  `✓ merge conservador: ${candidatasAntes} candidatas sobreviven al informe colapsado de otro usuario del mismo plan`
 );
