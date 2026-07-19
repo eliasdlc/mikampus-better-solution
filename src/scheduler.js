@@ -1,9 +1,10 @@
-import { enrollFromCart } from './peoplesoft/enroll.js';
-import { withPage, SERVICE_USER_ID } from './session.js';
+import { enrollFromCart, finishPreparedEnrollment, prepareEnrollment } from './peoplesoft/enroll.js';
+import { hasLiveCredentials, withPage, SERVICE_USER_ID } from './session.js';
 import { notifyFromEvent } from './notify.js';
 import { db, logAction } from './db.js';
 import { syncCatalogCourse } from './peoplesoft/catalog.js';
 import { readTerms } from './terms.js';
+import { reportOperatorFailure, reportOperatorSuccess } from './operatorNotify.js';
 
 // El scheduler por usuario (Fase 2): cada estudiante tiene SU disparo a hora
 // fija y SU watcher, persistidos en DB (tablas schedules/watchers) — si el
@@ -51,13 +52,24 @@ function stateFor(userId) {
 
 export function getState(userId) {
   const s = stateFor(userId);
-  const watcher = db.prepare('SELECT last_check_at FROM watchers WHERE user_id = ?').get(userId);
+  const watcher = db
+    .prepare('SELECT last_check_at, auto_enroll, activation_order, appointment_at FROM watchers WHERE user_id = ?')
+    .get(userId);
   return {
-    schedule: s.schedule ? { atISO: s.schedule.atISO } : null,
+    schedule: s.schedule ? { atISO: s.schedule.atISO, prewarmAtISO: s.schedule.prewarmAtISO, prewarmed: s.schedule.prewarmed } : null,
     // Es el ciclo efectivo, no una promesa de que el siguiente tick global le
     // toque a ESTA materia. Con N materias y presupuesto B, una materia se
     // revisa como máximo cada ceil(N / B) ticks.
-    watcher: watcher ? { intervalMs: effectiveWatcherIntervalMs(), lastCheckAt: watcher.last_check_at ?? null } : null,
+    watcher: watcher
+      ? {
+          intervalMs: effectiveWatcherIntervalMs(),
+          lastCheckAt: watcher.last_check_at ?? null,
+          autoEnroll: watcher.auto_enroll === 1,
+          activationOrder: watcher.activation_order,
+          appointmentAt: watcher.appointment_at ?? null,
+          queue: queuePositionsForUser(userId),
+        }
+      : null,
   };
 }
 
@@ -80,6 +92,10 @@ export async function runEnrollNow(userId, reason) {
     throw err;
   }
 
+  return recordEnrollResult(userId, result, reason);
+}
+
+function recordEnrollResult(userId, result, reason) {
   if (!result.ok) {
     logAction({ userId, action: 'enroll', detail: reason, response: result.reason, ok: false });
     emit({
@@ -115,16 +131,58 @@ export async function runEnrollNow(userId, reason) {
 
 // ── Disparo a hora fija (persistido) ───────────────────────────────────────
 
+const PREWARM_LEAD_MS = 8 * 60_000;
+const PREWARM_RETRY_MS = 60_000;
+
+async function prewarmSchedule(userId, schedule) {
+  if (schedule.prewarmed || Date.now() >= new Date(schedule.atISO).getTime()) return;
+  emit({ type: 'log', userId, message: 'Preparando sesión y asistente de inscripción…' });
+  try {
+    const result = await withPage(userId, (page) => prepareEnrollment(page), { retry: true });
+    if (!result.ok) throw new Error(`PeopleSoft no dejó listo el asistente (${result.reason})`);
+    schedule.prewarmed = true;
+    emit({ type: 'log', userId, message: 'Disparo preparado: a la hora exacta solo se enviará la inscripción.' });
+    reportOperatorSuccess(`prewarm:user:${userId}`);
+  } catch (err) {
+    emit({ type: 'notice', userId, level: 'error', title: 'No se pudo preparar tu inscripción', body: err.message, key: 'schedule-prewarm-error' });
+    reportOperatorFailure(`prewarm:user:${userId}`, err.message).catch(() => {});
+    const remaining = new Date(schedule.atISO).getTime() - Date.now();
+    if (remaining > PREWARM_RETRY_MS) {
+      schedule.prewarmTimer = setTimeout(() => prewarmSchedule(userId, schedule), PREWARM_RETRY_MS);
+    }
+  }
+}
+
+async function fireSchedule(userId, schedule) {
+  db.prepare('DELETE FROM schedules WHERE user_id = ?').run(userId);
+  const s = stateFor(userId);
+  if (s.schedule === schedule) s.schedule = null;
+  clearTimeout(schedule.prewarmTimer);
+  try {
+    // Si el pre-warm sobrevivió hasta T0, no hay navegación ni Step 1 aquí.
+    // Si no, el fallback completo es más lento pero todavía intenta inscribir.
+    if (schedule.prewarmed) {
+      const prepared = await withPage(userId, (page) => finishPreparedEnrollment(page), { retry: false });
+      if (prepared.ok) return await recordEnrollResult(userId, prepared, 'hora programada');
+    }
+    return await runEnrollNow(userId, 'hora programada (sin pre-warm)');
+  } catch (err) {
+    emit({ type: 'notice', userId, level: 'error', title: 'El disparo programado falló', body: err.message, key: 'schedule-fire-error' });
+    reportOperatorFailure(`schedule:user:${userId}`, err.message).catch(() => {});
+    throw err;
+  }
+}
+
 function armSchedule(userId, atISO) {
   const s = stateFor(userId);
   clearTimeout(s.schedule?.timer);
+  clearTimeout(s.schedule?.prewarmTimer);
   const ms = new Date(atISO).getTime() - Date.now();
-  const timer = setTimeout(() => {
-    s.schedule = null;
-    db.prepare('DELETE FROM schedules WHERE user_id = ?').run(userId);
-    runEnrollNow(userId, 'hora programada').catch(() => {});
-  }, Math.max(ms, 0));
-  s.schedule = { atISO, timer };
+  const prewarmAt = Math.max(0, ms - PREWARM_LEAD_MS);
+  const schedule = { atISO, prewarmAtISO: new Date(Date.now() + prewarmAt).toISOString(), prewarmed: false, prewarmTimer: null, timer: null };
+  schedule.prewarmTimer = setTimeout(() => prewarmSchedule(userId, schedule), prewarmAt);
+  schedule.timer = setTimeout(() => fireSchedule(userId, schedule).catch(() => {}), Math.max(ms, 0));
+  s.schedule = schedule;
 }
 
 export function scheduleFixedTime(userId, atISO) {
@@ -147,6 +205,7 @@ export function cancelSchedule(userId) {
   db.prepare('DELETE FROM schedules WHERE user_id = ?').run(userId);
   if (s.schedule) {
     clearTimeout(s.schedule.timer);
+    clearTimeout(s.schedule.prewarmTimer);
     s.schedule = null;
     emit({ type: 'schedule-set', userId, atISO: null });
     emit({ type: 'log', userId, message: 'Programación cancelada' });
@@ -188,6 +247,17 @@ export function setSharedWatcherScanner(scanner) {
   };
 }
 
+// Igual que el scanner inyectable: permite probar la política FIFO sin abrir
+// Chromium ni ejecutar una matrícula real.
+let enrollWatcherCandidate = runEnrollNow;
+export function setWatcherEnrollmentRunner(runner) {
+  const previous = enrollWatcherCandidate;
+  enrollWatcherCandidate = runner;
+  return () => {
+    enrollWatcherCandidate = previous;
+  };
+}
+
 function watcherTerm() {
   // El scraper necesita un STRM; una etiqueta como "Septiembre de 2026" no
   // sirve para el select del portal. SYNC_TERM permite operar antes del primer
@@ -216,11 +286,56 @@ function effectiveWatcherIntervalMs() {
 function watchersForCourse(courseCode) {
   return db
     .prepare(
-      `SELECT w.user_id AS user_id, c.class_nbr AS class_nbr
+      `SELECT w.user_id AS user_id, c.class_nbr AS class_nbr,
+              w.auto_enroll AS auto_enroll, w.activation_order AS activation_order,
+              w.appointment_at AS appointment_at
        FROM watchers w JOIN cart_rows c ON c.user_id = w.user_id
-       WHERE c.course_code = ?`
+       WHERE c.course_code = ?
+       ORDER BY w.activation_order, w.user_id`
     )
     .all(courseCode);
+}
+
+function queuePositionsForUser(userId) {
+  const mine = db.prepare('SELECT activation_order FROM watchers WHERE user_id = ?').get(userId);
+  if (!mine?.activation_order) return [];
+  return db
+    .prepare(
+      `SELECT c.course_code AS courseCode,
+              1 + (SELECT COUNT(*) FROM watchers earlier
+                   JOIN cart_rows earlier_cart ON earlier_cart.user_id = earlier.user_id
+                   WHERE earlier_cart.course_code = c.course_code
+                     AND earlier.auto_enroll = 1
+                     AND earlier.activation_order < ?) AS position,
+              (SELECT COUNT(*) FROM watchers queued
+                   JOIN cart_rows queued_cart ON queued_cart.user_id = queued.user_id
+                   WHERE queued_cart.course_code = c.course_code
+                     AND queued.auto_enroll = 1) AS total
+       FROM cart_rows c
+       WHERE c.user_id = ?
+       GROUP BY c.course_code
+       HAVING total > 1
+       ORDER BY c.course_code`
+    )
+    .all(mine.activation_order, userId);
+}
+
+// Una fecha sin hora no autoriza una matrícula automática: antes de que el
+// usuario llegue a su appointment exacto, PeopleSoft la rechazaría. El watcher
+// sigue avisando; auto-enroll se habilita cuando se conoce una hora concreta
+// (el disparo programado sirve como fuente) o cuando el portal la publique.
+function autoEnrollEligibility(owner, now = Date.now()) {
+  if (owner.auto_enroll !== 1) return { ok: false, reason: 'solo-notificar' };
+  if (owner.appointment_at && now < new Date(owner.appointment_at).getTime()) return { ok: false, reason: 'antes-de-appointment' };
+  if (!owner.appointment_at) {
+    const window = db
+      .prepare('SELECT starts_at, precision FROM enrollment_windows WHERE user_id = ? ORDER BY starts_at LIMIT 1')
+      .get(owner.user_id);
+    if (window?.precision !== 'datetime') return { ok: false, reason: 'appointment-sin-hora' };
+    if (now < new Date(window.starts_at).getTime()) return { ok: false, reason: 'antes-de-appointment' };
+  }
+  if (!hasLiveCredentials(owner.user_id)) return { ok: false, reason: 'sin-credencial' };
+  return { ok: true };
 }
 
 function seatState(courseCode, term) {
@@ -274,6 +389,7 @@ async function handleCourseScan(target) {
 
   try {
     await scanWatchedCourse(target);
+    reportOperatorSuccess(`watcher:${target.courseCode}`);
   } catch (err) {
     for (const owner of owners) {
       emit({
@@ -285,6 +401,7 @@ async function handleCourseScan(target) {
         key: `watcher-course-error:${target.courseCode}`,
       });
     }
+    reportOperatorFailure(`watcher:${target.courseCode}`, err.message).catch(() => {});
     return;
   }
 
@@ -314,8 +431,8 @@ async function handleCourseScan(target) {
 
   // Solo la sección que el usuario eligió puede disparar inscripción. Otra
   // sección abierta es una sugerencia de swap, no permiso para cambiarle el
-  // horario a alguien. La cola FIFO/appointment-aware se incorpora en la capa
-  // siguiente; por ahora se conserva el comportamiento de auto-enroll previo.
+  // horario a alguien. Todos reciben la push de oportunidad; solo quienes
+  // aceptaron auto-enroll con credencial viva entran en la cola FIFO.
   const openedByUser = new Map();
   for (const owner of activeOwners) {
     const previous = before.get(owner.class_nbr);
@@ -325,17 +442,34 @@ async function handleCourseScan(target) {
     classNbrs.push(owner.class_nbr);
     openedByUser.set(owner.user_id, classNbrs);
   }
+  const candidates = [];
   for (const [userId, classNbrs] of openedByUser) {
+    const owner = activeOwners.find((entry) => entry.user_id === userId);
+    const eligible = autoEnrollEligibility(owner);
     emit({
       type: 'notice',
       userId,
       level: 'info',
       title: `Apareció cupo en ${target.courseCode}`,
-      body: `Tu sección (NRC ${classNbrs.join(', ')}) tiene cupo; intentando inscribirte.`,
+      body: eligible.ok
+        ? `Tu sección (NRC ${classNbrs.join(', ')}) tiene cupo; quedaste en la fila de inscripción.`
+        : `Tu sección (NRC ${classNbrs.join(', ')}) tiene cupo; entrá a confirmar.`,
       key: `watcher-seat-open:${target.courseCode}:${classNbrs.join('|')}`,
     });
-    emit({ type: 'log', userId, message: 'Se detectó cupo nuevo — inscribiendo...' });
-    await runEnrollNow(userId, 'cupo detectado').catch(() => {});
+    if (eligible.ok) candidates.push({ ...owner, classNbrs });
+    else if (eligible.reason === 'antes-de-appointment' || eligible.reason === 'appointment-sin-hora') {
+      emit({ type: 'log', userId, message: 'Hay cupo, pero tu ventana de inscripción todavía no permite auto-inscribir.' });
+    }
+  }
+
+  for (const candidate of candidates.sort((a, b) => a.activation_order - b.activation_order || a.user_id - b.user_id)) {
+    const position = candidates.findIndex((entry) => entry.user_id === candidate.user_id) + 1;
+    emit({ type: 'log', userId: candidate.user_id, message: `Se detectó cupo nuevo — posición ${position} en la fila FIFO; inscribiendo...` });
+    const result = await enrollWatcherCandidate(candidate.user_id, 'cupo detectado').catch(() => null);
+    // Un resultado exitoso consume el asiento observado. Seguir enviando
+    // asistentes después de eso solo castiga al portal y a quienes ya perdieron
+    // el cupo; en el siguiente snapshot se abre una nueva ronda si reaparece.
+    if (result?.ok && result.results.some((entry) => entry.success)) break;
   }
 }
 
@@ -370,15 +504,23 @@ function disarmSharedWatcherIfIdle() {
   lastCourseKey = null;
 }
 
-export function startWatcher(userId) {
+export function startWatcher(userId, { autoEnroll = false, appointmentAt = null } = {}) {
   stopWatcher(userId);
+  const activationOrder = db.prepare('SELECT COALESCE(MAX(activation_order), 0) + 1 AS next FROM watchers').get().next;
   db.prepare(
-    `INSERT INTO watchers (user_id, interval_ms) VALUES (?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET interval_ms = excluded.interval_ms, created_at = datetime('now')`
-  ).run(userId, WATCHER_TICK_MS);
+    `INSERT INTO watchers (user_id, interval_ms, auto_enroll, activation_order, appointment_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET interval_ms = excluded.interval_ms,
+       auto_enroll = excluded.auto_enroll, activation_order = excluded.activation_order,
+       appointment_at = excluded.appointment_at, created_at = datetime('now')`
+  ).run(userId, WATCHER_TICK_MS, autoEnroll ? 1 : 0, activationOrder, appointmentAt);
   armSharedWatcher();
   publishWatcherState();
-  emit({ type: 'log', userId, message: `Watcher compartido activado (ciclo efectivo: ${Math.round(effectiveWatcherIntervalMs() / 1000)}s)` });
+  emit({
+    type: 'log',
+    userId,
+    message: `Watcher compartido activado (${autoEnroll ? `auto-inscripción FIFO #${activationOrder}` : 'solo notificar'} · ciclo efectivo: ${Math.round(effectiveWatcherIntervalMs() / 1000)}s)`,
+  });
 }
 
 export function stopWatcher(userId) {

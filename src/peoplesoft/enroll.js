@@ -9,7 +9,10 @@ function contentFrame(page) {
 // uno solo: las que ya tienen cupo se inscriben, las que siguen llenas
 // devuelven "Error: Class X is full" sin ningún efecto secundario. Por eso
 // no hace falta seleccionar materias una por una.
-export async function enrollFromCart(page) {
+// Deja el asistente en el paso final sin someter nada. El scheduler usa esta
+// mitad durante el pre-warm: navegar y llegar al Step 2 puede tomar casi un
+// minuto; el click final no debe pagar ese costo a la hora exacta.
+export async function prepareEnrollment(page) {
   await page.goto(CART_URL, { waitUntil: 'commit' });
   await page.waitForTimeout(5000);
 
@@ -22,7 +25,18 @@ export async function enrollFromCart(page) {
 
   const step2Button = contentFrame(page).locator('input[value="Finish Enrolling"]');
   if ((await step2Button.count()) === 0) {
-    return { ok: false, reason: 'no-step2-button', results: [] };
+    return { ok: false, reason: 'no-step2-button' };
+  }
+  return { ok: true };
+}
+
+// Somete un wizard que prepareEnrollment ya dejó en el paso 2. No navega ni
+// reintenta: si el navegador se cayó entre el pre-warm y T0 el caller decide
+// explícitamente si degrada al flujo completo.
+export async function finishPreparedEnrollment(page) {
+  const step2Button = contentFrame(page).locator('input[value="Finish Enrolling"]');
+  if ((await step2Button.count()) === 0) {
+    return { ok: false, reason: 'not-prepared', results: [] };
   }
   await step2Button.click();
   await page.waitForTimeout(7000);
@@ -45,4 +59,11 @@ export async function enrollFromCart(page) {
   });
 
   return { ok: true, results };
+}
+
+// Camino interactivo y fallback de un pre-warm que no llegó a completarse.
+export async function enrollFromCart(page) {
+  const prepared = await prepareEnrollment(page);
+  if (!prepared.ok) return { ...prepared, results: [] };
+  return finishPreparedEnrollment(page);
 }

@@ -372,6 +372,9 @@ db.exec(`
     user_id       INTEGER PRIMARY KEY,
     interval_ms   INTEGER NOT NULL,
     last_check_at TEXT,
+    auto_enroll   INTEGER NOT NULL DEFAULT 0,
+    activation_order INTEGER,
+    appointment_at TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -472,6 +475,16 @@ addColumnIfMissing('grades', 'status', "TEXT NOT NULL DEFAULT 'taken'");
 // implementación de una regla que ya vive en shared/courseCode.ts.
 addColumnIfMissing('grades', 'subject', 'TEXT');
 addColumnIfMissing('grades', 'catalog_nbr', 'TEXT');
+
+// Watchers creados antes de L4.2 no tenían ni modo ni un orden estable. El
+// rowid existente es monotónico y, a diferencia de created_at (segundos), no
+// empata cuando varios compañeros activan el watcher a la vez.
+addColumnIfMissing('watchers', 'auto_enroll', 'INTEGER NOT NULL DEFAULT 0');
+if (addColumnIfMissing('watchers', 'activation_order', 'INTEGER')) {
+  db.exec('UPDATE watchers SET activation_order = rowid WHERE activation_order IS NULL');
+}
+addColumnIfMissing('watchers', 'appointment_at', 'TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_watchers_activation_order ON watchers(activation_order)');
 
 // ── Migración multi-usuario (Fase 2 de LANZAMIENTO.md) ─────────────────────
 // Una DB pre-existente es la de una sola persona: sus filas se adoptan como
