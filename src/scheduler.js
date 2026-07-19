@@ -48,7 +48,7 @@ export async function runEnrollNow(reason) {
   emit({ type: 'log', message: `Ejecutando inscripción (${reason})...` });
   let result;
   try {
-    result = await withPage((page) => enrollFromCart(page), { retry: false });
+    result = await withPage(LOCAL_USER_ID, (page) => enrollFromCart(page), { retry: false });
   } catch (err) {
     emit({
       type: 'notice',
@@ -119,7 +119,7 @@ export function startWatcher(intervalMs = 45000) {
       // cache deja el resto de la app fresca sin pedirle nada extra al portal.
       // Un solo watcher por ahora (el del usuario local); se vuelve por-usuario
       // con los timers persistidos de la Fase 2.
-      rows = await withPage((page) => syncCart(page, { userId: LOCAL_USER_ID }));
+      rows = await withPage(LOCAL_USER_ID, (page) => syncCart(page, { userId: LOCAL_USER_ID }));
     } catch (err) {
       // Un watcher que no puede leer el carrito no está vigilando nada, y creer
       // que sí es peor que saber que está roto. El dedupe evita los 80 popups

@@ -69,7 +69,7 @@ app.post('/api/account', async (req, res) => {
   try {
     const account = setCredentials({ username, password });
     adoptLocalUsername(account.username);
-    await resetSession();
+    await resetSession(req.userId);
     clearPersonalData(req.userId);
     scheduler.emitEvent({
       type: 'log',
@@ -90,7 +90,7 @@ app.get('/api/cart', (req, res) => {
 
 app.post('/api/cart/sync', async (req, res) => {
   try {
-    await withPage((page) => syncCart(page, { userId: req.userId }));
+    await withPage(req.userId, (page) => syncCart(page, { userId: req.userId }));
     const cart = readCart(req.userId);
     scheduler.emitEvent({ type: 'cart-status', rows: cart.rows, syncedAt: cart.syncedAt });
     res.json(cart);
@@ -103,7 +103,7 @@ app.post('/api/cart/sync', async (req, res) => {
 app.post('/api/cart/validate', async (req, res) => {
   try {
     scheduler.emitEvent({ type: 'log', message: 'Comprobando si PeopleSoft ofrece Validate…' });
-    const result = await withPage((page) => validateCart(page));
+    const result = await withPage(req.userId, (page) => validateCart(page));
     scheduler.emitEvent({ type: 'log', message: result.validate.supported ? 'Carrito validado' : result.validate.reason });
     res.json(result);
   } catch (err) {
@@ -119,7 +119,7 @@ app.get('/api/enrollment-windows', (req, res) => {
 
 app.post('/api/enrollment-windows/sync', async (req, res) => {
   try {
-    const windows = await withPage((page) =>
+    const windows = await withPage(req.userId, (page) =>
       syncEnrollmentWindows(page, {
         userId: req.userId,
         onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
@@ -190,7 +190,7 @@ app.post('/api/my-schedule/sync', async (req, res) => {
     // Sin él, el sync toma el que el portal dé por defecto: es el arranque,
     // cuando todavía no se conoce el STRM del ciclo actual.
     const targetTerm = req.body?.term ? String(req.body.term) : null;
-    const schedule = await withPage((page) =>
+    const schedule = await withPage(req.userId, (page) =>
       syncSchedule(page, {
         userId: req.userId,
         targetTerm,
@@ -225,6 +225,7 @@ app.post('/api/my-schedule/drop', async (req, res) => {
   }
   try {
     const result = await withPage(
+      req.userId,
       (page) =>
         dropClass(page, {
           term,
@@ -275,7 +276,7 @@ app.get('/api/grades', (req, res) => {
 app.post('/api/grades/sync', async (req, res) => {
   try {
     const previous = readGrades(req.userId);
-    const { courses, mismatches } = await withPage((page) => fetchGrades(page, { userId: req.userId }));
+    const { courses, mismatches } = await withPage(req.userId, (page) => fetchGrades(page, { userId: req.userId }));
     const published = diffPublishedGrades(previous, courses);
     saveGrades(req.userId, courses);
     // Las notas traen etiquetas de término que el modelo de tiempo no conocía.
@@ -358,7 +359,7 @@ app.get('/api/pensum', (req, res) => {
 app.post('/api/pensum/sync', async (req, res) => {
   try {
     scheduler.emitEvent({ type: 'log', message: 'Generando el informe de avance (tarda: lo arma el portal)…' });
-    const { profile, groups, courses } = await withPage((page) => fetchAdvisement(page, { userId: req.userId }));
+    const { profile, groups, courses } = await withPage(req.userId, (page) => fetchAdvisement(page, { userId: req.userId }));
     // La cohorte (primer término con notas) es de grades, no del informe.
     const saved = saveRequirementTree(
       req.userId,
@@ -507,7 +508,7 @@ app.get('/api/holds', (req, res) => {
 
 app.post('/api/holds/sync', async (req, res) => {
   try {
-    const parsed = await withPage((page) => fetchHolds(page, { userId: req.userId }));
+    const parsed = await withPage(req.userId, (page) => fetchHolds(page, { userId: req.userId }));
     saveHolds(req.userId, parsed.holds);
     scheduler.emitEvent({
       type: 'log',
@@ -536,7 +537,7 @@ app.post('/api/enroll', async (req, res) => {
 
 app.get('/api/search/options', async (req, res) => {
   try {
-    const options = await withPage((page) => getSearchFormOptions(page));
+    const options = await withPage(req.userId, (page) => getSearchFormOptions(page));
     res.json(options);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -549,7 +550,7 @@ app.post('/api/search', async (req, res) => {
     return res.status(400).json({ error: 'Faltan term, career o courseNumber' });
   }
   try {
-    const rows = await withPage((page) => searchClasses(page, { term, career, courseNumber }));
+    const rows = await withPage(req.userId, (page) => searchClasses(page, { term, career, courseNumber }));
     res.json({ rows });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -562,7 +563,7 @@ app.post('/api/search/add', async (req, res) => {
     return res.status(400).json({ error: 'Faltan term, career, courseNumber o classNbr' });
   }
   try {
-    const result = await withPage((page) =>
+    const result = await withPage(req.userId, (page) =>
       addExactSectionToCart(page, { term, career, courseNumber, classNbr, relatedClassNbr })
     );
     res.json(result);
@@ -696,7 +697,7 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
     return res.status(400).json({ error: 'El plan no tiene materias con grupo elegido' });
   }
 
-  const results = await withPage(async (page) => {
+  const results = await withPage(req.userId, async (page) => {
     const out = [];
     for (const item of items) {
       scheduler.emitEvent({

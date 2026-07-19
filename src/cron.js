@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { withPage } from './session.js';
+import { withPage, SERVICE_USER_ID } from './session.js';
 import { syncCatalogSubject } from './peoplesoft/catalog.js';
 import { syncSubjectTitles } from './peoplesoft/browseCatalog.js';
 import * as scheduler from './scheduler.js';
@@ -119,8 +119,8 @@ async function run() {
     // Un subject son dos pantallas: los títulos (una carga) y el barrido de
     // secciones (muchas, troceadas). syncCatalogSubject deja su rastro en
     // sync_log, que es de donde sale el StalenessTag y el orden de la rotación.
-    const { saved: titulos } = await withPage((page) => syncSubjectTitles(page, { subject }));
-    const { saved, skipped } = await withPage((page) => syncCatalogSubject(page, { term, career: CAREER, subject }));
+    const { saved: titulos } = await withPage(SERVICE_USER_ID, (page) => syncSubjectTitles(page, { subject }));
+    const { saved, skipped } = await withPage(SERVICE_USER_ID, (page) => syncCatalogSubject(page, { term, career: CAREER, subject }));
 
     scheduler.emitEvent({
       type: 'log',
