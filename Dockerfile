@@ -22,7 +22,10 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev \
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm ci --omit=dev \
   && npx playwright install --with-deps chromium \
   && npm cache clean --force
 
