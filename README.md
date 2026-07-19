@@ -20,6 +20,17 @@ npm run build              # compila la SPA (web/ → public/dist)
 npm start                  # levanta mikampus en http://localhost:4173
 ```
 
+## Piloto hosted
+
+El despliegue hosted usa Docker Compose: Caddy termina HTTPS y mikampus maneja
+el login de cada estudiante; la app y SQLite quedan detrás de él en un volumen
+Docker. Copiá `.env.hosted.example` a `.env.hosted`, configurá el dominio,
+allowlist, credenciales operativas y luego corré `docker compose up -d --build`.
+Litestream se activa solo después de crear un bucket privado y sus credenciales;
+la configuración cifra la réplica y retiene 72 horas. El procedimiento operativo
+vive en `docs/deploy-digitalocean.md`; el gate y ensayo previos a invitar
+compañeros están en [`docs/launch.md`](./docs/launch.md).
+
 Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload: `npm run dev` (Vite en :5173 con proxy de `/api` al backend en :4173, que debe estar corriendo con `npm start`).
 
 ### Desde el teléfono
@@ -44,6 +55,12 @@ npm run build && node scripts/check-budget.mjs   # bundle inicial < 250KB gz
 node scripts/bench-search.mjs                    # keystroke → resultados < 16ms
 npm run smoke                                    # screenshots a 390/768/1440px + falla si hay desborde horizontal
 ```
+
+La validación que precede al deploy hosted está documentada en
+[`docs/phase-0-validation.md`](./docs/phase-0-validation.md). El comando
+`npm run validate:hosted-portal` hace un dry-run; la prueba real de logins
+desde el Droplet de DigitalOcean requiere la confirmación explícita indicada en
+ese documento.
 
 `npm test` corre los parsers contra HTML real volcado del portal y guardado en
 `fixtures/` (sin tokens ni datos personales — ver `scripts/make-fixture.mjs`).

@@ -5,6 +5,7 @@ import {
   planDetailSchema,
   planSummarySchema,
   planToCartResultSchema,
+  recommendationResponseSchema,
   scheduleResponseSchema,
   termInfoSchema,
   termContextSchema,
@@ -15,14 +16,25 @@ import {
   type RequirementsResponse,
   type ProfileResponse,
   holdsResponseSchema,
+  goalsResponseSchema,
+  insightsResponseSchema,
   accountInfoSchema,
+  cartValidationResponseSchema,
+  enrollmentWindowsResponseSchema,
+  dropResultSchema,
   type AccountInfo,
+  type GoalsResponse,
+  type InsightsResponse,
+  type CartValidationResponse,
+  type EnrollmentWindowsResponse,
+  type DropResult,
   type AppState,
   type CartResponse,
   type CatalogResponse,
   type PlanDetail,
   type PlanSummary,
   type PlanToCartResult,
+  type RecommendationResponse,
   type ScheduleResponse,
   type TermInfo,
   type TermContext,
@@ -32,25 +44,54 @@ import {
 } from '../../../src/shared/schemas.ts';
 import { z } from 'zod';
 
+let csrfToken: string | null = null;
+
+export function setCsrfToken(token: string | null) {
+  csrfToken = token;
+}
+
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+  }
+}
+
 // Todas las respuestas del backend se validan contra los esquemas Zod
 // compartidos: si un scraper devolvió basura, el error aparece acá con nombre,
 // no como un render roto tres componentes más abajo.
 async function getJSON(url: string): Promise<unknown> {
   const res = await fetch(url);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError((data as { error?: string }).error || `HTTP ${res.status}`, res.status);
   return data;
 }
 
 async function send(url: string, method: string, body?: unknown): Promise<unknown> {
   const res = await fetch(url, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError((data as { error?: string }).error || `HTTP ${res.status}`, res.status);
   return data;
+}
+
+// ── Web Push (§5.5) ─────────────────────────────────────────────────────────
+export async function fetchVapidKey(): Promise<string | null> {
+  const data = (await getJSON('/api/push/vapid-key')) as { publicKey: string | null };
+  return data.publicKey ?? null;
+}
+
+export async function subscribePush(subscription: PushSubscriptionJSON): Promise<void> {
+  await send('/api/push/subscribe', 'POST', { subscription });
+}
+
+export async function unsubscribePush(endpoint: string): Promise<void> {
+  await send('/api/push/unsubscribe', 'POST', { endpoint });
 }
 
 // Desde cache (<10ms). El refresh contra el portal es syncCart y es explícito.
@@ -60,6 +101,21 @@ export async function fetchCart(): Promise<CartResponse> {
 
 export async function syncCart(): Promise<CartResponse> {
   return cartResponseSchema.parse(await send('/api/cart/sync', 'POST'));
+}
+
+export async function validateCart(): Promise<CartValidationResponse> {
+  return cartValidationResponseSchema.parse(await send('/api/cart/validate', 'POST'));
+}
+
+export async function fetchEnrollmentWindows(term?: string): Promise<EnrollmentWindowsResponse> {
+  const qs = term ? `?term=${encodeURIComponent(term)}` : '';
+  return enrollmentWindowsResponseSchema.parse(await getJSON(`/api/enrollment-windows${qs}`));
+}
+
+export async function syncEnrollmentWindows(term?: string): Promise<EnrollmentWindowsResponse> {
+  return enrollmentWindowsResponseSchema.parse(
+    await send('/api/enrollment-windows/sync', 'POST', term ? { term } : undefined)
+  );
 }
 
 export async function fetchState(): Promise<AppState> {
@@ -85,14 +141,23 @@ export async function syncMySchedule(term?: string): Promise<ScheduleResponse> {
   return scheduleResponseSchema.parse(await send('/api/my-schedule/sync', 'POST', term ? { term } : undefined));
 }
 
-export function scheduleAt(atISO: string) {
-  return send('/api/schedule', 'POST', { atISO });
+export async function dropScheduleCourse(input: {
+  term: string;
+  courseCode: string;
+  classNbr?: string | null;
+  confirmCode: string;
+}): Promise<DropResult> {
+  return dropResultSchema.parse(await send('/api/my-schedule/drop', 'POST', input));
+}
+
+export function scheduleAt(input: { atISO: string; term?: string; consent?: boolean }) {
+  return send('/api/schedule', 'POST', input);
 }
 export function cancelSchedule() {
   return send('/api/schedule', 'DELETE');
 }
-export function setWatcher(enabled: boolean, intervalMs?: number) {
-  return send('/api/watch', 'POST', { enabled, intervalMs });
+export function setWatcher(input: { enabled: boolean; autoEnroll?: boolean; appointmentAt?: string | null; term?: string; consent?: boolean }) {
+  return send('/api/watch', 'POST', input);
 }
 export function enrollNow() {
   return send('/api/enroll', 'POST');
@@ -175,6 +240,44 @@ export async function sendPlanToCart(planId: number): Promise<PlanToCartResult> 
   return planToCartResultSchema.parse(await send(`/api/plans/${planId}/to-cart`, 'POST'));
 }
 
+// ── Metas y señales (/academico, Fase 10) ───────────────────────────────────
+export async function fetchGoals(): Promise<GoalsResponse> {
+  return goalsResponseSchema.parse(await getJSON('/api/goals'));
+}
+
+export async function createGoal(input: { target: number; deadlineTerm?: string | null }): Promise<GoalsResponse> {
+  return goalsResponseSchema.parse(await send('/api/goals', 'POST', input));
+}
+
+export async function updateGoal(
+  id: number,
+  input: { target?: number; deadlineTerm?: string | null }
+): Promise<GoalsResponse> {
+  return goalsResponseSchema.parse(await send(`/api/goals/${id}`, 'PATCH', input));
+}
+
+export async function deleteGoal(id: number): Promise<GoalsResponse> {
+  return goalsResponseSchema.parse(await send(`/api/goals/${id}`, 'DELETE'));
+}
+
+export async function fetchInsights(): Promise<InsightsResponse> {
+  return insightsResponseSchema.parse(await getJSON('/api/insights'));
+}
+
+// ── Recomendador (/planner, Fase 9) ─────────────────────────────────────────
+export async function fetchRecommendation(term: string, maxCredits: number): Promise<RecommendationResponse> {
+  const qs = new URLSearchParams({ term, maxCredits: String(maxCredits) });
+  return recommendationResponseSchema.parse(await getJSON(`/api/recommendation?${qs}`));
+}
+
+export async function createRecommendedPlan(input: {
+  term: string;
+  maxCredits: number;
+  name?: string;
+}): Promise<PlanDetail> {
+  return planDetailSchema.parse(await send('/api/recommendation/plan', 'POST', input));
+}
+
 // ── Notas, pénsum y holds ───────────────────────────────────────────────────
 
 export async function fetchGrades(): Promise<GradesResponse> {
@@ -236,4 +339,73 @@ export async function fetchAccount(): Promise<AccountInfo> {
 export async function saveAccount(input: { username: string; password: string }): Promise<AccountInfo> {
   const data = await send('/api/account', 'POST', input);
   return accountInfoSchema.parse((data as { account?: unknown }).account);
+}
+
+// ── Ciclo de cuenta hosted (Fase 3) ────────────────────────────────────────
+
+const authMeSchema = z.object({
+  mode: z.enum(['local', 'hosted']),
+  user: z.object({ id: z.number(), username: z.string() }).nullable(),
+  csrfToken: z.string().nullable(),
+});
+export type AuthMe = z.infer<typeof authMeSchema>;
+
+export async function fetchAuthMe(): Promise<AuthMe> {
+  return authMeSchema.parse(await getJSON('/api/auth/me'));
+}
+
+export async function login(input: { username: string; password: string }) {
+  const data = await send('/api/auth/login', 'POST', input);
+  return z
+    .object({ ok: z.literal(true), user: z.object({ id: z.number(), username: z.string() }), csrfToken: z.string(), expiresAt: z.string() })
+    .parse(data);
+}
+
+export async function logout() {
+  return z.object({ ok: z.literal(true) }).parse(await send('/api/auth/logout', 'POST'));
+}
+
+const accountOverviewSchema = z.object({
+  user: z.object({ id: z.number(), portalUsername: z.string().nullable(), createdAt: z.string(), lastLoginAt: z.string().nullable() }).nullable(),
+  credential: z
+    .object({ username: z.string(), reason: z.string().nullable(), expiresAt: z.string(), createdAt: z.string() })
+    .nullable(),
+  syncs: z.array(z.object({ kind: z.string(), label: z.string(), syncedAt: z.string().nullable() })),
+});
+export type AccountOverview = z.infer<typeof accountOverviewSchema>;
+
+export async function fetchAccountOverview(): Promise<AccountOverview> {
+  return accountOverviewSchema.parse(await getJSON('/api/account/overview'));
+}
+
+const actionsSchema = z.object({
+  actions: z.array(
+    z.object({
+      id: z.number(),
+      action: z.string(),
+      detail: z.string().nullable(),
+      portalResponse: z.string().nullable(),
+      ok: z.boolean().nullable(),
+      createdAt: z.string(),
+    })
+  ),
+});
+export type AccountAction = z.infer<typeof actionsSchema>['actions'][number];
+
+export async function fetchActions(): Promise<AccountAction[]> {
+  return actionsSchema.parse(await getJSON('/api/actions')).actions;
+}
+
+export async function deleteAllMyData() {
+  return z.object({ ok: z.literal(true) }).parse(await send('/api/account/data', 'DELETE'));
+}
+
+export async function refreshExpiredData() {
+  return z
+    .object({
+      results: z.array(
+        z.object({ kind: z.string(), label: z.string(), status: z.enum(['fresh', 'updated', 'error']), syncedAt: z.string().nullable(), error: z.string().optional() })
+      ),
+    })
+    .parse(await send('/api/refresh', 'POST'));
 }

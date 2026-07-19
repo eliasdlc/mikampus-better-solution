@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { fetchCart, fetchState, fetchMySchedule, fetchHolds, fetchPlans, fetchTermContext } from '../lib/api.ts';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  fetchCart,
+  fetchState,
+  fetchMySchedule,
+  fetchHolds,
+  fetchPlans,
+  fetchTermContext,
+  fetchEnrollmentWindows,
+  syncHolds,
+} from '../lib/api.ts';
 import { toBlocks, type Block } from '../lib/grid.ts';
 import { agendaFor, nextClass, type NextClass } from '../../../src/shared/agenda.ts';
 import { DAY_LABELS, toMinutes } from '../../../src/shared/meetings.ts';
-import type { TermInfo } from '../../../src/shared/schemas.ts';
+import type { EnrollmentWindow, TermInfo } from '../../../src/shared/schemas.ts';
 import { courseColor } from '../lib/color.ts';
 import { ago } from '../lib/time.ts';
 import { Countdown } from '../components/Countdown.tsx';
@@ -41,6 +51,11 @@ export function Dashboard() {
   const state = useQuery({ queryKey: ['state'], queryFn: fetchState });
   const holds = useQuery({ queryKey: ['holds'], queryFn: fetchHolds });
   const plans = useQuery({ queryKey: ['plans'], queryFn: fetchPlans });
+  const enrollmentWindows = useQuery({
+    queryKey: ['enrollment-windows', next?.code],
+    queryFn: () => fetchEnrollmentWindows(next?.code ?? undefined),
+    enabled: terms.isSuccess,
+  });
 
   // Cada 30s: es lo que tarda "faltan 12 min" en volverse mentira. El countdown
   // del hero corre por su cuenta cada segundo; esto solo decide CUÁL es la
@@ -97,9 +112,10 @@ export function Dashboard() {
             planes={nextPlans.length}
             cartCount={cart.data?.rows.length ?? 0}
             scheduledAt={state.data?.schedule?.atISO ?? null}
+            enrollmentWindow={enrollmentWindows.data?.windows[0] ?? null}
           />
           <WatcherCard watcher={state.data?.watcher ?? null} />
-          <HoldsCard holds={holds.data?.holds ?? []} />
+          <HoldsCard holds={holds.data?.holds ?? []} syncedAt={holds.data?.syncedAt ?? null} loading={holds.isPending} />
         </aside>
       </div>
 
@@ -149,10 +165,10 @@ function Hero({
                 : 'Armá tu ciclo en el planner y mandá las materias al carrito antes de la hora de inscripción.'}
         </p>
         <Link
-          to={current != null ? '/horario' : planes > 0 ? '/planner' : '/buscar'}
+          to={current != null ? '/horario' : '/planear'}
           className="bg-accent text-accent-fg mt-4 inline-block rounded-[var(--radius)] px-3 py-2 text-sm font-medium"
         >
-          {current != null ? 'Ir a mi horario' : planes > 0 ? 'Ir al planner' : 'Buscar materias'}
+          {current != null ? 'Ir a mi horario' : planes > 0 ? 'Ir a planear' : 'Planear mi ciclo'}
         </Link>
       </section>
     );
@@ -258,12 +274,14 @@ function NextCycleCard({
   planes,
   cartCount,
   scheduledAt,
+  enrollmentWindow,
 }: {
   term: TermInfo | null;
   enrolled: number;
   planes: number;
   cartCount: number;
   scheduledAt: string | null;
+  enrollmentWindow: EnrollmentWindow | null;
 }) {
   // Una línea que resume dónde estás parado para el ciclo que viene, en orden
   // de compromiso: inscrito > carrito > plan > nada.
@@ -275,9 +293,10 @@ function NextCycleCard({
         : planes > 0
           ? `${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}`
           : 'sin materias todavía';
+  const ofrecerRecomendacion = term != null && planes === 0;
 
   return (
-    <Card to="/inscripcion" title="Próximo ciclo">
+    <Card to={ofrecerRecomendacion ? '/planear?recomendado=1' : '/inscripcion'} title="Próximo ciclo">
       <div className="mt-1 flex items-center justify-between gap-2">
         <TermBadge label={term?.label ?? null} />
       </div>
@@ -289,7 +308,26 @@ function NextCycleCard({
         </div>
       ) : (
         <div className="text-muted border-line mt-3 border-t pt-3 text-xs">
-          {cartCount > 0 ? 'carrito listo · sin disparo programado' : 'sin disparo programado'}
+          {enrollmentWindow ? (
+            <>
+              <span className="text-fg tabular font-mono">
+                {new Date(`${enrollmentWindow.startsAt}T12:00:00`).toLocaleDateString('es-DO', {
+                  day: 'numeric',
+                  month: 'short',
+                })}
+              </span>{' '}
+              · {enrollmentWindow.precision === 'date' ? 'hora no publicada' : 'abre inscripción'}
+            </>
+          ) : cartCount > 0 ? (
+            'carrito listo · sin disparo programado'
+          ) : (
+            'sin disparo programado'
+          )}
+        </div>
+      )}
+      {ofrecerRecomendacion && (
+        <div className="text-accent border-line mt-3 border-t pt-3 text-xs font-medium">
+          Generar un plan desde tu trayectoria →
         </div>
       )}
     </Card>
@@ -316,15 +354,47 @@ function WatcherCard({ watcher }: { watcher: { intervalMs: number; lastCheckAt: 
   );
 }
 
-// Rojo solo si hay (plan §5.1): un badge de alerta permanente no alerta de nada.
-function HoldsCard({ holds }: { holds: { title: string; severity: string }[] }) {
+// Holds vive junto al estado del próximo ciclo: es donde importa saber si algo
+// puede trabar una inscripción. Conserva los tres estados honestos de la ruta
+// anterior: nunca consultado, vacío verificado y lista de pendientes.
+function HoldsCard({
+  holds,
+  syncedAt,
+  loading,
+}: {
+  holds: { title: string; description?: string | null; link?: string | null; severity: string }[];
+  syncedAt: string | null;
+  loading: boolean;
+}) {
+  const qc = useQueryClient();
+  const sync = useMutation({
+    mutationFn: syncHolds,
+    onSuccess: (fresh) => qc.setQueryData(['holds'], fresh),
+  });
   const bloqueantes = holds.filter((h) => h.severity === 'blocking').length;
+
   return (
-    <Card to="/holds" title="Holds">
-      {holds.length === 0 ? (
+    <section className="border-line bg-surface rounded-[var(--radius)] border p-4">
+      <div className="text-muted text-xs">Holds y pendientes</div>
+      {loading ? (
+        <div className="mt-2 h-10 animate-pulse rounded bg-surface-2" />
+      ) : !syncedAt ? (
         <>
-          <div className="mt-1 text-lg font-medium">Ninguno</div>
-          <div className="text-muted mt-1 text-xs">nada te bloquea la inscripción</div>
+          <p className="mt-2 text-sm font-medium">Todavía no los consultaste.</p>
+          <p className="text-muted mt-1 text-xs">Confirmalos antes de preparar la inscripción.</p>
+          <button
+            type="button"
+            onClick={() => sync.mutate()}
+            disabled={sync.isPending}
+            className="bg-accent text-accent-fg mt-3 rounded-[var(--radius)] px-2.5 py-1.5 text-xs font-medium disabled:opacity-50"
+          >
+            {sync.isPending ? 'Consultando…' : 'Consultar en PeopleSoft'}
+          </button>
+        </>
+      ) : holds.length === 0 ? (
+        <>
+          <div className="text-open mt-1 text-lg font-medium">Sin holds</div>
+          <div className="text-muted mt-1 text-xs">Nada que trabar tu inscripción.</div>
         </>
       ) : (
         <>
@@ -336,9 +406,24 @@ function HoldsCard({ holds }: { holds: { title: string; severity: string }[] }) 
                 no es "no bloquea", y la app no lo traduce a tranquilidad. */}
             {bloqueantes > 0 ? `${bloqueantes} bloquea(n) la inscripción` : 'revisá si bloquean la inscripción'}
           </div>
+          <ul className="border-line divide-line mt-3 border-t pt-2">
+            {holds.slice(0, 3).map((hold, index) => (
+              <li key={`${hold.title}-${index}`} className="py-1.5 text-xs">
+                <a
+                  href={hold.link ?? 'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SSS_STUDENT_CENTER.GBL?Page=SSS_STUDENT_CENTER&Action=U'}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hover:text-fg underline underline-offset-2"
+                >
+                  {hold.title}
+                </a>
+              </li>
+            ))}
+          </ul>
         </>
       )}
-    </Card>
+      {sync.error && <p className="text-closed mt-2 text-xs">PeopleSoft no respondió. Reintentar.</p>}
+    </section>
   );
 }
 
@@ -354,7 +439,7 @@ function CollapsibleFeed() {
         aria-expanded={open}
         className="text-muted hover:text-fg flex items-center gap-1.5 text-xs"
       >
-        <span aria-hidden>{open ? '▾' : '▸'}</span> Actividad
+        {open ? <ChevronDown className="size-3.5" aria-hidden /> : <ChevronRight className="size-3.5" aria-hidden />} Actividad
       </button>
       {open && (
         <div className="mt-2">

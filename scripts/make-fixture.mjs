@@ -35,6 +35,10 @@ function scrub(html) {
   // nadie y es de donde el scraper saca el código de término.
   out = out.replace(/EMPLID=\d+/g, 'EMPLID=00000000');
   out = out.replace(/EMPLID:"\d+"/g, 'EMPLID:"00000000"');
+  // Identificador de la transacción de inscripción generado para una cuenta.
+  // No permite loguearse, pero sí enlaza el fixture con una operación real.
+  out = out.replace(/ENRL_REQUEST_ID=\d+/g, 'ENRL_REQUEST_ID=0000000000');
+  out = out.replace(/ENRL_REQUEST_ID:"\d+"/g, 'ENRL_REQUEST_ID:"0000000000"');
 
   // Nombre del estudiante. No hay un solo nodo que lo tenga: las pantallas
   // clásicas lo ponen en la cabecera de navegación, pero el Student Center no
@@ -47,15 +51,19 @@ function scrub(html) {
   for (const source of NAME_SOURCES) {
     const nameMatch = out.match(source);
     if (!nameMatch) continue;
-    const name = nameMatch[1].replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    const rawName = nameMatch[1].trim();
+    const name = rawName.replace(/&nbsp;/g, ' ').replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
     if (name) {
+      out = out.replaceAll(rawName, 'ESTUDIANTE DE PRUEBA');
       out = out.replaceAll(name, 'ESTUDIANTE DE PRUEBA');
       // Y cada parte por separado, porque el portal usa el nombre de pila solo
       // en varios lugares. Si de paso se lleva el apellido de un profesor que
       // se llame igual, no importa: un fixture con un profesor anonimizado de
       // más es barato; uno con el nombre del estudiante, no.
       for (const part of name.split(' ')) {
-        if (part.length >= 3) out = out.replaceAll(new RegExp(`\\b${part}\\b`, 'gi'), 'ESTUDIANTE');
+        if (part.length >= 3) {
+          out = out.replaceAll(new RegExp(`(?<![\\p{L}])${part}(?![\\p{L}])`, 'giu'), 'ESTUDIANTE');
+        }
       }
     }
   }

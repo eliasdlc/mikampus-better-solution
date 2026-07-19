@@ -1,8 +1,9 @@
 import { db } from './db.js';
-import { withPage } from './session.js';
+import { withPage, SERVICE_USER_ID } from './session.js';
 import { syncCatalogSubject } from './peoplesoft/catalog.js';
 import { syncSubjectTitles } from './peoplesoft/browseCatalog.js';
 import * as scheduler from './scheduler.js';
+import { readTerms } from './terms.js';
 
 // Sync de catálogo programado (plan §7, Fase 5). El catálogo es lo único que
 // envejece solo — la universidad abre grupos, cambia profesores y mueve aulas
@@ -24,7 +25,6 @@ import * as scheduler from './scheduler.js';
 //      espera al otro cuatrimestre.
 
 const AT = process.env.CATALOG_CRON_AT ?? '';
-const TERM = process.env.SYNC_TERM || process.env.TARGET_TERM || '1930';
 const CAREER = process.env.SYNC_CAREER || 'GRDO';
 
 let timer = null;
@@ -73,7 +73,12 @@ export function subjectsToSync() {
 //
 // El LIKE es por el formato que escribe syncCatalogSubject: detail es el
 // subject, o "ICC (sin trocear: ...)" cuando algún prefijo excedió el límite.
-export function stalestSubject(subjects, term = TERM) {
+export function syncTerm() {
+  return process.env.SYNC_TERM || readTerms().next?.code || null;
+}
+
+export function stalestSubject(subjects, term = syncTerm()) {
+  if (!term) return null;
   const last = db.prepare(
     `SELECT MAX(finished_at) AS at FROM sync_log
      WHERE kind = 'catalog' AND term = ? AND (detail = ? OR detail LIKE ? || ' (%')`
@@ -83,11 +88,17 @@ export function stalestSubject(subjects, term = TERM) {
     .sort((a, b) => (a.at ?? '') .localeCompare(b.at ?? ''))[0]?.subject ?? null;
 }
 
-// La guarda dura. Devuelve el motivo por el que NO se puede correr, o null si
-// hay vía libre.
-export function blockedBecause(state = scheduler.getState()) {
-  if (state.schedule) return 'hay una inscripción programada: la sesión del portal tiene que estar libre';
-  if (state.watcher) return 'el watcher está vigilando cupos';
+// La guarda dura, reescrita para multi-usuario (§5.7): con N usuarios siempre
+// hay ALGÚN watcher, así que los watchers ya no bloquean — cada usuario tiene
+// su propio context y la cola de servicio es aparte. Lo único sagrado es el
+// disparo (principio 5): si CUALQUIER usuario tiene una inscripción programada
+// dentro de la ventana (pre-warm de §5.6 incluido), el barrido cede el paso.
+const FIRE_WINDOW_MS = 20 * 60_000;
+
+export function blockedBecause(now = Date.now()) {
+  const horizon = new Date(now + FIRE_WINDOW_MS).toISOString();
+  const inminentes = db.prepare('SELECT COUNT(*) AS n FROM schedules WHERE at_iso <= ?').get(horizon).n;
+  if (inminentes > 0) return 'hay un disparo de inscripción inminente: el portal queda para los que inscriben';
   return null;
 }
 
@@ -98,19 +109,24 @@ async function run() {
     return schedule();
   }
 
-  const subject = stalestSubject(subjectsToSync());
+  const term = syncTerm();
+  if (!term) {
+    scheduler.emitEvent({ type: 'log', message: 'Sync de catálogo pospuesto — no se conoce el próximo ciclo' });
+    return schedule();
+  }
+  const subject = stalestSubject(subjectsToSync(), term);
   if (!subject) {
     scheduler.emitEvent({ type: 'log', message: 'Sync de catálogo: no hay subjects que refrescar' });
     return schedule();
   }
 
-  scheduler.emitEvent({ type: 'log', message: `Sync de catálogo: ${subject} (término ${TERM})…` });
+  scheduler.emitEvent({ type: 'log', message: `Sync de catálogo: ${subject} (término ${term})…` });
   try {
     // Un subject son dos pantallas: los títulos (una carga) y el barrido de
     // secciones (muchas, troceadas). syncCatalogSubject deja su rastro en
     // sync_log, que es de donde sale el StalenessTag y el orden de la rotación.
-    const { saved: titulos } = await withPage((page) => syncSubjectTitles(page, { subject }));
-    const { saved, skipped } = await withPage((page) => syncCatalogSubject(page, { term: TERM, career: CAREER, subject }));
+    const { saved: titulos } = await withPage(SERVICE_USER_ID, (page) => syncSubjectTitles(page, { subject }));
+    const { saved, skipped } = await withPage(SERVICE_USER_ID, (page) => syncCatalogSubject(page, { term, career: CAREER, subject }));
 
     scheduler.emitEvent({
       type: 'log',

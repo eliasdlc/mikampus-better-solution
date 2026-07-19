@@ -3,32 +3,40 @@ import path from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { withPage, resetSession, shutdown } from './session.js';
+import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { getAccountInfo, setCredentials } from './credentials.js';
-import { readCart, syncCart } from './peoplesoft/cart.js';
+import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readCatalog } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
-import { readSchedule, syncSchedule, latestScheduledTerm } from './peoplesoft/mySchedule.js';
-import { readTerms, reconcileTerms } from './terms.js';
-import { fetchGrades, saveGrades, readGrades, termSummaries } from './peoplesoft/grades.js';
+import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
+import { readTerms, reconcileTerms, planningTerm } from './terms.js';
+import { fetchGrades, saveGrades, readGrades, termSummaries, diffPublishedGrades } from './peoplesoft/grades.js';
 import {
   fetchAdvisement,
   readPensum,
   saveRequirementTree,
   readRequirementTree,
+  requirementCodes,
   readProfile,
   earliestGradeTerm,
 } from './peoplesoft/advisement.js';
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
-import { summarizeGrades } from './shared/gpa.ts';
-import { db, lastSync, clearPersonalData } from './db.js';
+import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
+import { computeInsights } from './shared/insights.ts';
+import { db, lastSync, clearPersonalData, deleteAllUserData, logAction, readActions } from './db.js';
+import { LOCAL_USER_ID, adoptLocalUsername, getUser } from './users.js';
+import * as auth from './auth.js';
+import { credentialInfo, deleteCredential, purgeExpiredCredentials } from './credentialVault.js';
 import * as plans from './plans.js';
+import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
 import { startCatalogCron, stopCatalogCron } from './cron.js';
-
-// El término por defecto sale del .env, que es el que ya usa el resto de la app.
-const DEFAULT_TERM = process.env.TARGET_TERM || null;
+import { readEnrollmentWindows, syncEnrollmentWindows } from './peoplesoft/enrollmentWindows.js';
+import { dropClass } from './peoplesoft/dropClass.js';
+import { startBackupCron, stopBackupCron } from './backups.js';
+import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js';
+import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
@@ -36,10 +44,217 @@ const app = express();
 app.use(express.json());
 app.use(express.static(DIST_DIR));
 
+// No toca PeopleSoft ni devuelve datos personales: permite que Docker detecte
+// un proceso vivo antes de que Caddy le entregue tráfico.
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true });
+});
+
+// Quién pide. MIKAMPUS_MODE decide (§2, "es el mismo código con MODE=local"):
+//   local (default) — sin login: todo request es del usuario 1, la cuenta del
+//   .env/account.json. Es el comportamiento single-user de siempre.
+//   hosted — toda /api exige la cookie de sesión de mikampus y toda mutación
+//   su token CSRF (auth.js); ningún handler lee datos sin dueño.
+const MODE = process.env.MIKAMPUS_MODE ?? 'local';
+const SECURE_COOKIES = MODE === 'hosted';
+
+// El portal solo publicó fechas en el recon actual. Para que la credencial no
+// sobreviva al período de inscripción, convertimos el cierre publicado en el
+// último instante de ese día Santo Domingo; nunca aceptamos una fecha elegida
+// libremente por el cliente.
+function unattendedExpiry(userId, term) {
+  if (!term) throw new Error('Elegí el ciclo de inscripción antes de activar una función desatendida');
+  const window = db
+    .prepare('SELECT ends_at FROM enrollment_windows WHERE user_id = ? AND term_code = ? ORDER BY ends_at DESC LIMIT 1')
+    .get(userId, String(term));
+  if (!window?.ends_at) throw new Error('Actualizá tu ventana de inscripción antes de activar esta función');
+  const expiresAt = new Date(`${window.ends_at}T23:59:59.999-04:00`).toISOString();
+  if (new Date(expiresAt).getTime() <= Date.now()) throw new Error('La ventana de inscripción de ese ciclo ya cerró');
+  return expiresAt;
+}
+
+function authorizeUnattendedCredential(userId, { consent, term, reason }) {
+  if (MODE !== 'hosted') return;
+  if (consent !== true) throw new Error('Confirmá el consentimiento para guardar la credencial cifrada hasta el cierre de inscripción');
+  persistRamCredential(userId, { expiresAt: unattendedExpiry(userId, term), reason });
+}
+
+const REFRESH_POLICY = [
+  { kind: 'mySchedule', label: 'Horario', maxAgeMs: 12 * 60 * 60_000 },
+  { kind: 'cart', label: 'Carrito', maxAgeMs: 10 * 60_000 },
+  { kind: 'grades', label: 'Notas', maxAgeMs: 24 * 60 * 60_000 },
+  { kind: 'advisement', label: 'Avance', maxAgeMs: 7 * 24 * 60 * 60_000 },
+  { kind: 'holds', label: 'Holds', maxAgeMs: 12 * 60 * 60_000 },
+];
+const refreshInFlight = new Map();
+
+async function refreshExpired(userId, { force = false } = {}) {
+  const results = [];
+  for (const item of REFRESH_POLICY) {
+    const syncedAt = lastSync(item.kind, { userId });
+    const expired = !syncedAt || Date.now() - new Date(syncedAt).getTime() >= item.maxAgeMs;
+    if (!force && !expired) {
+      results.push({ ...item, status: 'fresh', syncedAt });
+      continue;
+    }
+
+    scheduler.emitEvent({ type: 'log', userId, message: `Actualizando ${item.label.toLowerCase()}…` });
+    try {
+      if (item.kind === 'mySchedule') {
+        await withPage(userId, (page) => syncSchedule(page, { userId, onStep: (message) => scheduler.emitEvent({ type: 'log', userId, message }) }));
+        reconcileTerms();
+      } else if (item.kind === 'cart') {
+        await withPage(userId, (page) => syncCart(page, { userId }));
+      } else if (item.kind === 'grades') {
+        const { courses } = await withPage(userId, (page) => fetchGrades(page, { userId }));
+        saveGrades(userId, courses);
+        reconcileTerms();
+      } else if (item.kind === 'advisement') {
+        const data = await withPage(userId, (page) => fetchAdvisement(page, { userId }));
+        saveRequirementTree(userId, data, { cohortStartTerm: earliestGradeTerm(userId) });
+      } else if (item.kind === 'holds') {
+        const parsed = await withPage(userId, (page) => fetchHolds(page, { userId }));
+        saveHolds(userId, parsed.holds);
+      }
+      results.push({ ...item, status: 'updated', syncedAt: lastSync(item.kind, { userId }) });
+    } catch (err) {
+      scheduler.emitEvent({ type: 'log', userId, message: `No se pudo actualizar ${item.label.toLowerCase()}: ${err.message}` });
+      results.push({ ...item, status: 'error', syncedAt, error: err.message });
+    }
+  }
+  return results;
+}
+
+if (MODE === 'hosted') {
+  // Detrás de Caddy: el proto real viene en X-Forwarded-Proto.
+  app.set('trust proxy', 1);
+  app.use('/api', auth.authMiddleware);
+} else {
+  app.use('/api', (req, res, next) => {
+    req.userId = LOCAL_USER_ID;
+    next();
+  });
+}
+
+// ── Auth (§5): el login de mikampus ES el login del portal ──────────────────
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { user, token, csrfToken, expiresAt } = await auth.loginWithPortal(req.body ?? {});
+    scheduler.emitEvent({ type: 'log', message: `Sesión iniciada: ${user.portalUsername}` });
+    res.set('Set-Cookie', auth.sessionCookieHeader(token, { secure: SECURE_COOKIES }));
+    res.json({ ok: true, user: { id: user.id, username: user.portalUsername }, csrfToken, expiresAt });
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    await auth.logout(auth.cookieValue(req.headers.cookie, auth.SESSION_COOKIE));
+    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: SECURE_COOKIES }));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Quién soy + el CSRF token de mi sesión: lo primero que pide la SPA al abrir.
+app.get('/api/auth/me', (req, res) => {
+  const user = getUser(req.userId);
+  const session = req.sessionToken ? auth.sessionFor(req.sessionToken) : null;
+  res.json({
+    mode: MODE,
+    user: user ? { id: user.id, username: user.portalUsername } : null,
+    csrfToken: session?.csrfToken ?? null,
+  });
+});
+
+// La información de confianza que Ajustes muestra siempre: el estado de la
+// excepción de credencial persistida, las últimas syncs y el audit log viven
+// detrás de la misma sesión del usuario; ninguno filtra datos entre cuentas.
+app.get('/api/account/overview', (req, res) => {
+  const syncKinds = [
+    ['mySchedule', 'Horario'],
+    ['cart', 'Carrito'],
+    ['grades', 'Notas'],
+    ['advisement', 'Avance'],
+    ['holds', 'Holds'],
+  ];
+  res.json({
+    user: getUser(req.userId),
+    credential: credentialInfo(req.userId),
+    syncs: syncKinds.map(([kind, label]) => ({ kind, label, syncedAt: lastSync(kind, { userId: req.userId }) })),
+  });
+});
+
+// ── Web Push (§5.5): la mitad accionable del watcher ────────────────────────
+// La llave pública es lo único que el navegador necesita para suscribirse; es
+// pública por diseño (la privada nunca sale del server). null = canal apagado,
+// y la UI lo trata como "push no disponible" en vez de romper.
+app.get('/api/push/vapid-key', (req, res) => {
+  res.json({ publicKey: vapidPublicKey() });
+});
+
+// El navegador manda su suscripción (endpoint + claves del dispositivo); se
+// guarda atada a este usuario. Un re-subscribe del mismo teléfono actualiza.
+app.post('/api/push/subscribe', (req, res) => {
+  try {
+    saveSubscription(req.userId, req.body?.subscription, req.headers['user-agent'] ?? null);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Al revocar permiso o cerrar sesión en un dispositivo, se borra SOLO ese
+// endpoint: los otros teléfonos del usuario siguen recibiendo.
+app.post('/api/push/unsubscribe', (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (endpoint) removeSubscription(req.userId, endpoint);
+  res.json({ ok: true });
+});
+
+app.delete('/api/account/data', async (req, res) => {
+  try {
+    // Primero se corta todo lo que pueda tocar el portal; después se borra la
+    // identidad local. Así una carrera con un timer restaurado no puede revivir
+    // una cuenta que ya pidió desaparecer.
+    // Una actualización silenciosa que arrancó al entrar puede seguir en la
+    // cola de Playwright. Esperarla evita que escriba filas nuevas después del
+    // borrado solicitado.
+    await refreshInFlight.get(req.userId);
+    scheduler.cancelSchedule(req.userId);
+    scheduler.stopWatcher(req.userId);
+    await resetSession(req.userId);
+    deleteCredential(req.userId);
+    auth.revokeAllSessions(req.userId);
+    deleteAllUserData(req.userId);
+    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: SECURE_COOKIES }));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Un solo refresh global: sirve cache de inmediato en el cliente y solo sale
+// al portal por lo vencido. El orden de la política declara el primer sync
+// (horario → carrito → notas → avance → holds), aunque cada tarea usa la cola
+// del context del usuario y por tanto no bloquea a otros estudiantes.
+app.post('/api/refresh', async (req, res) => {
+  let pending = refreshInFlight.get(req.userId);
+  if (!pending) {
+    pending = refreshExpired(req.userId, { force: Boolean(req.body?.force) }).finally(() => refreshInFlight.delete(req.userId));
+    refreshInFlight.set(req.userId, pending);
+  }
+  const results = await pending;
+  res.json({ results });
+});
+
 // ── Cuenta ───────────────────────────────────────────────────────────────────
 // Devuelve el usuario vigente y de dónde sale (account.json o .env), nunca la
 // contraseña. La pantalla de Ajustes lo usa para mostrar con qué cuenta estás.
 app.get('/api/account', (req, res) => {
+  if (MODE === 'hosted') return res.status(404).json({ error: 'Esta ruta solo existe en modo local' });
   res.json(getAccountInfo());
 });
 
@@ -49,14 +264,16 @@ app.get('/api/account', (req, res) => {
 // personal en SQLite (si no, la página seguiría mostrando a la persona
 // anterior, porque los GET sirven disco). Los datos se retraen con "sync".
 app.post('/api/account', async (req, res) => {
+  if (MODE === 'hosted') return res.status(404).json({ error: 'Esta ruta solo existe en modo local' });
   const { username, password } = req.body ?? {};
   if (!username || !password) {
     return res.status(400).json({ error: 'Faltan usuario o contraseña' });
   }
   try {
     const account = setCredentials({ username, password });
-    await resetSession();
-    clearPersonalData();
+    adoptLocalUsername(account.username);
+    await resetSession(req.userId);
+    clearPersonalData(req.userId);
     scheduler.emitEvent({
       type: 'log',
       message: `Cuenta cambiada a ${account.username}. Sincronizá cada pantalla para traer tus datos.`,
@@ -71,17 +288,50 @@ app.post('/api/account', async (req, res) => {
 // su syncedAt (<10ms) y nunca dispara Playwright. Leer el carrito en vivo son
 // ~10s y el Dashboard lo muestra en cada carga.
 app.get('/api/cart', (req, res) => {
-  res.json(readCart());
+  res.json(readCart(req.userId));
 });
 
 app.post('/api/cart/sync', async (req, res) => {
   try {
-    await withPage((page) => syncCart(page));
-    const cart = readCart();
+    await withPage(req.userId, (page) => syncCart(page, { userId: req.userId }));
+    const cart = readCart(req.userId);
     scheduler.emitEvent({ type: 'cart-status', rows: cart.rows, syncedAt: cart.syncedAt });
     res.json(cart);
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el carrito: ${err.message}` });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/cart/validate', async (req, res) => {
+  try {
+    scheduler.emitEvent({ type: 'log', message: 'Comprobando si PeopleSoft ofrece Validate…' });
+    const result = await withPage(req.userId, (page) => validateCart(page));
+    scheduler.emitEvent({ type: 'log', message: result.validate.supported ? 'Carrito validado' : result.validate.reason });
+    res.json(result);
+  } catch (err) {
+    scheduler.emitEvent({ type: 'log', message: `No se pudo comprobar Validate: ${err.message}` });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/enrollment-windows', (req, res) => {
+  const term = req.query.term ? String(req.query.term) : planningTerm(null, latestScheduledTerm(req.userId));
+  res.json(readEnrollmentWindows(req.userId, term));
+});
+
+app.post('/api/enrollment-windows/sync', async (req, res) => {
+  try {
+    const windows = await withPage(req.userId, (page) =>
+      syncEnrollmentWindows(page, {
+        userId: req.userId,
+        onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
+      })
+    );
+    scheduler.emitEvent({ type: 'log', message: `Ventana de inscripción actualizada: ${windows.length} sesión(es)` });
+    res.json(readEnrollmentWindows(req.userId, req.body?.term ? String(req.body.term) : null));
+  } catch (err) {
+    scheduler.emitEvent({ type: 'log', message: `Error leyendo Enrollment Dates: ${err.message}` });
     res.status(500).json({ error: err.message });
   }
 });
@@ -93,7 +343,7 @@ app.post('/api/cart/sync', async (req, res) => {
 app.get('/api/catalog', (req, res) => {
   const term = req.query.term ? String(req.query.term) : null;
   const count = db.prepare('SELECT COUNT(*) AS n FROM sections' + (term ? ' WHERE term = ?' : '')).get(...(term ? [term] : [])).n;
-  const etag = `"cat-${term ?? 'all'}-${count}-${lastSync('catalog', term) ?? '0'}"`;
+  const etag = `"cat-${term ?? 'all'}-${count}-${lastSync('catalog', { term }) ?? '0'}"`;
   res.set('Cache-Control', 'no-cache');
   res.set('ETag', etag);
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
@@ -116,7 +366,7 @@ app.get('/api/terms', (req, res) => {
 // GET sirve siempre desde SQLite, aunque nunca se haya sincronizado: la UI
 // muestra lo cacheado con su StalenessTag y decide si refrescar. Nunca dispara
 // scraping solo por entrar a la pantalla.
-// El término se resuelve solo: lo pedido explícitamente, si no lo del .env, y
+// El término se resuelve solo: lo pedido explícitamente, si no el actual, y
 // si no el último que se haya sincronizado. Sin nada de eso devuelve un horario
 // vacío (no un error): la pantalla ofrece traerlo del portal, y el sync
 // descubre el término activo sin que nadie lo configure.
@@ -131,8 +381,8 @@ app.get('/api/my-schedule', (req, res) => {
   const current = readTerms().current;
   const term = req.query.term
     ? String(req.query.term)
-    : current?.term ?? DEFAULT_TERM ?? latestScheduledTerm();
-  res.json(readSchedule(term));
+    : current?.term ?? latestScheduledTerm(req.userId);
+  res.json(readSchedule(req.userId, term));
 });
 
 // El refresh en vivo es explícito. Tarda (es Playwright detrás), así que va
@@ -143,8 +393,9 @@ app.post('/api/my-schedule/sync', async (req, res) => {
     // Sin él, el sync toma el que el portal dé por defecto: es el arranque,
     // cuando todavía no se conoce el STRM del ciclo actual.
     const targetTerm = req.body?.term ? String(req.body.term) : null;
-    const schedule = await withPage((page) =>
+    const schedule = await withPage(req.userId, (page) =>
       syncSchedule(page, {
+        userId: req.userId,
         targetTerm,
         onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
       })
@@ -157,9 +408,64 @@ app.post('/api/my-schedule/sync', async (req, res) => {
       type: 'log',
       message: `Horario actualizado: ${schedule.courses.length} materia(s) inscritas`,
     });
-    res.json(readSchedule(schedule.term));
+    res.json(readSchedule(req.userId, schedule.term));
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el horario: ${err.message}` });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Única acción destructiva de la app. El contrato exige escribir el código
+// exacto; además corre sin retry automático para que un timeout posterior al
+// submit no ejecute la baja dos veces.
+app.post('/api/my-schedule/drop', async (req, res) => {
+  const term = req.body?.term ? String(req.body.term) : null;
+  const courseCode = req.body?.courseCode ? String(req.body.courseCode).trim().toUpperCase() : '';
+  const classNbr = req.body?.classNbr ? String(req.body.classNbr) : null;
+  const confirmCode = req.body?.confirmCode ? String(req.body.confirmCode).trim().toUpperCase() : '';
+  if (!term || !courseCode || confirmCode !== courseCode) {
+    return res.status(400).json({ error: 'Para dar de baja, escribí el código exacto de la materia' });
+  }
+  try {
+    const result = await withPage(
+      req.userId,
+      (page) =>
+        dropClass(page, {
+          term,
+          courseCode,
+          classNbr,
+          onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
+        }),
+      { retry: false }
+    );
+    logAction({
+      userId: req.userId,
+      action: 'drop',
+      detail: `${courseCode} (${term})`,
+      response: result.message ?? (result.ok ? 'ok' : 'fallo sin mensaje'),
+      ok: result.ok,
+    });
+    if (!result.ok) return res.status(502).json(result);
+
+    // El resultado del Paso 3 confirmó la baja. Se retira del cache local sin
+    // depender de que Mi Horario siga ofreciendo ese ciclo inmediatamente.
+    removeEnrollmentCourse(req.userId, term, courseCode);
+    scheduler.emitEvent({
+      type: 'notice',
+      title: `${courseCode} fue dada de baja`,
+      body: result.message,
+      key: `drop:${term}:${courseCode}`,
+    });
+    res.json({ ...result, schedule: readSchedule(req.userId, term) });
+  } catch (err) {
+    logAction({ userId: req.userId, action: 'drop', detail: `${courseCode} (${term})`, response: err.message, ok: null });
+    scheduler.emitEvent({
+      type: 'notice',
+      level: 'error',
+      title: `No se pudo dar de baja ${courseCode}`,
+      body: err.message,
+      key: `drop-error:${term}:${courseCode}`,
+    });
     res.status(500).json({ error: err.message });
   }
 });
@@ -169,10 +475,10 @@ app.post('/api/my-schedule/sync', async (req, res) => {
 // nunca dispara scraping por entrar a la pantalla. El índice se calcula acá
 // (no se guarda) para que no exista una segunda verdad que pueda envejecer.
 app.get('/api/grades', (req, res) => {
-  const courses = readGrades();
+  const courses = readGrades(req.userId);
   res.json({
     generatedAt: new Date().toISOString(),
-    syncedAt: lastSync('grades'),
+    syncedAt: lastSync('grades', { userId: req.userId }),
     terms: termSummaries(courses),
     summary: summarizeGrades(courses),
   });
@@ -180,8 +486,10 @@ app.get('/api/grades', (req, res) => {
 
 app.post('/api/grades/sync', async (req, res) => {
   try {
-    const { courses, mismatches } = await withPage((page) => fetchGrades(page));
-    saveGrades(courses);
+    const previous = readGrades(req.userId);
+    const { courses, mismatches } = await withPage(req.userId, (page) => fetchGrades(page, { userId: req.userId }));
+    const published = diffPublishedGrades(previous, courses);
+    saveGrades(req.userId, courses);
     // Las notas traen etiquetas de término que el modelo de tiempo no conocía.
     reconcileTerms();
     // Si el índice calculado no cuadra con el que publica el portal, la
@@ -190,12 +498,20 @@ app.post('/api/grades/sync', async (req, res) => {
     for (const m of mismatches) {
       scheduler.emitEvent({ type: 'log', message: `⚠ El índice no cuadra con el portal — ${m}` });
     }
+    for (const course of published) {
+      scheduler.emitEvent({
+        type: 'notice',
+        title: `Se publicó tu nota de ${course.code}: ${course.grade}`,
+        body: `${course.title ?? course.code} · ${course.term}`,
+        key: `grade:${course.term}:${course.code}:${course.grade}`,
+      });
+    }
     scheduler.emitEvent({ type: 'log', message: `Notas actualizadas: ${courses.length} materia(s)` });
     res.json({
       generatedAt: new Date().toISOString(),
-      syncedAt: lastSync('grades'),
-      terms: termSummaries(readGrades()),
-      summary: summarizeGrades(readGrades()),
+      syncedAt: lastSync('grades', { userId: req.userId }),
+      terms: termSummaries(readGrades(req.userId)),
+      summary: summarizeGrades(readGrades(req.userId)),
       mismatches,
     });
   } catch (err) {
@@ -210,7 +526,7 @@ app.post('/api/grades/sync', async (req, res) => {
 // recon de Fase 4)— es "te falta y se está ofertando". La UI no puede decir
 // más que eso sin mentir.
 app.get('/api/pensum', (req, res) => {
-  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM || latestScheduledTerm();
+  const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
   const offered = new Set(
     term
       ? db
@@ -229,9 +545,10 @@ app.get('/api/pensum', (req, res) => {
       `SELECT p.code, p.subject, p.catalog_nbr, p.units, p.status, p.taken_term, p.grade,
               c.id AS course_id, c.title
        FROM pensum p LEFT JOIN courses c ON c.code = p.code
+       WHERE p.user_id = ?
        ORDER BY p.code`
     )
-    .all()
+    .all(req.userId)
     .map((r) => ({
       code: r.code,
       subject: r.subject,
@@ -247,15 +564,19 @@ app.get('/api/pensum', (req, res) => {
       offered: r.status === 'pending' && offered.has(r.code),
     }));
 
-  res.json({ term, generatedAt: new Date().toISOString(), syncedAt: lastSync('advisement'), courses });
+  res.json({ term, generatedAt: new Date().toISOString(), syncedAt: lastSync('advisement', { userId: req.userId }), courses });
 });
 
 app.post('/api/pensum/sync', async (req, res) => {
   try {
     scheduler.emitEvent({ type: 'log', message: 'Generando el informe de avance (tarda: lo arma el portal)…' });
-    const { profile, groups, courses } = await withPage((page) => fetchAdvisement(page));
+    const { profile, groups, courses } = await withPage(req.userId, (page) => fetchAdvisement(page, { userId: req.userId }));
     // La cohorte (primer término con notas) es de grades, no del informe.
-    const saved = saveRequirementTree({ profile, groups, courses }, { cohortStartTerm: earliestGradeTerm() });
+    const saved = saveRequirementTree(
+      req.userId,
+      { profile, groups, courses },
+      { cohortStartTerm: earliestGradeTerm(req.userId) }
+    );
     scheduler.emitEvent({
       type: 'log',
       message: `Pénsum actualizado: ${saved.groups} grupos, ${saved.pensum} materia(s)`,
@@ -271,10 +592,15 @@ app.post('/api/pensum/sync', async (req, res) => {
 // informe de avance. Cada curso se enriquece con el courseId del catálogo (para
 // "agregar al plan") y si se oferta en el término pedido.
 app.get('/api/requirements', (req, res) => {
-  const term = req.query.term ? String(req.query.term) : DEFAULT_TERM || latestScheduledTerm();
-  const root = readRequirementTree();
+  const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
+  const root = readRequirementTree(req.userId);
   if (!root) {
-    return res.json({ term, syncedAt: lastSync('advisement'), profile: readProfile(), tree: null });
+    return res.json({
+      term,
+      syncedAt: lastSync('advisement', { userId: req.userId }),
+      profile: readProfile(req.userId),
+      tree: null,
+    });
   }
 
   const courseIdByCode = new Map(db.prepare('SELECT code, id FROM courses').all().map((r) => [r.code, r.id]));
@@ -296,11 +622,75 @@ app.get('/api/requirements', (req, res) => {
   };
   enrich(root);
 
-  res.json({ term, syncedAt: lastSync('advisement'), profile: readProfile(), tree: root });
+  res.json({ term, syncedAt: lastSync('advisement', { userId: req.userId }), profile: readProfile(req.userId), tree: root });
 });
 
 app.get('/api/profile', (req, res) => {
-  res.json({ profile: readProfile(), syncedAt: lastSync('advisement') });
+  res.json({ profile: readProfile(req.userId), syncedAt: lastSync('advisement', { userId: req.userId }) });
+});
+
+// ── Metas y señales (/academico, Fase 10 §12.7) ─────────────────────────────
+// El contexto de las metas: los totales del índice (de las notas) y los créditos
+// que faltan del pénsum (del árbol de requisitos). Una sola fuente para las
+// proyecciones y para cada meta, así ambos miden lo mismo. Todo es cálculo local
+// (<10ms), cero PeopleSoft: nunca dispara scraping por entrar a la pantalla.
+function goalsContext(userId) {
+  const summary = summarizeGrades(readGrades(userId));
+  const remainingCredits = readRequirementTree(userId)?.units?.needed ?? 0;
+  return { summary, remainingCredits };
+}
+
+function goalsResponse(userId) {
+  const ctx = goalsContext(userId);
+  const hasBasis = ctx.summary.unitsTowardGpa > 0 || ctx.remainingCredits > 0;
+  return {
+    goals: goals.evaluateGoals(goals.listGoals(userId), ctx),
+    projection: hasBasis ? projectFinalGpa(ctx.summary, ctx.remainingCredits) : null,
+    basedOn: {
+      gpa: ctx.summary.gpa,
+      unitsTowardGpa: ctx.summary.unitsTowardGpa,
+      remainingCredits: ctx.remainingCredits,
+    },
+    syncedAt: lastSync('grades', { userId }),
+  };
+}
+
+app.get('/api/goals', (req, res) => res.json(goalsResponse(req.userId)));
+
+// Las mutaciones devuelven la respuesta entera (metas + proyección reevaluadas):
+// la UI reemplaza el cache de un solo golpe, sin un segundo fetch.
+app.post('/api/goals', (req, res) => {
+  try {
+    goals.createGoal(req.userId, { kind: req.body?.kind ?? 'gpa', target: req.body?.target, deadlineTerm: req.body?.deadlineTerm });
+    res.json(goalsResponse(req.userId));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch('/api/goals/:id', (req, res) => {
+  try {
+    goals.updateGoal(req.userId, Number(req.params.id), { target: req.body?.target, deadlineTerm: req.body?.deadlineTerm });
+    res.json(goalsResponse(req.userId));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/goals/:id', (req, res) => {
+  try {
+    goals.deleteGoal(req.userId, Number(req.params.id));
+    res.json(goalsResponse(req.userId));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Señales descriptivas del histórico. Solo salen las que pasan su umbral de
+// datos (shared/insights.ts); un arreglo vacío es "todavía no hay qué decir".
+app.get('/api/insights', (req, res) => {
+  const courses = readGrades(req.userId);
+  res.json({ insights: computeInsights(termSummaries(courses), courses), syncedAt: lastSync('grades', { userId: req.userId }) });
 });
 
 // Los códigos que le importan a TU carrera: todo lo del árbol de requisitos
@@ -308,29 +698,39 @@ app.get('/api/profile', (req, res) => {
 // que acota la búsqueda carrera-first (§11): el índice arranca por acá y el chip
 // "Todo el catálogo" abre el resto.
 app.get('/api/pensum/codes', (req, res) => {
-  const reqCodes = db.prepare('SELECT DISTINCT code FROM requirement_courses').all().map((r) => r.code);
+  const reqCodes = requirementCodes(req.userId);
   const enrolled = db
     .prepare(
-      `SELECT DISTINCT c.code FROM enrollments e JOIN courses c ON c.id = e.course_id WHERE e.status = 'enrolled'`
+      `SELECT DISTINCT c.code FROM enrollments e JOIN courses c ON c.id = e.course_id
+       WHERE e.status = 'enrolled' AND e.user_id = ?`
     )
-    .all()
+    .all(req.userId)
     .map((r) => r.code);
   res.json({ codes: [...new Set([...reqCodes, ...enrolled])] });
 });
 
 app.get('/api/holds', (req, res) => {
-  res.json({ generatedAt: new Date().toISOString(), syncedAt: lastSync('holds'), holds: readHolds() });
+  res.json({
+    generatedAt: new Date().toISOString(),
+    syncedAt: lastSync('holds', { userId: req.userId }),
+    holds: readHolds(req.userId),
+  });
 });
 
 app.post('/api/holds/sync', async (req, res) => {
   try {
-    const parsed = await withPage((page) => fetchHolds(page));
-    saveHolds(parsed.holds);
+    const parsed = await withPage(req.userId, (page) => fetchHolds(page, { userId: req.userId }));
+    saveHolds(req.userId, parsed.holds);
     scheduler.emitEvent({
       type: 'log',
       message: parsed.holds.length ? `${parsed.holds.length} hold(s) activos` : 'Sin holds ni pendientes',
     });
-    res.json({ generatedAt: new Date().toISOString(), syncedAt: lastSync('holds'), holds: readHolds(), todos: parsed.todos });
+    res.json({
+      generatedAt: new Date().toISOString(),
+      syncedAt: lastSync('holds', { userId: req.userId }),
+      holds: readHolds(req.userId),
+      todos: parsed.todos,
+    });
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo los holds: ${err.message}` });
     res.status(500).json({ error: err.message });
@@ -339,7 +739,7 @@ app.post('/api/holds/sync', async (req, res) => {
 
 app.post('/api/enroll', async (req, res) => {
   try {
-    const result = await scheduler.runEnrollNow('manual');
+    const result = await scheduler.runEnrollNow(req.userId, 'manual');
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -348,7 +748,7 @@ app.post('/api/enroll', async (req, res) => {
 
 app.get('/api/search/options', async (req, res) => {
   try {
-    const options = await withPage((page) => getSearchFormOptions(page));
+    const options = await withPage(req.userId, (page) => getSearchFormOptions(page));
     res.json(options);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -361,7 +761,7 @@ app.post('/api/search', async (req, res) => {
     return res.status(400).json({ error: 'Faltan term, career o courseNumber' });
   }
   try {
-    const rows = await withPage((page) => searchClasses(page, { term, career, courseNumber }));
+    const rows = await withPage(req.userId, (page) => searchClasses(page, { term, career, courseNumber }));
     res.json({ rows });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -374,9 +774,16 @@ app.post('/api/search/add', async (req, res) => {
     return res.status(400).json({ error: 'Faltan term, career, courseNumber o classNbr' });
   }
   try {
-    const result = await withPage((page) =>
+    const result = await withPage(req.userId, (page) =>
       addExactSectionToCart(page, { term, career, courseNumber, classNbr, relatedClassNbr })
     );
+    logAction({
+      userId: req.userId,
+      action: 'add-to-cart',
+      detail: `${career} ${courseNumber} · NRC ${classNbr} (${term})`,
+      response: result.alreadyInCart ? 'ya estaba en el carrito' : 'agregada al carrito',
+      ok: true,
+    });
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -389,13 +796,45 @@ app.post('/api/search/add', async (req, res) => {
 // Los errores de src/plans.js son de datos del usuario (plan inexistente,
 // materia duplicada, sección de otro término) → 400 con el mensaje tal cual.
 
+app.get('/api/recommendation', (req, res) => {
+  try {
+    const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
+    const maxCredits = req.query.maxCredits ?? DEFAULT_MAX_CREDITS;
+    res.json(recommendationForTerm(req.userId, term, maxCredits));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/recommendation/plan', (req, res) => {
+  try {
+    const term = planningTerm(req.body?.term ? String(req.body.term) : null, latestScheduledTerm(req.userId));
+    const proposal = recommendationForTerm(req.userId, term, req.body?.maxCredits ?? DEFAULT_MAX_CREDITS);
+    if (!proposal.schedule.valid || proposal.recommendations.length === 0) {
+      throw new Error(proposal.caveats[0] ?? 'No hay una combinación recomendada para este ciclo');
+    }
+    const detail = plans.createPlanWithItems(req.userId, {
+      term: proposal.term,
+      name: req.body?.name?.trim() || 'Plan recomendado',
+      items: proposal.recommendations.map((item) => ({
+        courseId: item.courseId,
+        sectionId: item.section.id,
+        note: item.reason,
+      })),
+    });
+    res.json(detail);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get('/api/plans', (req, res) => {
-  res.json({ plans: plans.listPlans() });
+  res.json({ plans: plans.listPlans(req.userId) });
 });
 
 app.post('/api/plans', (req, res) => {
   try {
-    res.json(plans.createPlan(req.body ?? {}));
+    res.json(plans.createPlan(req.userId, req.body ?? {}));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -403,7 +842,7 @@ app.post('/api/plans', (req, res) => {
 
 app.get('/api/plans/:id', (req, res) => {
   try {
-    res.json(plans.readPlan(Number(req.params.id)));
+    res.json(plans.readPlan(req.userId, Number(req.params.id)));
   } catch (err) {
     res.status(404).json({ error: err.message });
   }
@@ -411,7 +850,7 @@ app.get('/api/plans/:id', (req, res) => {
 
 app.patch('/api/plans/:id', (req, res) => {
   try {
-    res.json(plans.updatePlan(Number(req.params.id), req.body ?? {}));
+    res.json(plans.updatePlan(req.userId, Number(req.params.id), req.body ?? {}));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -419,7 +858,7 @@ app.patch('/api/plans/:id', (req, res) => {
 
 app.delete('/api/plans/:id', (req, res) => {
   try {
-    plans.deletePlan(Number(req.params.id));
+    plans.deletePlan(req.userId, Number(req.params.id));
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -428,7 +867,7 @@ app.delete('/api/plans/:id', (req, res) => {
 
 app.post('/api/plans/:id/duplicate', (req, res) => {
   try {
-    res.json(plans.duplicatePlan(Number(req.params.id)));
+    res.json(plans.duplicatePlan(req.userId, Number(req.params.id)));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -436,7 +875,7 @@ app.post('/api/plans/:id/duplicate', (req, res) => {
 
 app.post('/api/plans/:id/items', (req, res) => {
   try {
-    res.json(plans.addPlanItem(Number(req.params.id), req.body ?? {}));
+    res.json(plans.addPlanItem(req.userId, Number(req.params.id), req.body ?? {}));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -444,7 +883,7 @@ app.post('/api/plans/:id/items', (req, res) => {
 
 app.patch('/api/plans/:id/items/:itemId', (req, res) => {
   try {
-    res.json(plans.updatePlanItem(Number(req.params.id), Number(req.params.itemId), req.body ?? {}));
+    res.json(plans.updatePlanItem(req.userId, Number(req.params.id), Number(req.params.itemId), req.body ?? {}));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -452,7 +891,7 @@ app.patch('/api/plans/:id/items/:itemId', (req, res) => {
 
 app.delete('/api/plans/:id/items/:itemId', (req, res) => {
   try {
-    res.json(plans.removePlanItem(Number(req.params.id), Number(req.params.itemId)));
+    res.json(plans.removePlanItem(req.userId, Number(req.params.id), Number(req.params.itemId)));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -467,7 +906,7 @@ app.delete('/api/plans/:id/items/:itemId', (req, res) => {
 app.post('/api/plans/:id/to-cart', async (req, res) => {
   let plan;
   try {
-    plan = plans.readPlan(Number(req.params.id));
+    plan = plans.readPlan(req.userId, Number(req.params.id));
   } catch (err) {
     return res.status(404).json({ error: err.message });
   }
@@ -476,7 +915,7 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
     return res.status(400).json({ error: 'El plan no tiene materias con grupo elegido' });
   }
 
-  const results = await withPage(async (page) => {
+  const results = await withPage(req.userId, async (page) => {
     const out = [];
     for (const item of items) {
       scheduler.emitEvent({
@@ -491,12 +930,26 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
           classNbr: item.section.classNbr,
         });
         const alreadyInCart = !!r.alreadyInCart;
+        logAction({
+          userId: req.userId,
+          action: 'add-to-cart',
+          detail: `${item.code} · NRC ${item.section.classNbr} (${plan.term})`,
+          response: alreadyInCart ? 'ya estaba en el carrito' : 'agregada al carrito',
+          ok: true,
+        });
         out.push({ itemId: item.id, code: item.code, title: item.title, ok: true, alreadyInCart, error: null });
         scheduler.emitEvent({
           type: 'log',
           message: alreadyInCart ? `${item.title}: ya estaba en el carrito` : `${item.title}: agregada al carrito ✓`,
         });
       } catch (err) {
+        logAction({
+          userId: req.userId,
+          action: 'add-to-cart',
+          detail: `${item.code} · NRC ${item.section.classNbr} (${plan.term})`,
+          response: err.message,
+          ok: false,
+        });
         out.push({ itemId: item.id, code: item.code, title: item.title, ok: false, alreadyInCart: false, error: err.message });
         scheduler.emitEvent({ type: 'log', message: `${item.title}: falló — ${err.message}` });
       }
@@ -512,12 +965,25 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
 });
 
 app.get('/api/state', (req, res) => {
-  res.json(scheduler.getState());
+  res.json(scheduler.getState(req.userId));
+});
+
+// El Historial de Ajustes (§8): qué hizo mikampus sobre tu matrícula y qué
+// contestó el portal, literal.
+app.get('/api/actions', (req, res) => {
+  res.json({ actions: readActions(req.userId) });
 });
 
 app.post('/api/schedule', (req, res) => {
   try {
-    scheduler.scheduleFixedTime(req.body.atISO);
+    const at = new Date(req.body?.atISO).getTime();
+    if (Number.isNaN(at) || at <= Date.now()) throw new Error('La hora debe ser futura y válida');
+    authorizeUnattendedCredential(req.userId, {
+      consent: req.body?.consent,
+      term: req.body?.term,
+      reason: 'disparo programado',
+    });
+    scheduler.scheduleFixedTime(req.userId, req.body.atISO);
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -525,18 +991,34 @@ app.post('/api/schedule', (req, res) => {
 });
 
 app.delete('/api/schedule', (req, res) => {
-  scheduler.cancelSchedule();
+  scheduler.cancelSchedule(req.userId);
   res.json({ ok: true });
 });
 
 app.post('/api/watch', (req, res) => {
-  const { enabled, intervalMs } = req.body;
-  if (enabled) {
-    scheduler.startWatcher(intervalMs || 45000);
-  } else {
-    scheduler.stopWatcher();
+  try {
+    const { enabled, autoEnroll = false, appointmentAt = null, term, consent = false } = req.body ?? {};
+    if (enabled) {
+      if (autoEnroll) {
+        authorizeUnattendedCredential(req.userId, {
+          consent,
+          term,
+          reason: 'watcher con auto-inscripción',
+        });
+      }
+      const parsedAppointment = appointmentAt ? new Date(appointmentAt) : null;
+      if (appointmentAt && Number.isNaN(parsedAppointment.getTime())) throw new Error('La hora de inscripción no es válida');
+      scheduler.startWatcher(req.userId, {
+        autoEnroll: Boolean(autoEnroll),
+        appointmentAt: parsedAppointment?.toISOString() ?? null,
+      });
+    } else {
+      scheduler.stopWatcher(req.userId);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
-  res.json({ ok: true });
 });
 
 app.get('/api/events', (req, res) => {
@@ -548,7 +1030,12 @@ app.get('/api/events', (req, res) => {
   res.flushHeaders();
   res.write('retry: 2000\n\n');
 
-  const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  // Un evento personal (lleva userId) solo va al SSE de su dueño; los de la
+  // app entera (sin userId) los ven todos.
+  const send = (event) => {
+    if (event.userId != null && event.userId !== req.userId) return;
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
   const unsubscribe = scheduler.onEvent(send);
   const keepAlive = setInterval(() => res.write(': ping\n\n'), 20000);
 
@@ -593,6 +1080,18 @@ function lanUrls() {
 // grades) al arrancar, para que el modelo de tiempo esté al día sin esperar a
 // una sync. Es barato: son pocas filas y upserts idempotentes.
 reconcileTerms();
+// La fila migrada del usuario 1 deja de ser anónima: en modo local, la cuenta
+// configurada ES el usuario 1.
+adoptLocalUsername(getAccountInfo().username);
+// Higiene al arrancar: sesiones vencidas fuera, credenciales vencidas fuera.
+auth.purgeExpiredSessions();
+purgeExpiredCredentials();
+// Los disparos y watchers persistidos se rearman: el reboot de las 5:59 no
+// puede costar el cupo de las 6:00.
+const timers = scheduler.restoreTimers();
+if (timers.schedules || timers.watchers) {
+  console.log(`[scheduler] restaurado: ${timers.schedules} disparo(s), ${timers.watchers} watcher(s)`);
+}
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);
@@ -602,11 +1101,13 @@ const server = app.listen(PORT, HOST, () => {
   }
   // Apagado salvo que CATALOG_CRON_AT diga a qué hora (ver src/cron.js).
   startCatalogCron();
+  startBackupCron();
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
     stopCatalogCron();
+    stopBackupCron();
     await shutdown();
     server.close(() => process.exit(0));
   });
