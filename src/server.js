@@ -3,7 +3,7 @@ import path from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { withPage, resetSession, shutdown } from './session.js';
+import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { getAccountInfo, setCredentials } from './credentials.js';
 import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
@@ -36,6 +36,7 @@ import { readEnrollmentWindows, syncEnrollmentWindows } from './peoplesoft/enrol
 import { dropClass } from './peoplesoft/dropClass.js';
 import { startBackupCron, stopBackupCron } from './backups.js';
 import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js';
+import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
@@ -56,6 +57,27 @@ app.get('/api/health', (req, res) => {
 //   su token CSRF (auth.js); ningún handler lee datos sin dueño.
 const MODE = process.env.MIKAMPUS_MODE ?? 'local';
 const SECURE_COOKIES = MODE === 'hosted';
+
+// El portal solo publicó fechas en el recon actual. Para que la credencial no
+// sobreviva al período de inscripción, convertimos el cierre publicado en el
+// último instante de ese día Santo Domingo; nunca aceptamos una fecha elegida
+// libremente por el cliente.
+function unattendedExpiry(userId, term) {
+  if (!term) throw new Error('Elegí el ciclo de inscripción antes de activar una función desatendida');
+  const window = db
+    .prepare('SELECT ends_at FROM enrollment_windows WHERE user_id = ? AND term_code = ? ORDER BY ends_at DESC LIMIT 1')
+    .get(userId, String(term));
+  if (!window?.ends_at) throw new Error('Actualizá tu ventana de inscripción antes de activar esta función');
+  const expiresAt = new Date(`${window.ends_at}T23:59:59.999-04:00`).toISOString();
+  if (new Date(expiresAt).getTime() <= Date.now()) throw new Error('La ventana de inscripción de ese ciclo ya cerró');
+  return expiresAt;
+}
+
+function authorizeUnattendedCredential(userId, { consent, term, reason }) {
+  if (MODE !== 'hosted') return;
+  if (consent !== true) throw new Error('Confirmá el consentimiento para guardar la credencial cifrada hasta el cierre de inscripción');
+  persistRamCredential(userId, { expiresAt: unattendedExpiry(userId, term), reason });
+}
 
 const REFRESH_POLICY = [
   { kind: 'mySchedule', label: 'Horario', maxAgeMs: 12 * 60 * 60_000 },
@@ -163,6 +185,33 @@ app.get('/api/account/overview', (req, res) => {
     credential: credentialInfo(req.userId),
     syncs: syncKinds.map(([kind, label]) => ({ kind, label, syncedAt: lastSync(kind, { userId: req.userId }) })),
   });
+});
+
+// ── Web Push (§5.5): la mitad accionable del watcher ────────────────────────
+// La llave pública es lo único que el navegador necesita para suscribirse; es
+// pública por diseño (la privada nunca sale del server). null = canal apagado,
+// y la UI lo trata como "push no disponible" en vez de romper.
+app.get('/api/push/vapid-key', (req, res) => {
+  res.json({ publicKey: vapidPublicKey() });
+});
+
+// El navegador manda su suscripción (endpoint + claves del dispositivo); se
+// guarda atada a este usuario. Un re-subscribe del mismo teléfono actualiza.
+app.post('/api/push/subscribe', (req, res) => {
+  try {
+    saveSubscription(req.userId, req.body?.subscription, req.headers['user-agent'] ?? null);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Al revocar permiso o cerrar sesión en un dispositivo, se borra SOLO ese
+// endpoint: los otros teléfonos del usuario siguen recibiendo.
+app.post('/api/push/unsubscribe', (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (endpoint) removeSubscription(req.userId, endpoint);
+  res.json({ ok: true });
 });
 
 app.delete('/api/account/data', async (req, res) => {
@@ -927,6 +976,13 @@ app.get('/api/actions', (req, res) => {
 
 app.post('/api/schedule', (req, res) => {
   try {
+    const at = new Date(req.body?.atISO).getTime();
+    if (Number.isNaN(at) || at <= Date.now()) throw new Error('La hora debe ser futura y válida');
+    authorizeUnattendedCredential(req.userId, {
+      consent: req.body?.consent,
+      term: req.body?.term,
+      reason: 'disparo programado',
+    });
     scheduler.scheduleFixedTime(req.userId, req.body.atISO);
     res.json({ ok: true });
   } catch (err) {
@@ -940,13 +996,29 @@ app.delete('/api/schedule', (req, res) => {
 });
 
 app.post('/api/watch', (req, res) => {
-  const { enabled, intervalMs } = req.body;
-  if (enabled) {
-    scheduler.startWatcher(req.userId, intervalMs || 45000);
-  } else {
-    scheduler.stopWatcher(req.userId);
+  try {
+    const { enabled, autoEnroll = false, appointmentAt = null, term, consent = false } = req.body ?? {};
+    if (enabled) {
+      if (autoEnroll) {
+        authorizeUnattendedCredential(req.userId, {
+          consent,
+          term,
+          reason: 'watcher con auto-inscripción',
+        });
+      }
+      const parsedAppointment = appointmentAt ? new Date(appointmentAt) : null;
+      if (appointmentAt && Number.isNaN(parsedAppointment.getTime())) throw new Error('La hora de inscripción no es válida');
+      scheduler.startWatcher(req.userId, {
+        autoEnroll: Boolean(autoEnroll),
+        appointmentAt: parsedAppointment?.toISOString() ?? null,
+      });
+    } else {
+      scheduler.stopWatcher(req.userId);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
-  res.json({ ok: true });
 });
 
 app.get('/api/events', (req, res) => {

@@ -135,7 +135,7 @@ Diseño: la cookie es **larga** (la app abre al instante con lo cacheado — pri
 - **El watcher vigila la materia, no solo la sección [NOTA §15 resuelta]:** si una sección del carrito está cerrada, el sync de la cuenta de servicio trae *todas* las secciones de esa materia en el término — y detecta dos cosas: cupo nuevo en la sección elegida, y **grupos nuevos creados** (la universidad abre secciones extra cuando hay demanda). Grupo nuevo con cupo → push "abrieron NRC 4521 de ICS-301 (Ma/Ju 9:00) — cámbialo en tu carrito" con deep-link para swapear la sección desde mikampus mismo. El dato ya está: el sync de secciones por materia existe (`classSearch.js`); es cuestión de diffear contra lo conocido.
 - **Appointment-aware:** un cupo detectado *antes* de la hora de inscripción del usuario no dispara auto-enroll — el portal lo va a rechazar y el intento quema segundos y sesión. Antes de tu hora: solo notificar ("hay cupo en ICC-301; tu inscripción abre a las 2pm — el watcher lo intentará entonces si sigue"). Después: auto-inscribir normal. La hora por escuela sale de Fase 0.3.
 - Cupo detectado → **Web Push inmediata** (VAPID + suscripciones sobre el service worker que la PWA ya tiene; gratis) y, si el usuario tiene auto-inscripción activa y credencial disponible (RAM o almacén cifrado), el server inscribe. La push informa el resultado: "cupo en ICS-301, te inscribí ✓" o "cupo en ICS-301 — entrá a confirmar". Dos verdades incómodas de push que el onboarding absorbe: en **iOS solo funciona con la PWA instalada** al home screen (la instalación es un paso del onboarding, no un nice-to-have), y a las 6am el teléfono está en No Molestar — la push del resultado es informativa; lo accionable se diseñó antes (§5.6).
-- **Un cupo, N watchers: la carrera interna.** `seats_snapshot` compartido significa que cuando abre 1 asiento, todos los que lo vigilan se enteran en el mismo tick. Los auto-enrolls se **serializan en una cola de detección** (nunca N asistentes de inscripción simultáneos por un asiento — el portal evalúa cada carrito completo y eso es carga inútil y visible). El orden de esa cola es política de producto: **[DECISIÓN TUYA]** — (a) orden de activación del watcher (first-come, transparente: "tu posición en la fila de ICC-301: 2º"), (b) aleatorio por detección (lotería honesta), o (c) no auto-inscribir cuando hay conflicto interno y notificar a todos por igual. Recomendación: (a) con la posición visible — es la única que se puede explicar sin que suene a magia o a favoritismo.
+- **Un cupo, N watchers: la carrera interna [DECIDIDO].** `seats_snapshot` compartido significa que cuando abre 1 asiento, todos los que lo vigilan se enteran en el mismo tick. Los auto-enrolls se **serializan en una cola FIFO por orden de activación del watcher** (nunca N asistentes de inscripción simultáneos por un asiento — el portal evalúa cada carrito completo y eso es carga inútil y visible). La UI muestra la posición del usuario cuando haya conflicto — por ejemplo, "tu posición en la fila de ICC-301: 2º". Es una política transparente y explicable; el orden se persiste para que un reinicio no lo altere.
 
 ### 5.6. El disparo: pre-warming
 
@@ -250,10 +250,12 @@ Cada fase en su rama, como siempre:
 6. **Rework visual** — WeeklyGrid, emojis→iconos, Inscripción con estado maestro y buscador consciente del ciclo (§7.1, §7.3, §11).
 7. **Lanzamiento** — DNS definitivo, prueba de carga del día-D (pre-warms incluidos), **onboarding por invitación días antes del día-D** (el primer sync de cada compañero ocurre la semana anterior, nunca a las 5:50am), invitar a los primeros compañeros.
 
-## 15. Decisiones pendientes tuyas
+## 15. Decisiones
 
-Consolidado de todo lo marcado [DECISIÓN TUYA] — el plan no avanza sobre estas sin tu palabra:
+**Cerrada para Fase 4:** fairness del auto-enroll (§5.5) es FIFO por orden de
+activación del watcher, con posición visible y persistida.
 
-1. **Fairness del auto-enroll** (§5.5): cuando 1 cupo tiene N watchers — fila por orden de activación (recomendada, con posición visible), lotería por detección, o no auto-inscribir en conflicto interno.
-2. **La promesa de borrado con backups** (§3, §8): "tus datos salen de los backups en ≤3 días" (recomendada) vs. borrado inmediato también en backups.
-3. **Unificar Planner+Builder en /planear** (§10): recorte de scope visible para el usuario; confirmalo antes de implementar.
+**Pendientes:**
+
+1. **La promesa de borrado con backups** (§3, §8): "tus datos salen de los backups en ≤3 días" (recomendada) vs. borrado inmediato también en backups.
+2. **Unificar Planner+Builder en /planear** (§10): recorte de scope visible para el usuario; confirmalo antes de implementar.

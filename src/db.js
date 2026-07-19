@@ -372,6 +372,9 @@ db.exec(`
     user_id       INTEGER PRIMARY KEY,
     interval_ms   INTEGER NOT NULL,
     last_check_at TEXT,
+    auto_enroll   INTEGER NOT NULL DEFAULT 0,
+    activation_order INTEGER,
+    appointment_at TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -404,6 +407,25 @@ db.exec(`
     synced_at    TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, term_code, session)
   );
+
+  -- Suscripciones a Web Push (L4 §5.5): un cupo detectado dispara una push
+  -- inmediata al teléfono, gratis, sobre el service worker que la PWA ya tiene.
+  -- Una fila por dispositivo/navegador del usuario — endpoint es su identidad,
+  -- así que un re-subscribe del mismo teléfono actualiza en vez de duplicar. Los
+  -- endpoints muertos (410/404 al enviar) se podan solos en webpush.js: una push
+  -- que ya nadie recibe no debe seguir costando un envío cada vez.
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    endpoint    TEXT NOT NULL UNIQUE,
+    p256dh      TEXT NOT NULL,               -- clave pública del cliente (base64url)
+    auth        TEXT NOT NULL,               -- secreto de autenticación (base64url)
+    ua          TEXT,                        -- user-agent, para que Ajustes liste "este teléfono"
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    last_ok_at  TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 `);
 
 // CREATE TABLE IF NOT EXISTS no reforma una tabla que ya existe: una columna
@@ -453,6 +475,16 @@ addColumnIfMissing('grades', 'status', "TEXT NOT NULL DEFAULT 'taken'");
 // implementación de una regla que ya vive en shared/courseCode.ts.
 addColumnIfMissing('grades', 'subject', 'TEXT');
 addColumnIfMissing('grades', 'catalog_nbr', 'TEXT');
+
+// Watchers creados antes de L4.2 no tenían ni modo ni un orden estable. El
+// rowid existente es monotónico y, a diferencia de created_at (segundos), no
+// empata cuando varios compañeros activan el watcher a la vez.
+addColumnIfMissing('watchers', 'auto_enroll', 'INTEGER NOT NULL DEFAULT 0');
+if (addColumnIfMissing('watchers', 'activation_order', 'INTEGER')) {
+  db.exec('UPDATE watchers SET activation_order = rowid WHERE activation_order IS NULL');
+}
+addColumnIfMissing('watchers', 'appointment_at', 'TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_watchers_activation_order ON watchers(activation_order)');
 
 // ── Migración multi-usuario (Fase 2 de LANZAMIENTO.md) ─────────────────────
 // Una DB pre-existente es la de una sola persona: sus filas se adoptan como
@@ -715,7 +747,7 @@ export function deleteAllUserData(userId) {
   clearPersonalData(userId);
   db.exec('BEGIN');
   try {
-    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions']) {
+    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions', 'push_subscriptions']) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
     }
     db.prepare('DELETE FROM sync_log WHERE user_id = ?').run(userId);
