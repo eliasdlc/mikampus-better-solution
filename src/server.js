@@ -39,6 +39,12 @@ const app = express();
 app.use(express.json());
 app.use(express.static(DIST_DIR));
 
+// No toca PeopleSoft ni devuelve datos personales: permite que Docker detecte
+// un proceso vivo antes de que Caddy le entregue tráfico.
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true });
+});
+
 // ── Cuenta ───────────────────────────────────────────────────────────────────
 // Devuelve el usuario vigente y de dónde sale (account.json o .env), nunca la
 // contraseña. La pantalla de Ajustes lo usa para mostrar con qué cuenta estás.

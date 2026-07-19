@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.hosted.example
+node_modules
+data
+screenshots
+public/dist
+docs
+fixtures
+PLAN.md
+LANZAMIENTO.md
+MAPA-MICAMPUS.md
