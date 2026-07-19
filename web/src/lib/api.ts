@@ -156,8 +156,8 @@ export function scheduleAt(atISO: string) {
 export function cancelSchedule() {
   return send('/api/schedule', 'DELETE');
 }
-export function setWatcher(enabled: boolean, intervalMs?: number) {
-  return send('/api/watch', 'POST', { enabled, intervalMs });
+export function setWatcher(enabled: boolean) {
+  return send('/api/watch', 'POST', { enabled });
 }
 export function enrollNow() {
   return send('/api/enroll', 'POST');
