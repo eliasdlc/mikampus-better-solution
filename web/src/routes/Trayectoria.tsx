@@ -178,7 +178,7 @@ function ProximoNodo({
         : planes > 0
           ? `${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}`
           : 'sin materias todavía';
-  const destino = enrolled > 0 || cartCount > 0 ? '/inscripcion' : planes > 0 ? '/planner' : '/buscar';
+  const destino = enrolled > 0 || cartCount > 0 ? '/inscripcion' : '/planear';
 
   return (
     <Nodo tono="proximo" ultimo={ultimo}>
@@ -192,7 +192,7 @@ function ProximoNodo({
       <div className="mt-1 flex items-center justify-between gap-3">
         <span className="text-sm">{estado}</span>
         <Link to={destino} className="text-accent shrink-0 text-xs font-medium hover:underline">
-          {enrolled > 0 || cartCount > 0 ? 'Ir a inscripción →' : planes > 0 ? 'Ir al planner →' : 'Buscar materias →'}
+          {enrolled > 0 || cartCount > 0 ? 'Ir a inscripción →' : planes > 0 ? 'Seguir planeando →' : 'Planear mi ciclo →'}
         </Link>
       </div>
     </Nodo>

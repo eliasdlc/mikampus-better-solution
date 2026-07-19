@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { CatalogCourse } from '../../../src/shared/schemas.ts';
 import { buildIndex } from '../lib/search.ts';
 import { CourseChip } from './CourseChip.tsx';
+import { CourseDetailDialog } from './CourseDetailDialog.tsx';
 
 // Input de búsqueda con dropdown para agregar una materia (planner y builder).
 // Es la misma búsqueda instantánea de /buscar (índice MiniSearch en memoria),
@@ -18,6 +19,7 @@ export function CourseSearchBox({
   exclude?: number[]; // ids de materias ya agregadas — no se reofrecen
 }) {
   const [q, setQ] = useState('');
+  const [detail, setDetail] = useState<CatalogCourse | null>(null);
   const index = useMemo(() => buildIndex(courses), [courses]);
   const byId = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
 
@@ -41,23 +43,36 @@ export function CourseSearchBox({
       {results.length > 0 && (
         <ul className="border-line bg-surface absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-[var(--radius)] border shadow-none">
           {results.map((course) => (
-            <li key={course.id}>
+            <li key={course.id} className="flex items-stretch">
               {/* onMouseDown y no onClick: dispara antes del blur del input,
                   que si no cierra el dropdown antes de que llegue el click. */}
               <button
                 onMouseDown={() => {
-                  onPick(course);
+                  setDetail(course);
                   setQ('');
                 }}
-                className="hover:bg-surface-2 flex w-full items-center justify-between gap-2 px-3 py-2 text-left"
+                className="hover:bg-surface-2 flex min-w-0 flex-1 items-center justify-between gap-2 px-3 py-2 text-left"
               >
                 <CourseChip code={course.code} title={course.title} size="sm" />
                 <span className="text-muted text-xs whitespace-nowrap">{course.sections.length} secc.</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={() => {
+                  onPick(course);
+                  setQ('');
+                }}
+                className="border-line text-muted hover:bg-surface-2 border-l px-3 text-xs"
+                aria-label={`Agregar ${course.title}`}
+                title="Agregar materia"
+              >
+                +
               </button>
             </li>
           ))}
         </ul>
       )}
+      <CourseDetailDialog course={detail} open={detail !== null} onClose={() => setDetail(null)} onPick={onPick} />
     </div>
   );
 }
