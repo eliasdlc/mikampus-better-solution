@@ -255,7 +255,15 @@ Cada fase en su rama, como siempre:
 **Cerrada para Fase 4:** fairness del auto-enroll (§5.5) es FIFO por orden de
 activación del watcher, con posición visible y persistida.
 
-**Pendientes:**
+**Cerrada en L1/L3:** la promesa de borrado con backups (§3, §8) es la
+recomendada — "tus datos salen de los backups en ≤3 días": Litestream con
+retención de 72h y backups locales con `MIKAMPUS_BACKUP_KEEP=3`, y el texto de
+Ajustes lo dice tal cual.
 
-1. **La promesa de borrado con backups** (§3, §8): "tus datos salen de los backups en ≤3 días" (recomendada) vs. borrado inmediato también en backups.
-2. **Unificar Planner+Builder en /planear** (§10): recorte de scope visible para el usuario; confirmalo antes de implementar.
+**Cerrada en L5:** Planner+Builder unificados en `/planear` con las tabs
+Materias/Horario (§10), tal como proponía el documento.
+
+**Sin pendientes.** Las fases L0–L7 están implementadas e integradas en `dev`;
+lo que queda del lanzamiento son las acciones del operador que `docs/launch.md`
+reserva a ejecución consciente: gate en el Droplet, ensayo del día-D e
+invitaciones.
