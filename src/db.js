@@ -74,49 +74,56 @@ db.exec(`
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  -- El pensum del estudiante y su avance, leído del advisement report
-  -- (My Academic Requirements). Es QUÉ materias exige su carrera y cuáles ya
-  -- cursó — no es el catálogo: los títulos y las secciones viven en courses
-  -- y sections, y se cruzan por el código canónico.
-  -- Se lee del portal a propósito: una lista de materias mantenida a mano
-  -- envejece en silencio cuando la universidad cambia el plan.
+  -- El avance PERSONAL de un estudiante sobre su pénsum, derivado del
+  -- advisement en cada sync. Es QUÉ le falta y qué ya cursó — la estructura de
+  -- la carrera (qué exige el plan) vive en las tablas compartidas de abajo.
   CREATE TABLE IF NOT EXISTS pensum (
-    code        TEXT PRIMARY KEY,             -- canónico, ej. "FIS-1FIS139"
+    user_id     INTEGER NOT NULL DEFAULT 1,
+    code        TEXT NOT NULL,                -- canónico, ej. "FIS-1FIS139"
     subject     TEXT NOT NULL,
     catalog_nbr TEXT NOT NULL,
     units       REAL,
     status      TEXT NOT NULL,                -- taken / in_progress / planned / pending
     taken_term  TEXT,                         -- ej. "Enero de 2025"
     grade       TEXT,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, code)
+  );
+
+  -- Un pénsum por carrera+versión (§3.1): el árbol de requisitos es del PLAN,
+  -- no del estudiante — solo el progreso es privado. plan_key es carrera|número
+  -- (o la etiqueta del informe si el parser no los pudo separar).
+  CREATE TABLE IF NOT EXISTS pensum_plans (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_key    TEXT NOT NULL UNIQUE,
+    career      TEXT,
+    pensum_no   TEXT,
+    plan_label  TEXT,
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  -- El árbol de requisitos del advisement (parser v2, peoplesoft/advisement.js):
-  -- período → obligatorios/electivas → cursos. La tabla pensum de arriba se
-  -- DERIVA de estas dos en cada sync — sigue viva para /api/pensum, el planner y
-  -- el cron, pero deja de mezclar obligatorias reales con candidatas de electiva.
-  -- El árbol entero se borra y reescribe en cada sync (como cart_rows): un grupo
-  -- que el portal ya no lista tampoco existe. id/parent_id son la POSICIÓN del
-  -- documento, estable dentro de un sync; la columna position es la verdad sobre
-  -- la secuencia aunque otro pénsum renombre las etiquetas (§14 del plan).
+  -- El árbol de requisitos COMPARTIDO (parser v2, peoplesoft/advisement.js):
+  -- período → obligatorios/electivas → cursos, sin nada personal. El advisement
+  -- de cada estudiante lo alimenta con merge conservador: un grupo guardado con
+  -- candidatas visibles nunca se pisa con la versión colapsada del mismo grupo
+  -- (el informe de un estudiante de término alto es MÁS POBRE que el de un
+  -- freshman de la misma carrera — §3.1). collapsed marca la calidad de lo
+  -- guardado: 1 = esta versión vino sin candidatas. La columna position es el
+  -- orden del documento: la identidad del grupo dentro de su plan.
   CREATE TABLE IF NOT EXISTS requirement_groups (
-    id               INTEGER PRIMARY KEY,          -- posición en el documento
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id          INTEGER NOT NULL REFERENCES pensum_plans(id) ON DELETE CASCADE,
     parent_id        INTEGER REFERENCES requirement_groups(id) ON DELETE CASCADE,
     kind             TEXT NOT NULL,                -- root / periodo / obligatorios / electiva / grupo
     label            TEXT NOT NULL,
     year             INTEGER,                      -- del "Año N Período M"
     period           INTEGER,
-    satisfied        INTEGER NOT NULL DEFAULT 0,   -- booleano
-    collapsed        INTEGER NOT NULL DEFAULT 0,   -- electiva satisfecha, candidatas ocultas
     position         INTEGER NOT NULL,             -- orden del documento
+    collapsed        INTEGER NOT NULL DEFAULT 0,   -- 1 = versión sin candidatas visibles
     units_required   REAL,
-    units_taken      REAL,
-    units_needed     REAL,
     courses_required INTEGER,
-    courses_taken    INTEGER,
-    courses_needed   INTEGER,
-    gpa_actual       REAL,
-    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (plan_id, position)
   );
 
   CREATE TABLE IF NOT EXISTS requirement_courses (
@@ -126,11 +133,27 @@ db.exec(`
     catalog_nbr  TEXT,
     title        TEXT,
     units        REAL,
-    status       TEXT NOT NULL,                    -- taken / in_progress / planned / pending
     is_candidate INTEGER NOT NULL DEFAULT 0,       -- candidata de electiva, no obligatoria
-    taken_term   TEXT,
-    grade        TEXT,
     PRIMARY KEY (group_id, code)
+  );
+
+  -- Lo PERSONAL de cada grupo del árbol: satisfecho o no, créditos tomados,
+  -- GPA del grupo. Se reemplaza entero en cada sync del advisement del usuario.
+  -- Se ancla por (plan, position) y no por group_id para sobrevivir a un
+  -- reemplazo del grupo compartido.
+  CREATE TABLE IF NOT EXISTS requirement_progress (
+    user_id          INTEGER NOT NULL,
+    plan_id          INTEGER NOT NULL REFERENCES pensum_plans(id) ON DELETE CASCADE,
+    position         INTEGER NOT NULL,
+    satisfied        INTEGER NOT NULL DEFAULT 0,
+    collapsed        INTEGER NOT NULL DEFAULT 0,   -- así lo vio SU informe
+    units_taken      REAL,
+    units_needed     REAL,
+    courses_taken    INTEGER,
+    courses_needed   INTEGER,
+    gpa_actual       REAL,
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, plan_id, position)
   );
 
   -- Quién es cada estudiante: carrera y número de pénsum salen del advisement;
@@ -475,6 +498,125 @@ if (!hasColumn('profile', 'user_id')) {
   );
 }
 
+// pensum: la PK pasa de code a (user_id, code).
+if (!hasColumn('pensum', 'user_id')) {
+  rebuildTable(
+    'pensum',
+    `CREATE TABLE IF NOT EXISTS pensum (
+      user_id     INTEGER NOT NULL DEFAULT 1,
+      code        TEXT NOT NULL,
+      subject     TEXT NOT NULL,
+      catalog_nbr TEXT NOT NULL,
+      units       REAL,
+      status      TEXT NOT NULL,
+      taken_term  TEXT,
+      grade       TEXT,
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, code)
+    )`,
+    `(user_id, code, subject, catalog_nbr, units, status, taken_term, grade, updated_at)
+     SELECT 1, code, subject, catalog_nbr, units, status, taken_term, grade, updated_at
+     FROM pensum`
+  );
+}
+
+// El árbol legacy (de un solo dueño, con stats personales en las filas) se
+// separa en sus dos mitades: la estructura pasa al plan compartido y las stats
+// a requirement_progress del usuario 1. El plan sale del perfil ya migrado.
+if (!hasColumn('requirement_groups', 'plan_id')) {
+  const prof = db.prepare('SELECT career, pensum_no, plan_label FROM profile WHERE user_id = 1').get();
+  db.exec('BEGIN');
+  try {
+    if (prof && db.prepare('SELECT COUNT(*) AS n FROM requirement_groups').get().n > 0) {
+      const planKey = prof.career && prof.pensum_no ? `${prof.career}|${prof.pensum_no}` : prof.plan_label ?? 'desconocido';
+      db.prepare('INSERT OR IGNORE INTO pensum_plans (plan_key, career, pensum_no, plan_label) VALUES (?, ?, ?, ?)').run(
+        planKey, prof.career, prof.pensum_no, prof.plan_label
+      );
+      const planId = db.prepare('SELECT id FROM pensum_plans WHERE plan_key = ?').get(planKey).id;
+
+      db.exec(`CREATE TABLE requirement_groups__new (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id          INTEGER NOT NULL REFERENCES pensum_plans(id) ON DELETE CASCADE,
+        parent_id        INTEGER REFERENCES requirement_groups__new(id) ON DELETE CASCADE,
+        kind             TEXT NOT NULL,
+        label            TEXT NOT NULL,
+        year             INTEGER,
+        period           INTEGER,
+        position         INTEGER NOT NULL,
+        collapsed        INTEGER NOT NULL DEFAULT 0,
+        units_required   REAL,
+        courses_required INTEGER,
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (plan_id, position)
+      )`);
+      db.prepare(
+        `INSERT INTO requirement_groups__new
+           (id, plan_id, parent_id, kind, label, year, period, position, collapsed, units_required, courses_required, updated_at)
+         SELECT id, ?, parent_id, kind, label, year, period, position, collapsed, units_required, courses_required, updated_at
+         FROM requirement_groups`
+      ).run(planId);
+      db.prepare(
+        `INSERT INTO requirement_progress
+           (user_id, plan_id, position, satisfied, collapsed, units_taken, units_needed, courses_taken, courses_needed, gpa_actual)
+         SELECT 1, ?, position, satisfied, collapsed, units_taken, units_needed, courses_taken, courses_needed, gpa_actual
+         FROM requirement_groups`
+      ).run(planId);
+      db.exec(`CREATE TABLE requirement_courses__new (
+        group_id     INTEGER NOT NULL REFERENCES requirement_groups__new(id) ON DELETE CASCADE,
+        code         TEXT NOT NULL,
+        subject      TEXT,
+        catalog_nbr  TEXT,
+        title        TEXT,
+        units        REAL,
+        is_candidate INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (group_id, code)
+      )`);
+      db.exec(
+        `INSERT INTO requirement_courses__new (group_id, code, subject, catalog_nbr, title, units, is_candidate)
+         SELECT group_id, code, subject, catalog_nbr, title, units, is_candidate FROM requirement_courses`
+      );
+      db.exec('DROP TABLE requirement_courses');
+      db.exec('DROP TABLE requirement_groups');
+      db.exec('ALTER TABLE requirement_groups__new RENAME TO requirement_groups');
+      db.exec('ALTER TABLE requirement_courses__new RENAME TO requirement_courses');
+    } else {
+      // Sin perfil no se sabe de qué plan era el árbol; era re-scrapeable y se
+      // reconstruye en el primer sync.
+      db.exec('DROP TABLE requirement_courses');
+      db.exec('DROP TABLE requirement_groups');
+      db.exec(`CREATE TABLE requirement_groups (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id          INTEGER NOT NULL REFERENCES pensum_plans(id) ON DELETE CASCADE,
+        parent_id        INTEGER REFERENCES requirement_groups(id) ON DELETE CASCADE,
+        kind             TEXT NOT NULL,
+        label            TEXT NOT NULL,
+        year             INTEGER,
+        period           INTEGER,
+        position         INTEGER NOT NULL,
+        collapsed        INTEGER NOT NULL DEFAULT 0,
+        units_required   REAL,
+        courses_required INTEGER,
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (plan_id, position)
+      )`);
+      db.exec(`CREATE TABLE requirement_courses (
+        group_id     INTEGER NOT NULL REFERENCES requirement_groups(id) ON DELETE CASCADE,
+        code         TEXT NOT NULL,
+        subject      TEXT,
+        catalog_nbr  TEXT,
+        title        TEXT,
+        units        REAL,
+        is_candidate INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (group_id, code)
+      )`);
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
 db.exec('CREATE INDEX IF NOT EXISTS idx_grades_user ON grades(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_enrollments_user ON enrollments(user_id, term)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_plans_user ON plans(user_id)');
@@ -486,14 +628,13 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_sync_log_kind ON sync_log(kind, user_id,
 // re-modelado por carrera (§3.1): hoy son de un solo dueño.
 // plans y goals quedan fuera a propósito: son trabajo hecho a mano (como
 // siempre); cambiar de cuenta no los borra. El "Borrar todos mis datos" del §8
-// sí los incluye — esa es otra operación (deleteAllUserData).
+// sí los incluye — esa es otra operación (deleteAllUserData). El árbol
+// compartido (pensum_plans/requirement_groups/requirement_courses) no se toca
+// jamás: es de la carrera, no de la persona.
 const PERSONAL_TABLES = [
   'grades', 'enrollments', 'progress_items', 'holds', 'cart_rows',
-  'profile', 'enrollment_windows',
+  'profile', 'enrollment_windows', 'pensum', 'requirement_progress',
 ];
-// Tablas del pénsum que todavía no distinguen usuario (se re-modelan en §3.1):
-// se vacían enteras porque solo pueden contener los datos de un dueño.
-const LEGACY_WHOLE_TABLES = ['pensum', 'requirement_groups', 'requirement_courses'];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
 const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows'];
@@ -507,7 +648,6 @@ export function clearPersonalData(userId) {
     for (const table of PERSONAL_TABLES) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
     }
-    for (const table of LEGACY_WHOLE_TABLES) db.exec(`DELETE FROM ${table}`);
     const placeholders = PERSONAL_SYNC_KINDS.map(() => '?').join(', ');
     db.prepare(`DELETE FROM sync_log WHERE user_id = ? AND kind IN (${placeholders})`).run(
       userId,
