@@ -101,7 +101,15 @@ function PendientesDelPensum({
   );
 }
 
-export function Planner() {
+export function Planner({
+  activePlanId,
+  onActivePlanChange,
+  embedded = false,
+}: {
+  activePlanId?: number | null;
+  onActivePlanChange?: (planId: number | null) => void;
+  embedded?: boolean;
+}) {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const plansQ = useQuery({ queryKey: ['plans'], queryFn: fetchPlans });
@@ -112,7 +120,23 @@ export function Planner() {
   const [creating, setCreating] = useState(false);
   const [recommendOpen, setRecommendOpen] = useState(false);
   const [maxCredits, setMaxCredits] = useState(18);
-  const planId = selectedId ?? plansQ.data?.[0]?.id ?? null;
+  const planId = activePlanId ?? selectedId ?? plansQ.data?.[0]?.id ?? null;
+  const selectPlan = (id: number | null) => {
+    setSelectedId(id);
+    onActivePlanChange?.(id);
+  };
+  const clearRecommendedParam = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('recomendado');
+    setSearchParams(next, { replace: true });
+  };
+
+  // El plan elegido es contexto de /planear, no una selección efímera de la
+  // pestaña de materias. Al cargar el primero lo publicamos para que Horario
+  // abra exactamente ese mismo plan.
+  useEffect(() => {
+    if (activePlanId == null && planId != null) onActivePlanChange?.(planId);
+  }, [activePlanId, planId, onActivePlanChange]);
 
   const planQ = useQuery({
     queryKey: ['plan', planId],
@@ -131,7 +155,7 @@ export function Planner() {
     mutationFn: createPlan,
     onSuccess: (detail) => {
       applyDetail(detail);
-      setSelectedId(detail.id);
+      selectPlan(detail.id);
       setCreating(false);
     },
   });
@@ -147,9 +171,15 @@ export function Planner() {
       createRecommendedPlan({ term, maxCredits: load, name: 'Plan recomendado' }),
     onSuccess: (detail) => {
       applyDetail(detail);
+      // Esta mutación nace de ?recomendado=1. Actualizamos ambos parámetros
+      // juntos para no perder el plan recién creado por una carrera entre la
+      // pestaña y el callback del contenedor.
       setSelectedId(detail.id);
+      const next = new URLSearchParams(searchParams);
+      next.delete('recomendado');
+      next.set('plan', String(detail.id));
+      setSearchParams(next, { replace: true });
       setRecommendOpen(false);
-      setSearchParams({}, { replace: true });
     },
   });
 
@@ -170,7 +200,7 @@ export function Planner() {
     mutationFn: () => duplicatePlan(planId!),
     onSuccess: (detail) => {
       applyDetail(detail);
-      setSelectedId(detail.id);
+      selectPlan(detail.id);
     },
   });
   const remove = useMutation({
@@ -178,7 +208,7 @@ export function Planner() {
     onSuccess: () => {
       qc.removeQueries({ queryKey: ['plan', planId] });
       qc.invalidateQueries({ queryKey: ['plans'] });
-      setSelectedId(null);
+      selectPlan(null);
     },
   });
   const toCart = useMutation({
@@ -248,9 +278,11 @@ export function Planner() {
     <div className="space-y-5">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-semibold tracking-tight">Planner</h1>
+          <h2 className="font-display text-2xl font-semibold tracking-tight">Materias</h2>
           <p className="text-muted mt-1 text-sm">
-            Planes por término: materias deseadas, grupos elegidos y el horario que arman.
+            {embedded
+              ? 'Elegí las materias de tu plan antes de decidir sus grupos.'
+              : 'Planes por término: materias deseadas, grupos elegidos y el horario que arman.'}
           </p>
         </div>
         <button
@@ -278,7 +310,7 @@ export function Planner() {
           }
           onClose={() => {
             setRecommendOpen(false);
-            setSearchParams({}, { replace: true });
+            clearRecommendedParam();
           }}
         />
       )}
@@ -288,7 +320,7 @@ export function Planner() {
         {(plansQ.data ?? []).map((p) => (
           <button
             key={p.id}
-            onClick={() => setSelectedId(p.id)}
+            onClick={() => selectPlan(p.id)}
             className={`rounded-[var(--radius)] px-3 py-1.5 text-sm transition-colors duration-100 ${
               p.id === planId
                 ? 'bg-accent text-accent-fg font-medium'

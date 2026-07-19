@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   addPlanItem,
@@ -44,7 +44,15 @@ const toCandidate = (course: CatalogCourse, section: CatalogSection): CandidateS
 
 type CartResult = { code: string; title: string; ok: boolean; error: string | null };
 
-export function Builder() {
+export function Builder({
+  activePlanId,
+  onActivePlanChange,
+  embedded = false,
+}: {
+  activePlanId?: number | null;
+  onActivePlanChange?: (planId: number | null) => void;
+  embedded?: boolean;
+}) {
   const qc = useQueryClient();
   const catalogQ = useQuery({ queryKey: ['catalog'], queryFn: () => fetchCatalog() });
   const plansQ = useQuery({ queryKey: ['plans'], queryFn: fetchPlans });
@@ -53,7 +61,7 @@ export function Builder() {
   const [selections, setSelections] = useState<Map<number, number>>(new Map()); // courseId → sectionId
   const [locks, setLocks] = useState<Set<number>>(new Set()); // courseIds con candado
   const [hover, setHover] = useState<{ courseId: number; sectionId: number } | null>(null);
-  const [planId, setPlanId] = useState<number | null>(null);
+  const [loadedPlanId, setLoadedPlanId] = useState<number | null>(null);
   const [weights, setWeights] = useState<Weights>(DEFAULT_WEIGHTS);
   const [suggesting, setSuggesting] = useState(false);
 
@@ -72,12 +80,23 @@ export function Builder() {
   const loadPlan = useMutation({
     mutationFn: (id: number) => fetchPlan(id),
     onSuccess: (plan) => {
-      setPlanId(plan.id);
+      setLoadedPlanId(plan.id);
+      onActivePlanChange?.(plan.id);
       setCandidateIds(plan.items.map((i) => i.courseId));
       setSelections(new Map(plan.items.filter((i) => i.section).map((i) => [i.courseId, i.section!.id])));
       setLocks(new Set(plan.items.filter((i) => i.locked).map((i) => i.courseId)));
     },
   });
+
+  // Al entrar a la vista Horario, el plan elegido en Materias se carga sin
+  // pedirle al estudiante que vuelva a escogerlo. Si cambia de plan desde el
+  // selector de esta vista, la misma selección se propaga al contenedor.
+  useEffect(() => {
+    if (activePlanId != null && activePlanId !== loadedPlanId) loadPlan.mutate(activePlanId);
+    // `loadPlan` es la mutación estable de React Query; el efecto responde al
+    // id, no a los rerenders de los controles del builder.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePlanId, loadedPlanId]);
 
   const select = (courseId: number, sectionId: number) => {
     const next = new Map(selections);
@@ -136,7 +155,7 @@ export function Builder() {
   // agrega los que el builder sumó por búsqueda.
   const saveToPlan = useMutation({
     mutationFn: async () => {
-      const plan = await fetchPlan(planId!);
+      const plan = await fetchPlan(loadedPlanId!);
       const itemByCourse = new Map(plan.items.map((i) => [i.courseId, i]));
       for (const course of candidates) {
         const sectionId = selections.get(course.id) ?? null;
@@ -151,7 +170,7 @@ export function Builder() {
       }
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['plan', planId] });
+      qc.invalidateQueries({ queryKey: ['plan', loadedPlanId] });
       qc.invalidateQueries({ queryKey: ['plans'] });
     },
   });
@@ -187,16 +206,18 @@ export function Builder() {
     <div className="space-y-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-semibold tracking-tight">Constructor de horario</h1>
+          <h2 className="font-display text-2xl font-semibold tracking-tight">Horario</h2>
           <p className="text-muted mt-1 text-sm">
-            Elegí secciones y mirá el horario armarse; el solver sugiere combinaciones sin choque.
+            {embedded
+              ? 'Elegí grupos para las materias del mismo plan; el solver sugiere combinaciones sin choque.'
+              : 'Elegí secciones y mirá el horario armarse; el solver sugiere combinaciones sin choque.'}
           </p>
         </div>
-        {(plansQ.data ?? []).length > 0 && (
+        {!embedded && (plansQ.data ?? []).length > 0 && (
           <label className="text-muted flex items-center gap-2 text-xs">
             desde un plan:
             <select
-              value={planId ?? ''}
+              value={loadedPlanId ?? ''}
               onChange={(e) => e.target.value && loadPlan.mutate(Number(e.target.value))}
               className="border-line bg-surface rounded-[var(--radius)] border px-2 py-1.5 text-sm"
             >
@@ -286,9 +307,9 @@ export function Builder() {
                 Sugerir combinaciones
               </button>
               <button
-                disabled={!planId || saveToPlan.isPending}
+                disabled={!loadedPlanId || saveToPlan.isPending}
                 onClick={() => saveToPlan.mutate()}
-                title={planId ? undefined : 'Cargá un plan primero'}
+                title={loadedPlanId ? undefined : 'Elegí un plan primero'}
                 className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-3 py-2 text-sm disabled:opacity-50"
               >
                 {saveToPlan.isPending ? 'Guardando…' : saveToPlan.isSuccess ? 'Guardado ✓' : 'Guardar en plan'}
