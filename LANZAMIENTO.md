@@ -4,7 +4,7 @@
 
 **Principios que ordenan todo el documento** (salen de las notas, no son decoración):
 
-1. **Costo cero.** El hosting es gratis o no es. Nada de planes pagos "baratos".
+1. **Costo cero.** El piloto hosted se paga con el crédito del GitHub Student Developer Pack; no se activa facturación fuera de ese crédito. Antes de su vencimiento se decide entre migrar a una alternativa gratis o volver al modo local. Nada de planes pagos "baratos" por inercia.
 2. **Open source, y corre local.** El repo es público y cualquiera puede correr mikampus completo en su máquina (modo single-user, el comportamiento actual). El deploy hosted es *una* instancia de eso, no un fork.
 3. **Las credenciales no viven en la DB principal, jamás.** Solo se persisten —cifradas, en un almacén aparte— cuando una feature desatendida lo exige, y se borran cuando deja de exigirlo.
 4. **La app es inteligente con los datos:** muestra lo cacheado al instante, refresca solo lo vencido, nunca borra por expirar, nunca obliga a sincronizar para poder mirar.
@@ -28,7 +28,7 @@ Todo el backend está construido sobre la premisa de una sola persona. Estos son
 
 Cuatro supuestos pueden invalidar la arquitectura entera y se comprueban en una tarde cada uno, **antes** de escribir una línea de multi-usuario:
 
-1. **¿Micampus acepta tráfico desde la IP de Oracle Cloud?** El free tier vive en datacenters extranjeros; portales universitarios a veces bloquean o degradan tráfico no-residencial. Prueba: levantar la VM gratis y correr `loginToPeopleSoft` desde ahí. Si falla, el plan B es descartar totalmente la idea de hacer un servidor porque no puedo usar mi computadora para eso y solamente apuntar al opensource y que cada uno corra su mikampus. La prueba incluye el caso feo: **varios logins seguidos desde esa misma IP** (el patrón real de las 5:55am, ver §5.6) — un login que pasa y cinco que disparan un WAF son resultados distintos.
+1. **¿Micampus acepta tráfico desde la IP de DigitalOcean?** El piloto vive en un datacenter extranjero; portales universitarios a veces bloquean o degradan tráfico no-residencial. Prueba: levantar el Droplet y correr `loginToPeopleSoft` desde ahí. Si falla, el plan hosted se detiene y el producto queda en modo local open source. La prueba incluye el caso feo: **varios logins seguidos desde esa misma IP** (el patrón real de las 5:55am, ver §5.6) — un login que pasa y cinco que disparan un WAF son resultados distintos.
 2. **¿El portal tiene o anuncia MFA?** Toda la arquitectura de re-login desatendido asume que usuario+contraseña bastan. Verificado: **no tiene MFA** — credenciales y estás adentro. Queda diseñar el mensaje de fallo para el día que cambie.
 3. **¿La hora de inscripción es la misma para todos?** Verificado: **es por escuela** — todos los de ingeniería a la misma hora, cada carrera con la suya. Consecuencias: (a) el pico de las 6:00am es real y concentrado (tus usuarios son mayormente de la misma escuela → misma hora exacta); (b) mikampus debería **leer/conocer el appointment por escuela y proponerle al usuario programar su hora** en un click; (c) el watcher tiene que ser appointment-aware (§5.5).
 4. **¿Podemos cambiar de término a voluntad?** El sync multi-término de la cuenta de servicio depende del botón **Change Term** del portal, que todavía no tiene fixture ni flujo probado (recon pendiente de Fase 6 del PLAN). Y el class search **corta en 50 resultados** por búsqueda. Las dos cosas acotan qué puede prometer el loop de cupos (§5.5) — se verifican antes de prometer nada multi-término.
@@ -46,16 +46,16 @@ Cuatro supuestos pueden invalidar la arquitectura entera y se comprueban en una 
 - El watcher y la hora programada se vuelven **filas por usuario en DB** (persistidas, no en memoria).
 - Un crash del Chromium compartido tumba a todos los contexts a la vez: el pool necesita detección de crash + relanzamiento, y el día-D se prueba con N logins simultáneos antes, no ese día (§13).
 
-**Costo real:** cada context activo son ~80–150MB. Con 10–20 compañeros y picos solo en pre-matrícula, la VM del free tier (24GB) sobra en RAM; el límite es CPU en el pico, no memoria.
+**Costo real:** cada context activo son ~80–150MB. El piloto arranca en un Droplet de 2GB/1 vCPU para un usuario; antes de invitar compañeros se mide el pico y se sube a 4GB/2 vCPU si hace falta. El límite será CPU en la hora de inscripción, no la arquitectura de contexts.
 
 ## 2. Deploy
 
-**Decisión [DECIDIDO]: Oracle Cloud Always Free (VM ARM A1, hasta 4 OCPU / 24GB RAM) + Docker + Caddy. El proyecto es open source y corre completo en local.**
+**Decisión [DECIDIDO]: DigitalOcean Droplet + Docker + Caddy para el piloto hosted. El proyecto es open source y corre completo en local.**
 
-- **$0 permanente**, no trial. Corre Playwright + server 24/7 y los estudiantes entran por `mikampus.decruce.dev`.
-- Docker con la imagen oficial de Playwright (ARM64 existe), `docker compose` con server + volumen de datos, **Caddy** como reverse proxy con TLS automático.
-- **`TZ=America/Santo_Domingo` fijado en el contenedor, con un test.** La VM de Oracle nace en UTC en una región extranjera; `cron.js:44-48` calcula "las 03:00" en hora local del sistema y `scheduleFixedTime` confía en el ISO del cliente. Sin el TZ fijado, "6:00am" es el bug clásico de dispara-a-las-2am. NTP activo por la misma razón: el disparo compite por segundos.
-- Riesgos propios de Oracle: (a) reclama VMs ociosas en cuentas free — se mitiga con la actividad regular del propio server y monitoreo; (b) la IP de datacenter — se valida en Fase 0. **Plan B:** tu máquina + Cloudflare Tunnel (gratis, IP residencial).
+- El crédito de US$200 del GitHub Student Developer Pack financia el piloto; se reclama antes de su vencimiento y no se agrega tarjeta/facturación de pago. Es una ventana de validación, no una promesa de hosting gratis permanente.
+- Docker con la imagen oficial de Playwright, `docker compose` con server + volumen de datos, **Caddy** como reverse proxy con TLS automático. El Droplet puede ser x86_64: no hay dependencia de ARM en el deploy.
+- **`TZ=America/Santo_Domingo` fijado en el contenedor, con un test.** El Droplet vive en una región extranjera; `cron.js:44-48` calcula "las 03:00" en hora local del sistema y `scheduleFixedTime` confía en el ISO del cliente. Sin el TZ fijado, "6:00am" es el bug clásico de dispara-a-las-2am. NTP activo por la misma razón: el disparo compite por segundos.
+- Riesgos del piloto: (a) termina el crédito estudiantil — se revisa el saldo y fecha de vencimiento cada mes, sin upgrade automático; (b) la IP de datacenter — se valida en Fase 0. **Plan B:** modo local open source; no se promete un hosted permanente antes de superar esa revisión.
 - **Modo local:** el repo mantiene el modo actual single-user (`npm run dev` / futuro `npx mikampus`): credenciales en `.env`/`account.json` local, sin auth, sin multi-usuario. Es el mismo código con `MODE=local` — no un fork. Esto es lo que hace honesto el "open source": cualquiera puede auditarlo y correrlo sin confiar en el server de nadie.
 
 Descartados: Vercel/serverless (Playwright + SSE + scheduler no caben en funciones), Railway/Fly (RAM para Chromium se paga), VPS pago (viola el principio de costo cero).
@@ -98,7 +98,7 @@ Al entrar, la app **muestra lo cacheado al instante** (con su "actualizado hace 
 
 ## 4. Dominio
 
-**Decisión: `mikampus.decruce.dev`**, A record a la VM de Oracle. Caddy emite el certificado solo. `.dev` → HSTS precargado, HTTPS obligatorio desde el día uno — con Caddy es gratis. La PWA (`web/public/manifest.webmanifest` + `sw.js`) por fin funciona fuera de localhost: contexto seguro real, instalable desde el teléfono.
+**Decisión: `mikampus.decruce.dev`**, A record a una Reserved IP asignada al Droplet de DigitalOcean. Caddy emite el certificado solo. `.dev` → HSTS precargado, HTTPS obligatorio desde el día uno — con Caddy es gratis. La PWA (`web/public/manifest.webmanifest` + `sw.js`) por fin funciona fuera de localhost: contexto seguro real, instalable desde el teléfono.
 
 ---
 
@@ -235,13 +235,13 @@ Sidebar resultante (§9 + §10 + §12): de 9 entradas a **6** — Inicio, Planea
 
 ## 13. Riesgos que este documento no puede cerrar
 
-El riesgo número uno sigue siendo la **relación con el portal**: aunque ya casi no custodiamos credenciales (§5 lo reduce a una ventana cifrada por término), el server concentra el scraping de N estudiantes — y tu cuenta de servicio absorbe la parte compartida. Eso la vuelve el **single point of failure atribuible**: si el portal la bloquea, muere el dato compartido de todos *y tu propia matrícula*, el mismo día. Mitigación: rate-limits conservadores, no scrapear nada que ningún usuario pidió, cupos solo con watchers activos, jitter en todo lo programado, y la prueba de IP de Fase 0 (incluido el patrón multi-login) antes de todo. El dos es **PeopleSoft cambia** (un selector roto rompe a todos a la vez, y MFA rompería el modo desatendido): hace falta que el server te avise *a vos* cuando algo falla repetido — y ese canal de operador **no puede ser solo Web Push** (a las 6am tu teléfono también está en No Molestar): un fallback tonto — Telegram/ntfy/email — para "3 fallos seguidos" cuesta una tarde y es la diferencia entre enterarte a las 6:01 o a las 9. El tres es **el día-D**: N pre-warms y disparos sobre el pool de contexts se prueban con antelación (CPU del pico incluida, §1), con detección de crash del Chromium compartido y relanzamiento. Y el cuatro es **Oracle**: el free tier es generoso pero es de Oracle — monitorear que no reclame la VM, y tener el plan B (tu máquina + Cloudflare Tunnel) documentado y probado, no teórico.
+El riesgo número uno sigue siendo la **relación con el portal**: aunque ya casi no custodiamos credenciales (§5 lo reduce a una ventana cifrada por término), el server concentra el scraping de N estudiantes — y tu cuenta de servicio absorbe la parte compartida. Eso la vuelve el **single point of failure atribuible**: si el portal la bloquea, muere el dato compartido de todos *y tu propia matrícula*, el mismo día. Mitigación: rate-limits conservadores, no scrapear nada que ningún usuario pidió, cupos solo con watchers activos, jitter en todo lo programado, y la prueba de IP de Fase 0 (incluido el patrón multi-login) antes de todo. El dos es **PeopleSoft cambia** (un selector roto rompe a todos a la vez, y MFA rompería el modo desatendido): hace falta que el server te avise *a vos* cuando algo falla repetido — y ese canal de operador **no puede ser solo Web Push** (a las 6am tu teléfono también está en No Molestar): un fallback tonto — Telegram/ntfy/email — para "3 fallos seguidos" cuesta una tarde y es la diferencia entre enterarte a las 6:01 o a las 9. El tres es **el día-D**: N pre-warms y disparos sobre el pool de contexts se prueban con antelación (CPU del pico incluida, §1), con detección de crash del Chromium compartido y relanzamiento. Y el cuatro es **el crédito de DigitalOcean**: es finito y no debe convertirse en una factura por omisión; monitorear saldo/fecha, sin upgrade automático, y sostener el modo local como salida real.
 
 ## 14. Orden propuesto
 
 Cada fase en su rama, como siempre:
 
-0. **Fase 0 — validar supuestos** (§0.5): VM de Oracle gratis + `loginToPeopleSoft` desde ahí (incluido el patrón multi-login con jitter); recon del **Change Term** y confirmación del límite de 50; hora de inscripción por escuela documentada. Una tarde-un día; puede invalidar decisiones de abajo, por eso va primero.
+0. **Fase 0 — validar supuestos** (§0.5): Droplet de DigitalOcean + `loginToPeopleSoft` desde ahí (incluido el patrón multi-login con jitter); recon del **Change Term** y confirmación del límite de 50; hora de inscripción por escuela documentada. Una tarde-un día; puede invalidar decisiones de abajo, por eso va primero.
 1. **Walking skeleton hosted** — la app actual, single-user, corriendo en la VM con Docker + Caddy + basic auth provisional + Litestream (retención ~72h, bucket cifrado) + `TZ` fijado. Vos como único usuario real una semana desde el teléfono. Valida RAM, IP, PWA y operación antes del big bang multi-usuario.
 2. **Multi-usuario de base** — `user_id` en tablas personales sobre SQLite **+ migración de los datos existentes como usuario 1 + adaptación de los scripts de test**, pénsum re-modelado por carrera con merge conservador (§3.1), pool de contexts por usuario + cuenta de servicio (§1), semántica de retry de `withPage` (§0), auth + cookie SameSite + CSRF, credenciales RAM + almacén cifrado con vida por término (§5), timers persistidos, `action_log`.
 3. **Login + landing + Ajustes** — las tres pantallas del ciclo de cuenta (§5, §6, §8) incluidos los estados de la costura sesión/credencial (§5.1), allowlist de invitación, Historial (audit log), lazy loading con vida útil + refresh global (§3.2) y la experiencia de primer sync.
