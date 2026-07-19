@@ -45,6 +45,12 @@ node scripts/bench-search.mjs                    # keystroke → resultados < 16
 npm run smoke                                    # screenshots a 390/768/1440px + falla si hay desborde horizontal
 ```
 
+La validación que precede al deploy hosted está documentada en
+[`docs/phase-0-validation.md`](./docs/phase-0-validation.md). El comando
+`npm run validate:hosted-portal` hace un dry-run; la prueba real de logins
+desde el Droplet de DigitalOcean requiere la confirmación explícita indicada en
+ese documento.
+
 `npm test` corre los parsers contra HTML real volcado del portal y guardado en
 `fixtures/` (sin tokens ni datos personales — ver `scripts/make-fixture.mjs`).
 Es la red de los selectores: PeopleSoft cambia IDs entre parches y esto falla
