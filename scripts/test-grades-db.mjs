@@ -27,9 +27,9 @@ const raw = await page.evaluate(extractCourseHistory);
 await browser.close();
 
 const courses = parseCourseHistory(raw.rows, { knownSubjects: ['ICC', 'ESG', 'ART', 'DEP', 'ET', 'ILE', 'GFA', 'IIS'] });
-saveGrades(courses);
+saveGrades(1, courses);
 
-const leidas = readGrades();
+const leidas = readGrades(1);
 assert.equal(leidas.length, courses.length, 'vuelve de la base todo lo que entró');
 
 // La respuesta que sirve el endpoint, validada con el mismo esquema que el
@@ -61,8 +61,8 @@ assert.equal(respuesta.summary.gradePoints, 402);
 
 // El sync reemplaza el histórico entero: una materia en curso pasa a
 // calificada, no se agrega una segunda fila.
-saveGrades(courses);
-assert.equal(readGrades().length, courses.length, 're-sincronizar no duplica el histórico');
+saveGrades(1, courses);
+assert.equal(readGrades(1).length, courses.length, 're-sincronizar no duplica el histórico');
 
 await rm(dir, { recursive: true, force: true });
 console.log(`✓ capa de escritura de notas (${courses.length} materias, ida y vuelta sin pérdidas)`);

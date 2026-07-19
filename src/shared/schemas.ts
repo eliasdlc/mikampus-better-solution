@@ -267,6 +267,48 @@ export const planToCartResultSchema = z.object({
 });
 export type PlanToCartResult = z.infer<typeof planToCartResultSchema>;
 
+// ── Recomendador de ciclo ──────────────────────────────────────────────────
+// La propuesta explica cada materia y ya trae la sección elegida por el solver.
+// Crear el plan persiste exactamente esta combinación después de recalcularla
+// en el server; el frontend nunca puede colar una sección arbitraria.
+export const recommendedAlternativeSchema = z.object({
+  courseId: z.number().int(),
+  code: z.string(),
+  title: z.string(),
+  credits: z.number().positive(),
+  sections: z.number().int().positive(),
+});
+
+export const recommendedCourseSchema = z.object({
+  courseId: z.number().int(),
+  code: z.string(),
+  title: z.string(),
+  credits: z.number().positive(),
+  kind: z.enum(['obligatoria', 'electiva']),
+  groupId: z.number().int(),
+  groupLabel: z.string(),
+  periodLabel: z.string(),
+  reason: z.string(),
+  section: catalogSectionSchema,
+  alternatives: z.array(recommendedAlternativeSchema),
+});
+export type RecommendedCourse = z.infer<typeof recommendedCourseSchema>;
+
+export const recommendationResponseSchema = z.object({
+  term: z.string(),
+  generatedAt: z.string(),
+  maxCredits: z.number().positive(),
+  totalCredits: z.number().nonnegative(),
+  recommendations: z.array(recommendedCourseSchema),
+  schedule: z.object({
+    valid: z.boolean(),
+    adjusted: z.boolean(),
+    omitted: z.array(z.object({ code: z.string(), reason: z.string() })),
+  }),
+  caveats: z.array(z.string()),
+});
+export type RecommendationResponse = z.infer<typeof recommendationResponseSchema>;
+
 // Carrito real (GET /api/cart), enriquecido: además del label crudo del portal,
 // el código canónico (color estable + cruce con el catálogo), el título del
 // diccionario local, el horario parseado (para proyectar el carrito en el
@@ -299,6 +341,57 @@ export const cartResponseSchema = z.object({
   rows: z.array(cartRowSchema),
 });
 export type CartResponse = z.infer<typeof cartResponseSchema>;
+
+// El recon de jul-2026 confirmó que esta instalación de PeopleSoft no expone
+// el Validate nativo ni un control de waitlist en los pasos 1/2 del carrito.
+// El endpoint conserva un contrato explícito para que la UI pueda decirlo y
+// para detectar si un parche futuro habilita alguno de los dos controles.
+export const cartCapabilitySchema = z.object({
+  supported: z.boolean(),
+  reason: z.string().nullable().default(null),
+});
+
+export const cartValidationResponseSchema = z.object({
+  validatedAt: z.string(),
+  validate: cartCapabilitySchema,
+  waitlistChoice: cartCapabilitySchema,
+  waitlistPosition: cartCapabilitySchema,
+  results: z.array(
+    z.object({
+      classLabel: z.string(),
+      success: z.boolean(),
+      message: z.string(),
+    })
+  ),
+});
+export type CartValidationResponse = z.infer<typeof cartValidationResponseSchema>;
+
+// Enrollment Dates. precision='date' significa literalmente que el portal no
+// publicó hora: nunca se convierte a medianoche ni alimenta el scheduler.
+export const enrollmentWindowSchema = z.object({
+  termCode: z.string(),
+  session: z.string(),
+  startsAt: z.string(),
+  endsAt: z.string(),
+  precision: z.enum(['date', 'datetime']),
+  userId: z.number().int(),
+  syncedAt: z.string(),
+});
+export type EnrollmentWindow = z.infer<typeof enrollmentWindowSchema>;
+
+export const enrollmentWindowsResponseSchema = z.object({
+  syncedAt: z.string().nullable(),
+  windows: z.array(enrollmentWindowSchema),
+});
+export type EnrollmentWindowsResponse = z.infer<typeof enrollmentWindowsResponseSchema>;
+
+export const dropResultSchema = z.object({
+  ok: z.boolean(),
+  courseCode: z.string(),
+  classLabel: z.string(),
+  message: z.string(),
+});
+export type DropResult = z.infer<typeof dropResultSchema>;
 
 // ── Notas y avance ──────────────────────────────────────────────────────────
 
@@ -463,6 +556,90 @@ export const profileResponseSchema = z.object({
 });
 export type ProfileResponse = z.infer<typeof profileResponseSchema>;
 
+// ── Metas y señales (Fase 10, §12.7) ─────────────────────────────────────────
+// Todo esto se calcula local (nunca se scrapea) con la aritmética de gpa.ts. El
+// contrato existe igual: es el borde entre backend y frontend, y valida que el
+// motor devuelve lo que la UI espera.
+
+// El abanico honesto de índice final sobre los créditos que faltan del pénsum.
+export const gpaProjectionSchema = z.object({
+  remainingCredits: z.number(),
+  current: z.number().nullable(),
+  best: z.number().nullable(), // todo A
+  maintain: z.number().nullable(), // mantenés tu promedio
+  floor: z.number().nullable(), // todo C
+});
+export type GpaProjectionResponse = z.infer<typeof gpaProjectionSchema>;
+
+export const goalVerdictSchema = z.enum(['met', 'secured', 'reachable', 'tight', 'unreachable']);
+
+export const goalSchema = z.object({
+  id: z.number().int(),
+  kind: z.literal('gpa'),
+  target: z.number(),
+  deadlineTerm: z.string().nullable(),
+  createdAt: z.string(),
+  achievedAt: z.string().nullable(),
+});
+export type Goal = z.infer<typeof goalSchema>;
+
+// La meta con su veredicto calculado en vivo contra las notas del momento.
+export const goalEvaluationSchema = goalSchema.extend({
+  verdict: goalVerdictSchema,
+  // Promedio (0–4) que exige lo que falta. null cuando no quedan créditos.
+  requiredAverage: z.number().nullable(),
+  projectedIfMaintain: z.number().nullable(),
+});
+export type GoalEvaluation = z.infer<typeof goalEvaluationSchema>;
+
+// Metas + proyección viajan juntas: la UI las muestra en el mismo panel y una
+// mutación de meta refresca ambas. basedOn dice sobre cuántos créditos al índice
+// se calcula todo, para que el número no salga sin su base.
+export const goalsResponseSchema = z.object({
+  goals: z.array(goalEvaluationSchema),
+  projection: gpaProjectionSchema.nullable(),
+  basedOn: z.object({
+    gpa: z.number().nullable(),
+    unitsTowardGpa: z.number(),
+    remainingCredits: z.number(),
+  }),
+  syncedAt: z.string().nullable(),
+});
+export type GoalsResponse = z.infer<typeof goalsResponseSchema>;
+
+// Señales descriptivas. Discriminadas por kind: la UI mapea cada una a su forma
+// sin adivinar. Una señal ausente del arreglo es una señal bajo su umbral.
+const areaStatSchema = z.object({ subject: z.string(), gpa: z.number(), count: z.number().int() });
+const loadStatSchema = z.object({ avgGpa: z.number(), avgCredits: z.number(), terms: z.number().int() });
+
+export const insightSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('gpa-trend'),
+    direction: z.enum(['rising', 'falling', 'flat']),
+    delta: z.number(),
+    points: z.array(z.object({ term: z.string(), gpa: z.number() })),
+  }),
+  z.object({ kind: z.literal('area-performance'), best: areaStatSchema, worst: areaStatSchema }),
+  z.object({ kind: z.literal('load-vs-result'), heavy: loadStatSchema, light: loadStatSchema }),
+  z.object({
+    kind: z.literal('repeated-courses'),
+    courses: z.array(
+      z.object({
+        code: z.string(),
+        attempts: z.array(z.object({ term: z.string().nullable(), grade: z.string().nullable() })),
+      })
+    ),
+  }),
+  z.object({ kind: z.literal('withdrawn-courses'), count: z.number().int(), codes: z.array(z.string()) }),
+]);
+export type Insight = z.infer<typeof insightSchema>;
+
+export const insightsResponseSchema = z.object({
+  insights: z.array(insightSchema),
+  syncedAt: z.string().nullable(),
+});
+export type InsightsResponse = z.infer<typeof insightsResponseSchema>;
+
 // 'unknown' no es "no bloquea": es "el portal no nos lo dijo". Ver
 // peoplesoft/holds.js — sin un hold real que mirar, la severidad no se inventa.
 export const holdSeveritySchema = z.enum(['blocking', 'info', 'unknown']);
@@ -485,11 +662,18 @@ export type HoldsResponse = z.infer<typeof holdsResponseSchema>;
 
 // Estado del scheduler + watcher (GET /api/state).
 export const appStateSchema = z.object({
-  schedule: z.object({ atISO: z.string() }).nullable(),
-  // lastCheckAt null = activo pero todavía sin mirar el carrito, que no es lo
-  // mismo que haberlo mirado recién.
+  schedule: z.object({ atISO: z.string(), prewarmAtISO: z.string(), prewarmed: z.boolean() }).nullable(),
+  // intervalMs es el ciclo efectivo de la materia en el loop compartido;
+  // lastCheckAt null = activo pero todavía sin consultar su materia.
   watcher: z
-    .object({ intervalMs: z.number(), lastCheckAt: z.string().nullable().default(null) })
+    .object({
+      intervalMs: z.number(),
+      lastCheckAt: z.string().nullable().default(null),
+      autoEnroll: z.boolean().default(false),
+      activationOrder: z.number().int().nullable().default(null),
+      appointmentAt: z.string().nullable().default(null),
+      queue: z.array(z.object({ courseCode: z.string(), position: z.number().int(), total: z.number().int() })).default([]),
+    })
     .nullable(),
 });
 export type AppState = z.infer<typeof appStateSchema>;

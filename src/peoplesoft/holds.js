@@ -89,7 +89,7 @@ async function findFrame(page, selector, { timeout = 30000 } = {}) {
 export const STUDENT_CENTER_URL =
   'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SSS_STUDENT_CENTER.GBL?Page=SSS_STUDENT_CENTER&Action=U';
 
-export async function fetchHolds(page) {
+export async function fetchHolds(page, { userId }) {
   await page.goto(STUDENT_CENTER_URL, { waitUntil: 'commit' });
   await page.waitForTimeout(8000);
 
@@ -97,26 +97,26 @@ export async function fetchHolds(page) {
   const parsed = parseHolds(await frame.evaluate(extractHolds));
 
   if (!parsed.holdsPanelFound) {
-    logSync({ kind: 'holds', status: 'error', detail: 'no se encontró el panel de holds', rows: 0 });
+    logSync({ userId, kind: 'holds', status: 'error', detail: 'no se encontró el panel de holds', rows: 0 });
     throw new Error('El panel de holds no está donde el recon lo dejó: revisar selectores');
   }
 
-  logSync({ kind: 'holds', status: 'ok', detail: `${parsed.holds.length} hold(s)`, rows: parsed.holds.length });
+  logSync({ userId, kind: 'holds', status: 'ok', detail: `${parsed.holds.length} hold(s)`, rows: parsed.holds.length });
   return parsed;
 }
 
 // Como el histórico de notas: el portal es la verdad y los holds se resuelven
 // (dejan de existir), así que se reemplazan enteros en cada sync.
-export function saveHolds(holds) {
-  db.prepare('DELETE FROM holds').run();
+export function saveHolds(userId, holds) {
+  db.prepare('DELETE FROM holds WHERE user_id = ?').run(userId);
   const insert = db.prepare(
-    `INSERT INTO holds (code, title, description, severity, link, captured_at)
-     VALUES (?, ?, ?, ?, ?, datetime('now'))`
+    `INSERT INTO holds (user_id, code, title, description, severity, link, captured_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
   );
-  for (const h of holds) insert.run(h.code, h.title, h.description, h.severity, h.link);
+  for (const h of holds) insert.run(userId, h.code, h.title, h.description, h.severity, h.link);
   return holds;
 }
 
-export function readHolds() {
-  return db.prepare('SELECT code, title, description, severity, link FROM holds').all();
+export function readHolds(userId) {
+  return db.prepare('SELECT code, title, description, severity, link FROM holds WHERE user_id = ?').all(userId);
 }

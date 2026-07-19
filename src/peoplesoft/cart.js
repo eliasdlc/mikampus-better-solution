@@ -1,6 +1,6 @@
 import { CART_URL, CONTENT_FRAME_NAME } from './constants.js';
 import { db, logSync, lastSync } from '../db.js';
-import { cartRowSchema, normalizeSeatStatus } from '../shared/schemas.ts';
+import { cartRowSchema, cartValidationResponseSchema, normalizeSeatStatus } from '../shared/schemas.ts';
 import { parseMeetings } from '../shared/meetings.ts';
 import { splitCourseCode, courseCodeToString } from '../shared/courseCode.ts';
 import { knownSubjects } from './browseCatalog.js';
@@ -101,6 +101,57 @@ export async function getCartStatus(page) {
   return enrichCartRows(await frame.evaluate(extractCartRows));
 }
 
+// Capabilities del wizard, contra fixtures/recon-cart-phase85-step{1,2}.html.
+// Es deliberadamente un parser separado de las filas: responde qué decisiones
+// ofrece PeopleSoft, no qué estados pinta como leyenda.
+export function extractCartCapabilities() {
+  const controls = [...document.querySelectorAll('input, button, a')].map((el) => ({
+    text: `${el.value ?? ''} ${el.textContent ?? ''} ${el.getAttribute('title') ?? ''}`.replace(/\s+/g, ' ').trim(),
+    id: el.id ?? '',
+    type: el.getAttribute('type') ?? '',
+  }));
+  const validate = controls.some((control) => /\bvalidate\b/i.test(control.text) || /VALIDATE/i.test(control.id));
+  const waitlistChoice = controls.some(
+    (control) =>
+      /WAIT_LIST_OKAY|WAITLIST_OKAY|WAIT_LIST_CHOICE/i.test(control.id) ||
+      (/wait\s*list/i.test(control.text) && /checkbox|radio/i.test(control.type))
+  );
+  const bodyText = document.body.textContent.replace(/\s+/g, ' ');
+  const waitlistPosition = /wait\s*list\s*position|position\s*(?:on|in)\s*(?:the\s*)?wait/i.test(bodyText);
+  return { validate, waitlistChoice, waitlistPosition };
+}
+
+export async function validateCart(page) {
+  await page.goto(CART_URL, { waitUntil: 'commit' });
+  await page.waitForTimeout(5_000);
+  const frame = contentFrame(page);
+  const capabilities = await frame.evaluate(extractCartCapabilities);
+
+  // El recon es una conclusión de producto: esta instalación no expone el
+  // Validate nativo prometido por el plan. Si aparece tras un parche, fallamos
+  // explícitamente para capturar el nuevo flujo antes de clickear a ciegas.
+  if (capabilities.validate) {
+    throw new Error('PeopleSoft ahora muestra Validate; hace falta un recon del resultado antes de habilitarlo');
+  }
+  const unavailable =
+    'El portal de PUCMM no ofrece Validate en el carrito ni en el paso de revisión; solo valida al someter la inscripción.';
+  return cartValidationResponseSchema.parse({
+    validatedAt: new Date().toISOString(),
+    validate: { supported: false, reason: unavailable },
+    waitlistChoice: {
+      supported: capabilities.waitlistChoice,
+      reason: capabilities.waitlistChoice
+        ? null
+        : 'El wizard no ofrece decidir waitlist por materia; conserva la política configurada por el portal.',
+    },
+    waitlistPosition: {
+      supported: capabilities.waitlistPosition,
+      reason: capabilities.waitlistPosition ? null : 'El carrito no publica una posición de lista de espera.',
+    },
+    results: [],
+  });
+}
+
 // ── Cache ───────────────────────────────────────────────────────────────────
 // Leer el carrito son ~10s de Playwright. Que eso pase al abrir una pantalla
 // (el Dashboard lo muestra en cada carga) rompe el presupuesto del plan §6 y
@@ -108,19 +159,20 @@ export async function getCartStatus(page) {
 // las notas y los holds: el GET sirve disco y el refresh es explícito.
 
 // El carrito del portal es un estado completo, no un incremento: se borra y se
-// reescribe entero. Guardarlo fila por fila dejaría en la DB materias que el
-// usuario ya sacó del carrito en micampus.
-export function saveCart(rows) {
+// reescribe entero (solo el del usuario en cuestión). Guardarlo fila por fila
+// dejaría en la DB materias que el usuario ya sacó del carrito en micampus.
+export function saveCart(userId, rows) {
   db.exec('BEGIN');
   try {
-    db.prepare('DELETE FROM cart_rows').run();
+    db.prepare('DELETE FROM cart_rows WHERE user_id = ?').run(userId);
     const insert = db.prepare(
-      `INSERT INTO cart_rows (idx, class_label, course_code, title, section, class_nbr,
+      `INSERT INTO cart_rows (user_id, idx, class_label, course_code, title, section, class_nbr,
                               instructor, credits, campus, meetings, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const row of rows) {
       insert.run(
+        userId,
         row.index,
         row.classLabel,
         row.courseCode,
@@ -139,18 +191,18 @@ export function saveCart(rows) {
     db.exec('ROLLBACK');
     throw err;
   }
-  logSync({ kind: 'cart', status: 'ok', detail: `${rows.length} materia(s)`, rows: rows.length });
+  logSync({ userId, kind: 'cart', status: 'ok', detail: `${rows.length} materia(s)`, rows: rows.length });
   return rows.length;
 }
 
-export function readCart() {
+export function readCart(userId) {
   const rows = db
     .prepare(
       `SELECT idx, class_label, course_code, title, section, class_nbr, instructor,
               credits, campus, meetings, status
-       FROM cart_rows ORDER BY idx`
+       FROM cart_rows WHERE user_id = ? ORDER BY idx`
     )
-    .all()
+    .all(userId)
     .map((r) =>
       cartRowSchema.parse({
         index: r.idx,
@@ -167,19 +219,20 @@ export function readCart() {
       })
     );
 
-  return { generatedAt: new Date().toISOString(), syncedAt: lastSync('cart'), rows };
+  return { generatedAt: new Date().toISOString(), syncedAt: lastSync('cart', { userId }), rows };
 }
 
 // La única lectura en vivo. La usa el refresh explícito de /inscripcion y cada
 // tick del watcher, así que el cache queda fresco sin pedirle nada extra al
-// portal.
-export async function syncCart(page) {
+// portal. La página YA es la sesión de ese usuario; userId dice de quién es el
+// cache que se escribe.
+export async function syncCart(page, { userId }) {
   try {
     const rows = await getCartStatus(page);
-    saveCart(rows);
+    saveCart(userId, rows);
     return rows;
   } catch (err) {
-    logSync({ kind: 'cart', status: 'error', detail: err.message });
+    logSync({ userId, kind: 'cart', status: 'error', detail: err.message });
     throw err;
   }
 }

@@ -1,14 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Check, ChevronDown, ChevronUp, X } from 'lucide-react';
 import {
   addPlanItem,
   createPlan,
+  createRecommendedPlan,
   deletePlan,
   duplicatePlan,
   fetchCatalog,
   fetchPlan,
   fetchPlans,
   fetchPensum,
+  fetchRecommendation,
   fetchTerms,
   removePlanItem,
   sendPlanToCart,
@@ -21,6 +25,7 @@ import type {
   PlanDetail,
   PlanItem,
   PlanToCartResult,
+  RecommendationResponse,
   ScheduleCourse,
 } from '../../../src/shared/schemas.ts';
 import { sectionToBlocks } from '../lib/grid.ts';
@@ -74,7 +79,7 @@ function PendientesDelPensum({
         <span className="text-sm font-medium">Pendientes de tu pénsum</span>
         <span className="text-muted flex items-center gap-2 text-xs">
           <span className="tabular">{sugeridas.length} se ofertan</span>
-          <span aria-hidden>{open ? '▲' : '▼'}</span>
+          {open ? <ChevronUp className="size-4" aria-hidden /> : <ChevronDown className="size-4" aria-hidden />}
         </span>
       </button>
       {open && (
@@ -97,15 +102,42 @@ function PendientesDelPensum({
   );
 }
 
-export function Planner() {
+export function Planner({
+  activePlanId,
+  onActivePlanChange,
+  embedded = false,
+}: {
+  activePlanId?: number | null;
+  onActivePlanChange?: (planId: number | null) => void;
+  embedded?: boolean;
+}) {
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const plansQ = useQuery({ queryKey: ['plans'], queryFn: fetchPlans });
   const termsQ = useQuery({ queryKey: ['terms'], queryFn: fetchTerms });
   const catalogQ = useQuery({ queryKey: ['catalog'], queryFn: () => fetchCatalog() });
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
-  const planId = selectedId ?? plansQ.data?.[0]?.id ?? null;
+  const [recommendOpen, setRecommendOpen] = useState(false);
+  const [maxCredits, setMaxCredits] = useState(18);
+  const planId = activePlanId ?? selectedId ?? plansQ.data?.[0]?.id ?? null;
+  const selectPlan = (id: number | null) => {
+    setSelectedId(id);
+    onActivePlanChange?.(id);
+  };
+  const clearRecommendedParam = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('recomendado');
+    setSearchParams(next, { replace: true });
+  };
+
+  // El plan elegido es contexto de /planear, no una selección efímera de la
+  // pestaña de materias. Al cargar el primero lo publicamos para que Horario
+  // abra exactamente ese mismo plan.
+  useEffect(() => {
+    if (activePlanId == null && planId != null) onActivePlanChange?.(planId);
+  }, [activePlanId, planId, onActivePlanChange]);
 
   const planQ = useQuery({
     queryKey: ['plan', planId],
@@ -124,15 +156,52 @@ export function Planner() {
     mutationFn: createPlan,
     onSuccess: (detail) => {
       applyDetail(detail);
-      setSelectedId(detail.id);
+      selectPlan(detail.id);
       setCreating(false);
     },
   });
+  const recommendationTerm =
+    termsQ.data?.find((term) => term.isNext && term.hasSections)?.term ??
+    termsQ.data?.find((term) => term.hasSections)?.term ??
+    null;
+  const recommendation = useMutation({
+    mutationFn: ({ term, load }: { term: string; load: number }) => fetchRecommendation(term, load),
+  });
+  const createRecommended = useMutation({
+    mutationFn: ({ term, load }: { term: string; load: number }) =>
+      createRecommendedPlan({ term, maxCredits: load, name: 'Plan recomendado' }),
+    onSuccess: (detail) => {
+      applyDetail(detail);
+      // Esta mutación nace de ?recomendado=1. Actualizamos ambos parámetros
+      // juntos para no perder el plan recién creado por una carrera entre la
+      // pestaña y el callback del contenedor.
+      setSelectedId(detail.id);
+      const next = new URLSearchParams(searchParams);
+      next.delete('recomendado');
+      next.set('plan', String(detail.id));
+      setSearchParams(next, { replace: true });
+      setRecommendOpen(false);
+    },
+  });
+
+  const openRecommendation = () => {
+    if (!recommendationTerm) return;
+    setRecommendOpen(true);
+    recommendation.mutate({ term: recommendationTerm, load: maxCredits });
+  };
+
+  // El Dashboard enlaza con ?recomendado=1 cuando el próximo ciclo no tiene
+  // plan. Se abre una sola vez cuando ya conocemos el término objetivo.
+  useEffect(() => {
+    if (searchParams.get('recomendado') !== '1' || !recommendationTerm || recommendOpen) return;
+    setRecommendOpen(true);
+    recommendation.mutate({ term: recommendationTerm, load: maxCredits });
+  }, [searchParams, recommendationTerm]);
   const duplicate = useMutation({
     mutationFn: () => duplicatePlan(planId!),
     onSuccess: (detail) => {
       applyDetail(detail);
-      setSelectedId(detail.id);
+      selectPlan(detail.id);
     },
   });
   const remove = useMutation({
@@ -140,7 +209,7 @@ export function Planner() {
     onSuccess: () => {
       qc.removeQueries({ queryKey: ['plan', planId] });
       qc.invalidateQueries({ queryKey: ['plans'] });
-      setSelectedId(null);
+      selectPlan(null);
     },
   });
   const toCart = useMutation({
@@ -210,19 +279,49 @@ export function Planner() {
     <div className="space-y-5">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-semibold tracking-tight">Planner</h1>
+          <h2 className="font-display text-2xl font-semibold tracking-tight">Materias</h2>
           <p className="text-muted mt-1 text-sm">
-            Planes por término: materias deseadas, grupos elegidos y el horario que arman.
+            {embedded
+              ? 'Elegí las materias de tu plan antes de decidir sus grupos.'
+              : 'Planes por término: materias deseadas, grupos elegidos y el horario que arman.'}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={openRecommendation}
+          disabled={!recommendationTerm || recommendation.isPending}
+          className="bg-accent text-accent-fg rounded-[var(--radius)] px-3 py-2 text-sm font-medium disabled:opacity-50"
+        >
+          {recommendation.isPending ? 'Leyendo tu trayectoria…' : 'Generar plan recomendado'}
+        </button>
       </header>
+
+      {recommendOpen && (
+        <RecommendationPanel
+          proposal={recommendation.data ?? null}
+          maxCredits={maxCredits}
+          pending={recommendation.isPending}
+          creating={createRecommended.isPending}
+          error={(recommendation.error ?? createRecommended.error) as Error | null}
+          onMaxCredits={setMaxCredits}
+          onRecalculate={() => recommendationTerm && recommendation.mutate({ term: recommendationTerm, load: maxCredits })}
+          onCreate={() =>
+            recommendation.data &&
+            createRecommended.mutate({ term: recommendation.data.term, load: recommendation.data.maxCredits })
+          }
+          onClose={() => {
+            setRecommendOpen(false);
+            clearRecommendedParam();
+          }}
+        />
+      )}
 
       {/* Tabs por plan + crear */}
       <div className="flex flex-wrap items-center gap-1.5">
         {(plansQ.data ?? []).map((p) => (
           <button
             key={p.id}
-            onClick={() => setSelectedId(p.id)}
+            onClick={() => selectPlan(p.id)}
             className={`rounded-[var(--radius)] px-3 py-1.5 text-sm transition-colors duration-100 ${
               p.id === planId
                 ? 'bg-accent text-accent-fg font-medium'
@@ -355,6 +454,127 @@ export function Planner() {
         </div>
       )}
     </div>
+  );
+}
+
+function RecommendationPanel({
+  proposal,
+  maxCredits,
+  pending,
+  creating,
+  error,
+  onMaxCredits,
+  onRecalculate,
+  onCreate,
+  onClose,
+}: {
+  proposal: RecommendationResponse | null;
+  maxCredits: number;
+  pending: boolean;
+  creating: boolean;
+  error: Error | null;
+  onMaxCredits: (value: number) => void;
+  onRecalculate: () => void;
+  onCreate: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <section className="border-line bg-surface overflow-hidden rounded-[var(--radius)] border">
+      <div className="border-line relative border-b px-4 py-3 pr-20">
+        <div>
+          <p className="text-muted text-xs font-medium tracking-wide uppercase">Lectura de tu pénsum</p>
+          <h2 className="font-display mt-0.5 text-xl font-semibold tracking-tight">Plan recomendado</h2>
+          <p className="text-muted mt-1 max-w-2xl text-sm">
+            Prioriza el período pendiente más viejo y conserva solo materias que caben juntas.
+          </p>
+        </div>
+        <button type="button" onClick={onClose} className="text-muted hover:text-fg absolute top-2 right-2 min-h-11 px-2 text-sm">
+          cerrar
+        </button>
+      </div>
+
+      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+        <div>
+          {pending ? (
+            <p className="text-muted py-4 text-sm">Cruzando requisitos, oferta y horarios…</p>
+          ) : proposal?.recommendations.length ? (
+            <ol className="border-line divide-line divide-y rounded-[var(--radius)] border">
+              {proposal.recommendations.map((item) => (
+                <li key={`${item.groupId}-${item.code}`} className="grid gap-2 px-3 py-3 sm:grid-cols-[minmax(0,220px)_1fr]">
+                  <CourseChip code={item.code} title={item.title} size="sm" />
+                  <div className="min-w-0">
+                    <p className="text-sm">{item.reason}</p>
+                    <p className="text-muted tabular mt-1 font-mono text-xs">
+                      {item.section.section ?? item.section.classNbr} · {meetingSummary(item.section)}
+                    </p>
+                    {item.kind === 'electiva' && item.alternatives.length > 0 && (
+                      <p className="text-muted mt-1 text-xs">
+                        Alternativas: {item.alternatives.map((alt) => `${alt.title} (${alt.code})`).join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="border-line text-muted rounded-[var(--radius)] border border-dashed p-4 text-sm">
+              {proposal?.caveats[0] ?? 'No hay una propuesta calculada todavía.'}
+            </p>
+          )}
+
+          {proposal?.schedule.adjusted && (
+            <div className="border-waitlist/35 bg-waitlist/5 mt-3 rounded-[var(--radius)] border px-3 py-2 text-sm">
+              Se redujo la propuesta para evitar choques. {proposal.schedule.omitted.length} requisito(s) quedaron fuera.
+            </div>
+          )}
+          {error && <p className="text-closed mt-2 text-sm">{error.message}</p>}
+        </div>
+
+        <aside className="border-line space-y-3 border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-4">
+          <label className="block text-sm font-medium">
+            Carga máxima
+            <span className="mt-1 flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={maxCredits}
+                onChange={(event) => onMaxCredits(Number(event.target.value))}
+                className="border-line bg-paper tabular w-20 rounded-[var(--radius)] border px-2 py-2 font-mono text-sm"
+              />
+              <span className="text-muted text-xs">créditos</span>
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={onRecalculate}
+            disabled={pending || maxCredits <= 0}
+            className="border-line hover:bg-surface-2 w-full rounded-[var(--radius)] border px-3 py-2 text-sm disabled:opacity-50"
+          >
+            Recalcular
+          </button>
+          {proposal && (
+            <p className="tabular font-mono text-sm">
+              {proposal.recommendations.length} materia(s) · {proposal.totalCredits}/{proposal.maxCredits} créditos
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={onCreate}
+            disabled={!proposal?.schedule.valid || creating}
+            className="bg-accent text-accent-fg w-full rounded-[var(--radius)] px-3 py-2.5 text-sm font-medium disabled:opacity-50"
+          >
+            {creating ? 'Creando plan…' : 'Crear este plan'}
+          </button>
+          <p className="text-muted text-xs">
+            El plan queda editable. Podés cambiar grupos, quitar materias o elegir otra electiva.
+          </p>
+          {proposal?.caveats.map((caveat) => (
+            <p key={caveat} className="text-muted border-line border-t pt-2 text-xs">{caveat}</p>
+          ))}
+        </aside>
+      </div>
+    </section>
   );
 }
 
@@ -556,7 +776,7 @@ function SectionOption({
       <span className="flex items-center gap-2">
         {section.instructor && <span className="text-muted">{section.instructor}</span>}
         {section.seats && <SeatBadge status={section.seats.status} />}
-        {chosen && <span aria-hidden>✓</span>}
+        {chosen && <Check className="size-3.5 text-open" aria-label="Seleccionada" />}
       </span>
     </button>
   );
@@ -568,7 +788,7 @@ function ToCartResults({ result }: { result: PlanToCartResult }) {
       {result.results.map((r) => (
         <li key={r.itemId} className="flex items-center justify-between gap-3 px-4 py-2">
           <span>
-            {r.ok ? (r.alreadyInCart ? '· ' : '✓ ') : '✗ '}
+            {r.ok ? (r.alreadyInCart ? '· ' : <Check className="mr-1 inline size-3.5 text-open" aria-hidden />) : <X className="mr-1 inline size-3.5 text-closed" aria-hidden />}
             {r.title}
           </span>
           <span className={`text-xs ${r.ok ? 'text-muted' : 'text-closed'}`}>

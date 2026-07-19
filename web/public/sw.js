@@ -66,3 +66,50 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('install', () => self.skipWaiting());
+
+// ── Web Push (L4 §5.5) ──────────────────────────────────────────────────────
+// El server manda un payload JSON cifrado ({title, body, url, tag}); acá se
+// convierte en la notificación del sistema. tag agrupa: una push nueva con el
+// mismo tag reemplaza a la anterior en vez de apilar cinco "apareció cupo".
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: 'mikampus', body: event.data ? event.data.text() : '' };
+  }
+  const title = data.title || 'mikampus';
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || '',
+      tag: data.tag || title,
+      // renotify hace vibrar/sonar aunque reemplace una del mismo tag: un cupo
+      // nuevo tiene que interrumpir, no actualizar en silencio.
+      renotify: Boolean(data.tag),
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      data: { url: data.url || '/' },
+    })
+  );
+});
+
+// Tocar la notificación abre la app en el deep-link que trae (el swap de una
+// sección, /inscripcion, etc.); si ya hay una pestaña de mikampus abierta, la
+// enfoca en vez de abrir otra.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if (client.url.includes(url) && 'focus' in client) return client.focus();
+      }
+      const existing = clients[0];
+      if (existing && 'focus' in existing) {
+        existing.navigate(url);
+        return existing.focus();
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});

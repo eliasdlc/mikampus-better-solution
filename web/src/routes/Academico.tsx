@@ -1,6 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchGrades, syncGrades, fetchRequirements, syncPensum } from '../lib/api.ts';
+import { Check } from 'lucide-react';
+import {
+  fetchGrades,
+  syncGrades,
+  fetchRequirements,
+  syncPensum,
+  fetchGoals,
+  createGoal,
+  deleteGoal,
+  fetchInsights,
+} from '../lib/api.ts';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import { GRADE_POINTS, formatGpa, roundGpa, summarizeGrades } from '../../../src/shared/gpa.ts';
@@ -10,6 +20,9 @@ import type {
   RequirementGroup,
   RequirementItem,
   TermGrades,
+  GoalsResponse,
+  GoalEvaluation,
+  Insight,
 } from '../../../src/shared/schemas.ts';
 
 // Notas y avance (plan §5.6). Dos tabs: el histórico con el índice y el
@@ -153,6 +166,226 @@ function WhatIf({ data }: { data: GradesResponse }) {
   );
 }
 
+// ── Metas y señales (Fase 10, §12.7) ─────────────────────────────────────────
+
+// El veredicto de una meta en palabras de herramienta (copy aprobado §13.2). El
+// "fuera de alcance" solo se emite porque la política de repetición está
+// verificada: no hay un truco de repetir que lo salve.
+function veredicto(g: GoalEvaluation): { label: string; tone: string; detail: string | null } {
+  const avg = g.requiredAverage;
+  switch (g.verdict) {
+    case 'met':
+      return { label: 'Ya la alcanzaste', tone: 'text-open', detail: null };
+    case 'secured':
+      return { label: 'Asegurada', tone: 'text-open', detail: 'llegás aunque saques F en lo que falta' };
+    case 'reachable':
+      return { label: 'Alcanzable', tone: 'text-open', detail: avg ? `necesitás promedio ${avg.toFixed(1)} en lo que falta` : null };
+    case 'tight':
+      return { label: 'Al límite', tone: 'text-waitlist', detail: avg ? `exige casi todo A (${avg.toFixed(1)})` : null };
+    case 'unreachable':
+      return {
+        label: 'Fuera de alcance',
+        tone: 'text-closed',
+        detail: avg && avg > 4 ? 'ni con todo A en lo que falta' : 'con lo que falta ya no se alcanza',
+      };
+  }
+}
+
+function FanNumber({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div>
+      <div className="text-muted text-xs tracking-wide uppercase">{label}</div>
+      <div className={`font-display tabular text-2xl font-semibold tracking-tight ${tone ?? ''}`}>{value}</div>
+    </div>
+  );
+}
+
+function Metas() {
+  const qc = useQueryClient();
+  const goals = useQuery({ queryKey: ['goals'], queryFn: fetchGoals });
+  const [target, setTarget] = useState('3.0');
+
+  const onData = (fresh: GoalsResponse) => qc.setQueryData(['goals'], fresh);
+  const create = useMutation({ mutationFn: () => createGoal({ target: Number(target) }), onSuccess: onData });
+  const remove = useMutation({ mutationFn: (id: number) => deleteGoal(id), onSuccess: onData });
+
+  const data = goals.data;
+  const proj = data?.projection;
+  const puedeProyectar = !!proj && (data?.basedOn.remainingCredits ?? 0) > 0;
+
+  return (
+    <div className="space-y-4">
+      {/* El abanico honesto: dónde puede terminar tu índice según lo que saques
+          en lo que falta del pénsum. */}
+      {puedeProyectar ? (
+        <div>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-display text-sm font-semibold tracking-tight">Índice final proyectado</h3>
+            <span className="text-muted tabular text-xs">sobre {proj!.remainingCredits} créditos faltantes</span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-8 gap-y-3">
+            <FanNumber label="Mejor caso" value={formatGpa(proj!.best)} tone="text-open" />
+            <FanNumber label="Si mantenés tu ritmo" value={formatGpa(proj!.maintain)} />
+            <FanNumber label="Piso (todo C)" value={formatGpa(proj!.floor)} />
+          </div>
+        </div>
+      ) : (
+        <p className="text-muted text-sm">
+          Sincronizá tu avance (tab Avance) para proyectar tu índice final sobre los créditos que te faltan.
+        </p>
+      )}
+
+      {/* Las metas fijadas, con su veredicto en vivo. */}
+      {!!data?.goals.length && (
+        <ul className="border-line divide-line divide-y rounded-[var(--radius)] border">
+          {data.goals.map((g) => {
+            const v = veredicto(g);
+            return (
+              <li key={g.id} className="flex min-h-11 items-center justify-between gap-3 px-3 py-2">
+                <div className="min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-display tabular text-lg font-semibold">{g.target.toFixed(1)}</span>
+                    <span className={`text-xs font-medium ${v.tone}`}>{v.label}</span>
+                  </div>
+                  {v.detail && <div className="text-muted text-xs">{v.detail}</div>}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => remove.mutate(g.id)}
+                  className="text-muted hover:text-closed min-h-8 shrink-0 text-xs"
+                  aria-label={`Quitar meta de ${g.target.toFixed(1)}`}
+                >
+                  Quitar
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* Fijar una meta nueva. La escala es 0–4; el backend la valida igual. */}
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          create.mutate();
+        }}
+      >
+        <label className="text-muted text-xs">Fijar meta de índice</label>
+        <input
+          type="number"
+          min="0.1"
+          max="4"
+          step="0.1"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          className="border-line tabular w-16 rounded-[var(--radius)] border px-2 py-1 text-sm font-mono"
+          aria-label="Índice objetivo"
+        />
+        <button
+          type="submit"
+          disabled={create.isPending}
+          className="bg-accent text-accent-fg min-h-8 rounded-[var(--radius)] px-3 py-1 text-xs font-medium disabled:opacity-50"
+        >
+          Fijar
+        </button>
+        {create.error && <span className="text-closed text-xs">{create.error.message}</span>}
+      </form>
+    </div>
+  );
+}
+
+// El grado como flecha de intentos: "F → D". El color no se toca — es texto.
+function attemptTrail(attempts: { grade: string | null }[]): string {
+  return attempts.map((a) => a.grade ?? '—').join(' → ');
+}
+
+function SenalCard({ insight }: { insight: Insight }) {
+  let title = '';
+  let body: ReactNode = null;
+
+  switch (insight.kind) {
+    case 'gpa-trend': {
+      const seq = insight.points.map((p) => p.gpa.toFixed(1)).join(' → ');
+      const neto = insight.delta > 0 ? `+${insight.delta.toFixed(1)}` : insight.delta.toFixed(1);
+      title = 'Tu índice, últimos 3 ciclos';
+      body = (
+        <>
+          <span className="tabular font-mono">{seq}</span>
+          {insight.direction !== 'flat' && <span className="text-muted"> · {neto} neto</span>}
+        </>
+      );
+      break;
+    }
+    case 'area-performance':
+      title = 'Rendís distinto según el área';
+      body = (
+        <>
+          Mejor: <span className="font-medium">{insight.best.subject}</span>{' '}
+          <span className="tabular font-mono">{insight.best.gpa.toFixed(1)}</span> ({insight.best.count} materias). Más
+          baja: <span className="font-medium">{insight.worst.subject}</span>{' '}
+          <span className="tabular font-mono">{insight.worst.gpa.toFixed(1)}</span> ({insight.worst.count}).
+        </>
+      );
+      break;
+    case 'load-vs-result':
+      title = 'Carga vs. resultado';
+      body = (
+        <>
+          Tus ciclos más cargados (~{insight.heavy.avgCredits} cr) promedian{' '}
+          <span className="tabular font-mono">{insight.heavy.avgGpa.toFixed(1)}</span>; los más livianos (~
+          {insight.light.avgCredits} cr), <span className="tabular font-mono">{insight.light.avgGpa.toFixed(1)}</span>.
+        </>
+      );
+      break;
+    case 'repeated-courses':
+      title = 'Materias repetidas';
+      body = (
+        <>
+          {insight.courses.map((c, i) => (
+            <span key={c.code}>
+              {i > 0 && ', '}
+              {c.code} ({attemptTrail(c.attempts)})
+            </span>
+          ))}
+          . En PUCMM ambos intentos cuentan al índice: repetir no borra la nota vieja.
+        </>
+      );
+      break;
+    case 'withdrawn-courses':
+      title = 'Materias retiradas (R)';
+      body = (
+        <>
+          {insight.count}: no bajan el índice, pero son créditos cursados sin avanzar — {insight.codes.join(', ')}.
+        </>
+      );
+      break;
+  }
+
+  return (
+    <div className="border-line rounded-[var(--radius)] border p-3">
+      <div className="text-muted mb-1 text-xs font-medium tracking-wide uppercase">{title}</div>
+      <div className="text-sm">{body}</div>
+    </div>
+  );
+}
+
+function Senales() {
+  const insights = useQuery({ queryKey: ['insights'], queryFn: fetchInsights });
+  if (insights.isPending || insights.error) return null;
+  const list = insights.data?.insights ?? [];
+  if (!list.length) {
+    return <p className="text-muted text-sm">Todavía no hay suficientes datos para señales.</p>;
+  }
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {list.map((s, i) => (
+        <SenalCard key={`${s.kind}-${i}`} insight={s} />
+      ))}
+    </div>
+  );
+}
+
 function TablaTermino({ term }: { term: TermGrades }) {
   return (
     <section>
@@ -205,6 +438,16 @@ function Notas({ data }: { data: GradesResponse }) {
       <section className="border-line rounded-[var(--radius)] border p-4">
         <h2 className="font-display mb-3 text-base font-semibold tracking-tight">Simulador</h2>
         <WhatIf data={data} />
+      </section>
+
+      <section className="border-line rounded-[var(--radius)] border p-4">
+        <h2 className="font-display mb-3 text-base font-semibold tracking-tight">Metas</h2>
+        <Metas />
+      </section>
+
+      <section className="border-line rounded-[var(--radius)] border p-4">
+        <h2 className="font-display mb-3 text-base font-semibold tracking-tight">Señales</h2>
+        <Senales />
       </section>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -290,7 +533,7 @@ function ElectivaSlot({ group }: { group: RequirementGroup }) {
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm">{nombreElectiva(group.label)}</span>
         {group.satisfied ? (
-          <span className="text-open shrink-0 text-xs">✓ satisfecha</span>
+          <span className="text-open flex shrink-0 items-center gap-1 text-xs"><Check className="size-3.5" aria-hidden />satisfecha</span>
         ) : (
           <span className="text-muted tabular shrink-0 text-xs">elegí 1 · {group.items.length} opciones</span>
         )}
@@ -323,7 +566,7 @@ function PeriodoCard({ periodo }: { periodo: RequirementGroup }) {
       <header className="flex items-baseline justify-between gap-2">
         <h4 className="font-display text-sm font-semibold tracking-tight">Período {periodo.period}</h4>
         {periodo.satisfied ? (
-          <span className="text-open text-xs font-medium">✓ completo</span>
+          <span className="text-open flex items-center gap-1 text-xs font-medium"><Check className="size-3.5" aria-hidden />completo</span>
         ) : (
           <span className="text-muted tabular text-xs">
             {cr.taken ?? 0}/{cr.required ?? 0} cr
@@ -344,7 +587,7 @@ function PeriodoCard({ periodo }: { periodo: RequirementGroup }) {
       ))}
 
       {/* Un período satisfecho viene colapsado en el informe: sus materias no
-          están en el DOM. No mentimos con una lista vacía; el ✓ ya lo dice. */}
+          están en el DOM. No mentimos con una lista vacía; el estado ya lo dice. */}
       {periodo.satisfied && !obligatorios && electivas.length === 0 && (
         <p className="text-muted text-xs">Período aprobado.</p>
       )}

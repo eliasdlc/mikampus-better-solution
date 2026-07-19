@@ -2,7 +2,7 @@ import { CLASS_SEARCH_URL } from './constants.js';
 import { db, logSync } from '../db.js';
 import { scrapedSectionSchema, normalizeSeatStatus } from '../shared/schemas.ts';
 import { parseMeetings } from '../shared/meetings.ts';
-import { splitCourseCode, courseCodeToString } from '../shared/courseCode.ts';
+import { splitCourseCode, courseCodeToString, portalCatalogNbr } from '../shared/courseCode.ts';
 import { knownSubjects } from './browseCatalog.js';
 
 // ── Capa de escritura en DB ────────────────────────────────────────────────
@@ -366,4 +366,34 @@ export async function syncCatalogSubject(page, { term, career, subject, throttle
   const detail = skipped.length ? `${subject} (sin trocear: ${skipped.join(', ')})` : subject;
   logSync({ kind: 'catalog', term, status: skipped.length ? 'error' : 'ok', detail, rows: saved });
   return { saved, skipped };
+}
+
+// Consulta una sola materia exacta para el watcher compartido. A diferencia
+// del barrido por subject, acá el presupuesto importa: cada materia vigilada
+// debe costar una sola navegación, no un árbol entero de prefijos. El filtro
+// posterior es deliberado: PeopleSoft trata el campo como "contains", aun
+// cuando se le pase el código completo.
+export async function syncCatalogCourse(page, { term, career, courseCode }) {
+  // El carrito puede llegar antes que un sync de catálogo completo. El código
+  // canónico ya trae la partición necesaria para consultar el portal, así que
+  // no dejamos al watcher ciego solo porque todavía no exista la fila courses.
+  const fromDb = db.prepare('SELECT subject, catalog_nbr FROM courses WHERE code = ?').get(courseCode);
+  const parsed = String(courseCode).match(/^([A-Z]{2,4})-(.+)$/);
+  const course = fromDb ?? (parsed ? { subject: parsed[1], catalog_nbr: parsed[2] } : null);
+  if (!course) throw new Error(`El código de materia vigilada no es válido: ${courseCode}`);
+
+  const prefix = portalCatalogNbr({ subject: course.subject, catalogNbr: course.catalog_nbr });
+  const { exceeds, courses } = await searchByPrefix(page, { term, career, prefix });
+  if (exceeds) {
+    throw new Error(`La búsqueda de ${courseCode} excedió el límite del portal; hace falta un selector más preciso`);
+  }
+
+  const subjects = knownSubjects();
+  const exact = courses.filter((row) => {
+    const code = splitCourseCode(row.rawNbr, { subjectHint: row.subjectFromHeader, knownSubjects: subjects });
+    return code && courseCodeToString(code) === courseCode;
+  });
+  const saved = persist(exact, { term, career });
+  logSync({ kind: 'watcher', term, status: 'ok', detail: courseCode, rows: saved });
+  return { saved };
 }
