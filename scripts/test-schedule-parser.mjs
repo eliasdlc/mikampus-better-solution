@@ -87,7 +87,7 @@ try {
     })),
   });
 
-  assert.equal(saveSchedule(schedule), 2, 'guarda las dos secciones');
+  assert.equal(saveSchedule(1, schedule), 2, 'guarda las dos secciones');
 
   // saveSchedule cruza el término: el STRM, su etiqueta y su ventana quedan en
   // una sola fila de `terms` — el cimiento del modelo de tiempo.
@@ -97,7 +97,7 @@ try {
   assert.equal(term1930.startDate, '2026-09-01', 'la ventana sale de MTG_DATES');
   assert.equal(term1930.isNext, true, 'en julio de 2026, 1930 es el ciclo siguiente');
 
-  const read = readSchedule('1930');
+  const read = readSchedule(1, '1930');
   assert.equal(read.courses.length, 1);
   assert.equal(read.courses[0].code, 'ICC-233');
   assert.equal(read.courses[0].title, 'Seg. en Tecnología Información');
@@ -110,13 +110,13 @@ try {
   assert.equal(read.courses[0].sections[0].endDate, '2026-12-07', 'las fechas sobreviven para el ICS');
 
   // Resincronizar no duplica.
-  saveSchedule(schedule);
-  assert.equal(readSchedule('1930').courses[0].sections.length, 2, 're-sync no duplica');
+  saveSchedule(1, schedule);
+  assert.equal(readSchedule(1, '1930').courses[0].sections.length, 2, 're-sync no duplica');
 
   // Lo que un upsert solo se comería: al dar de baja una materia, tiene que
   // desaparecer del horario, no quedarse ahí para siempre.
-  saveSchedule({ term: '1930', courses: [] });
-  assert.equal(readSchedule('1930').courses.length, 0, 'una baja desaparece del horario');
+  saveSchedule(1, { term: '1930', courses: [] });
+  assert.equal(readSchedule(1, '1930').courses.length, 0, 'una baja desaparece del horario');
 
   // Y la materia sigue en el catálogo con su título: perder la inscripción no
   // puede perder el nombre que aprendimos.

@@ -44,24 +44,39 @@ import {
 } from '../../../src/shared/schemas.ts';
 import { z } from 'zod';
 
+let csrfToken: string | null = null;
+
+export function setCsrfToken(token: string | null) {
+  csrfToken = token;
+}
+
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+  }
+}
+
 // Todas las respuestas del backend se validan contra los esquemas Zod
 // compartidos: si un scraper devolvió basura, el error aparece acá con nombre,
 // no como un render roto tres componentes más abajo.
 async function getJSON(url: string): Promise<unknown> {
   const res = await fetch(url);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError((data as { error?: string }).error || `HTTP ${res.status}`, res.status);
   return data;
 }
 
 async function send(url: string, method: string, body?: unknown): Promise<unknown> {
   const res = await fetch(url, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError((data as { error?: string }).error || `HTTP ${res.status}`, res.status);
   return data;
 }
 
@@ -310,4 +325,73 @@ export async function fetchAccount(): Promise<AccountInfo> {
 export async function saveAccount(input: { username: string; password: string }): Promise<AccountInfo> {
   const data = await send('/api/account', 'POST', input);
   return accountInfoSchema.parse((data as { account?: unknown }).account);
+}
+
+// ── Ciclo de cuenta hosted (Fase 3) ────────────────────────────────────────
+
+const authMeSchema = z.object({
+  mode: z.enum(['local', 'hosted']),
+  user: z.object({ id: z.number(), username: z.string() }).nullable(),
+  csrfToken: z.string().nullable(),
+});
+export type AuthMe = z.infer<typeof authMeSchema>;
+
+export async function fetchAuthMe(): Promise<AuthMe> {
+  return authMeSchema.parse(await getJSON('/api/auth/me'));
+}
+
+export async function login(input: { username: string; password: string }) {
+  const data = await send('/api/auth/login', 'POST', input);
+  return z
+    .object({ ok: z.literal(true), user: z.object({ id: z.number(), username: z.string() }), csrfToken: z.string(), expiresAt: z.string() })
+    .parse(data);
+}
+
+export async function logout() {
+  return z.object({ ok: z.literal(true) }).parse(await send('/api/auth/logout', 'POST'));
+}
+
+const accountOverviewSchema = z.object({
+  user: z.object({ id: z.number(), portalUsername: z.string().nullable(), createdAt: z.string(), lastLoginAt: z.string().nullable() }).nullable(),
+  credential: z
+    .object({ username: z.string(), reason: z.string().nullable(), expiresAt: z.string(), createdAt: z.string() })
+    .nullable(),
+  syncs: z.array(z.object({ kind: z.string(), label: z.string(), syncedAt: z.string().nullable() })),
+});
+export type AccountOverview = z.infer<typeof accountOverviewSchema>;
+
+export async function fetchAccountOverview(): Promise<AccountOverview> {
+  return accountOverviewSchema.parse(await getJSON('/api/account/overview'));
+}
+
+const actionsSchema = z.object({
+  actions: z.array(
+    z.object({
+      id: z.number(),
+      action: z.string(),
+      detail: z.string().nullable(),
+      portalResponse: z.string().nullable(),
+      ok: z.boolean().nullable(),
+      createdAt: z.string(),
+    })
+  ),
+});
+export type AccountAction = z.infer<typeof actionsSchema>['actions'][number];
+
+export async function fetchActions(): Promise<AccountAction[]> {
+  return actionsSchema.parse(await getJSON('/api/actions')).actions;
+}
+
+export async function deleteAllMyData() {
+  return z.object({ ok: z.literal(true) }).parse(await send('/api/account/data', 'DELETE'));
+}
+
+export async function refreshExpiredData() {
+  return z
+    .object({
+      results: z.array(
+        z.object({ kind: z.string(), label: z.string(), status: z.enum(['fresh', 'updated', 'error']), syncedAt: z.string().nullable(), error: z.string().optional() })
+      ),
+    })
+    .parse(await send('/api/refresh', 'POST'));
 }

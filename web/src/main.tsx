@@ -14,6 +14,7 @@ import './index.css';
 import { App } from './App.tsx';
 import { SSEProvider } from './lib/sse.tsx';
 import { applyTheme, resolveTheme } from './lib/theme.ts';
+import { AuthProvider } from './lib/auth.tsx';
 
 // Aplicar el tema antes del primer render evita el flash de tema claro.
 applyTheme(resolveTheme());
@@ -40,11 +41,13 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <SSEProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </SSEProvider>
+      <AuthProvider>
+        <SSEProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </SSEProvider>
+      </AuthProvider>
     </QueryClientProvider>
   </StrictMode>
 );

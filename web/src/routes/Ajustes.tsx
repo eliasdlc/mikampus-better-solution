@@ -1,110 +1,148 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchAccount, saveAccount } from '../lib/api.ts';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { deleteAllMyData, fetchAccountOverview, fetchActions, refreshExpiredData } from '../lib/api.ts';
+import { useAuth } from '../lib/auth.tsx';
+import { ThemeToggle } from '../components/ThemeToggle.tsx';
+import { ago } from '../lib/time.ts';
 
-// Cambiar de cuenta desde la página en vez de editar el .env y reiniciar. El
-// backend hace el trabajo pesado (tira la sesión, borra el cache personal); acá
-// solo mandamos las credenciales y, al volver, descartamos las queries de datos
-// personales para que las pantallas se repinten vacías hasta el próximo sync.
-const PERSONAL_QUERIES = ['cart', 'grades', 'holds', 'my-schedule', 'pensum'];
+const PERSONAL_QUERIES = ['cart', 'grades', 'holds', 'my-schedule', 'pensum', 'requirements', 'profile', 'plans', 'state'];
 
 export function Ajustes() {
   const queryClient = useQueryClient();
-  const { data: account } = useQuery({ queryKey: ['account'], queryFn: fetchAccount });
+  const navigate = useNavigate();
+  const { me, logout } = useAuth();
+  const overview = useQuery({ queryKey: ['account-overview'], queryFn: fetchAccountOverview });
+  const actions = useQuery({ queryKey: ['actions'], queryFn: fetchActions });
+  const [confirmDelete, setConfirmDelete] = useState('');
 
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-
-  const save = useMutation({
-    mutationFn: saveAccount,
-    onSuccess: (fresh) => {
-      queryClient.setQueryData(['account'], fresh);
-      // removeQueries, no invalidateQueries: invalidar deja el dato viejo en
-      // cache y lo repinta (stale-while-revalidate) mientras refetchea, así que
-      // la pantalla mostraba a la persona anterior por un instante. Al borrarlo
-      // del cache, ninguna pantalla puede repintarlo: entra en loading y pide de
-      // nuevo, que ya es el backend vacío hasta el próximo sync.
-      for (const key of PERSONAL_QUERIES) queryClient.removeQueries({ queryKey: [key] });
-      setPassword('');
+  const refresh = useMutation({
+    mutationFn: refreshExpiredData,
+    onSuccess: () => {
+      for (const key of PERSONAL_QUERIES) queryClient.invalidateQueries({ queryKey: [key] });
+      queryClient.invalidateQueries({ queryKey: ['account-overview'] });
     },
   });
 
-  const canSave = username.trim().length > 0 && password.length > 0 && !save.isPending;
+  const erase = useMutation({
+    mutationFn: deleteAllMyData,
+    onSuccess: () => window.location.assign('/'),
+  });
+
+  const credential = overview.data?.credential;
 
   return (
     <div className="space-y-5">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="font-display text-2xl font-semibold tracking-tight">Ajustes</h1>
+        <div>
+          <h1 className="font-display text-2xl font-semibold tracking-tight">Ajustes</h1>
+          <p className="text-muted mt-1 text-sm">Tu cuenta, tus datos y lo que mikampus puede hacer por vos.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => refresh.mutate()}
+          disabled={refresh.isPending}
+          className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-3 py-2 text-sm font-medium disabled:opacity-50"
+        >
+          {refresh.isPending ? 'Actualizando…' : 'Actualizar'}
+        </button>
       </header>
 
-      <section className="border-line bg-surface space-y-4 rounded-[var(--radius)] border p-5">
-        <div>
-          <h2 className="text-sm font-medium">Cuenta del portal</h2>
-          <p className="text-muted mt-1 text-xs">
-            {account?.configured ? (
-              <>
-                Estás usando <span className="text-fg font-medium">{account.username}</span>{' '}
-                <span className="text-muted">({account.source === '.env' ? 'desde el .env' : 'guardada en la app'})</span>.
-              </>
-            ) : (
-              'Todavía no hay ninguna cuenta configurada.'
-            )}
-          </p>
-        </div>
-
-        <form
-          className="space-y-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (canSave) save.mutate({ username: username.trim(), password });
-          }}
-        >
-          <label className="block space-y-1">
-            <span className="text-muted text-xs">Usuario</span>
-            <input
-              type="text"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder={account?.username ?? 'tu usuario del portal'}
-              className="border-line bg-surface-2 focus:border-accent w-full rounded-[var(--radius)] border px-3 py-2 text-sm outline-none"
-            />
-          </label>
-
-          <label className="block space-y-1">
-            <span className="text-muted text-xs">Contraseña</span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="border-line bg-surface-2 focus:border-accent w-full rounded-[var(--radius)] border px-3 py-2 text-sm outline-none"
-            />
-          </label>
-
-          <button
-            type="submit"
-            disabled={!canSave}
-            className="bg-accent text-accent-fg rounded-[var(--radius)] px-3 py-2 text-sm font-medium disabled:opacity-50"
-          >
-            {save.isPending ? 'Cambiando de cuenta…' : 'Cambiar de cuenta'}
-          </button>
-        </form>
-
-        {save.error && <p className="text-closed text-sm">No se pudo cambiar la cuenta: {save.error.message}</p>}
-        {save.isSuccess && !save.isPending && (
-          <p className="text-open text-sm">
-            Cuenta cambiada. Tus notas, horario, pénsum, carrito y holds se vaciaron: entrá a cada pantalla y
-            sincronizá para traerlos de la cuenta nueva.
-          </p>
-        )}
-
-        <p className="text-muted border-line border-t pt-3 text-xs">
-          Al cambiar de cuenta se cierra la sesión abierta del portal y se borran los datos personales cacheados
-          (notas, horario, pénsum, carrito y holds). El catálogo de materias y tus planes se conservan. La contraseña
-          se guarda solo en tu máquina.
+      {refresh.isSuccess && (
+        <p className="text-open text-sm">
+          {refresh.data.results.filter((r) => r.status === 'updated').length
+            ? `Actualicé ${refresh.data.results.filter((r) => r.status === 'updated').map((r) => r.label.toLowerCase()).join(', ')}.`
+            : 'Todo lo personal sigue vigente; no hubo que consultar PeopleSoft.'}
         </p>
+      )}
+      {refresh.error && <p className="text-closed text-sm">No se pudo completar la actualización: {refresh.error.message}</p>}
+
+      <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+        <h2 className="text-sm font-medium">Cuenta</h2>
+        <p className="text-muted mt-1 text-sm">
+          Entraste como <span className="text-fg font-medium">{me?.user?.username ?? overview.data?.user?.portalUsername ?? 'tu cuenta PUCMM'}</span>.
+        </p>
+        <button
+          type="button"
+          onClick={async () => {
+            await logout();
+            navigate('/', { replace: true });
+          }}
+          className="border-line hover:bg-surface-2 mt-4 rounded-[var(--radius)] border px-3 py-2 text-sm font-medium"
+        >
+          Cerrar sesión
+        </button>
+      </section>
+
+      <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+        <h2 className="text-sm font-medium">Preferencias</h2>
+        <div className="border-line mt-3 flex items-center justify-between gap-4 border-t pt-3">
+          <div>
+            <p className="text-sm">Tema</p>
+            <p className="text-muted mt-1 text-xs">Elegí claro, oscuro o la preferencia de tu dispositivo.</p>
+          </div>
+          <ThemeToggle />
+        </div>
+      </section>
+
+      <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+        <h2 className="text-sm font-medium">Historial</h2>
+        <p className="text-muted mt-1 text-xs">Cada acción que mikampus hizo sobre tu matrícula y la respuesta literal del portal.</p>
+        {!actions.data?.length ? (
+          <p className="text-muted mt-4 text-sm">Todavía no hay acciones registradas.</p>
+        ) : (
+          <ol className="border-line mt-4 divide-line divide-y rounded-[var(--radius)] border">
+            {actions.data.map((action) => (
+              <li key={action.id} className="px-3 py-3 text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <span className="font-medium">{action.detail ?? action.action}</span>
+                  <time className="text-muted text-xs" title={action.createdAt}>{ago(action.createdAt)}</time>
+                </div>
+                <p className={action.ok === false ? 'text-closed mt-1 text-xs' : 'text-muted mt-1 text-xs'}>
+                  {action.portalResponse ?? 'El portal no confirmó el resultado.'}
+                </p>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+        <h2 className="text-sm font-medium">Tus datos</h2>
+        <dl className="border-line mt-3 divide-line divide-y border-t text-sm">
+          {overview.data?.syncs.map((sync) => (
+            <div key={sync.kind} className="flex items-center justify-between gap-4 py-2.5">
+              <dt>{sync.label}</dt>
+              <dd className="text-muted text-xs">{sync.syncedAt ? ago(sync.syncedAt) : 'todavía no sincronizado'}</dd>
+            </div>
+          ))}
+        </dl>
+        <div className="border-line mt-4 border-t pt-4 text-sm">
+          {credential ? (
+            <p className="text-muted leading-6">
+              Hay una credencial cifrada guardada para <span className="text-fg">{credential.reason ?? 'una función programada'}</span>. Se borra el{' '}
+              <span className="text-fg">{new Date(credential.expiresAt).toLocaleDateString('es-DO', { dateStyle: 'long' })}</span>.
+            </p>
+          ) : (
+            <p className="text-muted leading-6">No hay una contraseña guardada. Tu sesión actual vive solo en memoria.</p>
+          )}
+          <p className="text-muted mt-3 text-xs leading-5">
+            Si borrás tus datos, mikampus elimina tu información, planes, historial y cualquier credencial cifrada. Tu cuenta de micampus no se toca. Las copias de seguridad dejan de contenerlos en un máximo de 3 días.
+          </p>
+          <label className="mt-4 block space-y-1.5">
+            <span className="text-muted text-xs">Escribí <span className="font-mono text-fg">BORRAR</span> para confirmar</span>
+            <input value={confirmDelete} onChange={(e) => setConfirmDelete(e.target.value)} className="border-line bg-surface-2 focus:border-closed w-full rounded-[var(--radius)] border px-3 py-2 text-sm outline-none" />
+          </label>
+          <button
+            type="button"
+            onClick={() => erase.mutate()}
+            disabled={confirmDelete !== 'BORRAR' || erase.isPending}
+            className="bg-closed mt-3 rounded-[var(--radius)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {erase.isPending ? 'Borrando…' : 'Borrar todos mis datos'}
+          </button>
+          {erase.error && <p className="text-closed mt-2 text-sm">No se pudieron borrar los datos: {erase.error.message}</p>}
+        </div>
       </section>
     </div>
   );

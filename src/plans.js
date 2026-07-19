@@ -34,7 +34,7 @@ function sectionShape(row) {
   };
 }
 
-export function listPlans() {
+export function listPlans(userId) {
   return db
     .prepare(
       `SELECT p.id, p.term, p.name, p.updated_at,
@@ -43,10 +43,11 @@ export function listPlans() {
        FROM plans p
        LEFT JOIN plan_items i ON i.plan_id = p.id
        LEFT JOIN courses c ON c.id = i.course_id
+       WHERE p.user_id = ?
        GROUP BY p.id
        ORDER BY p.term DESC, p.created_at`
     )
-    .all()
+    .all(userId)
     .map((row) => ({
       id: row.id,
       term: row.term,
@@ -57,8 +58,10 @@ export function listPlans() {
     }));
 }
 
-export function readPlan(planId) {
-  const plan = db.prepare('SELECT id, term, name, updated_at FROM plans WHERE id = ?').get(planId);
+export function readPlan(userId, planId) {
+  const plan = db
+    .prepare('SELECT id, term, name, updated_at FROM plans WHERE id = ? AND user_id = ?')
+    .get(planId, userId);
   if (!plan) throw new Error('Ese plan no existe');
 
   const items = db
@@ -91,18 +94,18 @@ export function readPlan(planId) {
   return { id: plan.id, term: plan.term, name: plan.name, updatedAt: plan.updated_at, items };
 }
 
-export function createPlan({ term, name }) {
+export function createPlan(userId, { term, name }) {
   if (!term?.trim() || !name?.trim()) throw new Error('Un plan necesita término y nombre');
   const { lastInsertRowid } = db
-    .prepare('INSERT INTO plans (term, name) VALUES (?, ?)')
-    .run(term.trim(), name.trim());
-  return readPlan(lastInsertRowid);
+    .prepare('INSERT INTO plans (user_id, term, name) VALUES (?, ?, ?)')
+    .run(userId, term.trim(), name.trim());
+  return readPlan(userId, lastInsertRowid);
 }
 
 // Persiste de una vez la combinación que devolvió el recomendador. Se valida
 // todo antes de abrir la transacción para que nunca quede un "plan recomendado"
 // a medias si una sección desapareció o pertenece a otro término.
-export function createPlanWithItems({ term, name, items }) {
+export function createPlanWithItems(userId, { term, name, items }) {
   if (!term?.trim() || !name?.trim()) throw new Error('Un plan necesita término y nombre');
   if (!Array.isArray(items) || items.length === 0) throw new Error('No hay materias recomendadas para crear el plan');
 
@@ -120,43 +123,43 @@ export function createPlanWithItems({ term, name, items }) {
   db.exec('BEGIN');
   try {
     const { lastInsertRowid: planId } = db
-      .prepare('INSERT INTO plans (term, name) VALUES (?, ?)')
-      .run(term.trim(), name.trim());
+      .prepare('INSERT INTO plans (user_id, term, name) VALUES (?, ?, ?)')
+      .run(userId, term.trim(), name.trim());
     const insert = db.prepare(
       `INSERT INTO plan_items (plan_id, course_id, section_id, status, note)
        VALUES (?, ?, ?, 'planned', ?)`
     );
     for (const item of items) insert.run(planId, item.courseId, item.sectionId, item.note ?? null);
     db.exec('COMMIT');
-    return readPlan(planId);
+    return readPlan(userId, planId);
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
   }
 }
 
-export function updatePlan(planId, { name }) {
+export function updatePlan(userId, planId, { name }) {
   if (!name?.trim()) throw new Error('El nombre no puede quedar vacío');
   const { changes } = db
-    .prepare(`UPDATE plans SET name = ?, updated_at = datetime('now') WHERE id = ?`)
-    .run(name.trim(), planId);
+    .prepare(`UPDATE plans SET name = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`)
+    .run(name.trim(), planId, userId);
   if (!changes) throw new Error('Ese plan no existe');
-  return readPlan(planId);
+  return readPlan(userId, planId);
 }
 
-export function deletePlan(planId) {
+export function deletePlan(userId, planId) {
   // Los items caen por ON DELETE CASCADE.
-  const { changes } = db.prepare('DELETE FROM plans WHERE id = ?').run(planId);
+  const { changes } = db.prepare('DELETE FROM plans WHERE id = ? AND user_id = ?').run(planId, userId);
   if (!changes) throw new Error('Ese plan no existe');
 }
 
-export function duplicatePlan(planId) {
-  const source = readPlan(planId);
+export function duplicatePlan(userId, planId) {
+  const source = readPlan(userId, planId);
   db.exec('BEGIN');
   try {
     const { lastInsertRowid: newId } = db
-      .prepare('INSERT INTO plans (term, name) VALUES (?, ?)')
-      .run(source.term, `${source.name} (copia)`);
+      .prepare('INSERT INTO plans (user_id, term, name) VALUES (?, ?, ?)')
+      .run(userId, source.term, `${source.name} (copia)`);
     const insert = db.prepare(
       'INSERT INTO plan_items (plan_id, course_id, section_id, status, note, locked) VALUES (?, ?, ?, ?, ?, ?)'
     );
@@ -164,7 +167,7 @@ export function duplicatePlan(planId) {
       insert.run(newId, item.courseId, item.section?.id ?? null, item.status, item.note, item.locked ? 1 : 0);
     }
     db.exec('COMMIT');
-    return readPlan(newId);
+    return readPlan(userId, newId);
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
@@ -181,8 +184,8 @@ function assertSectionBelongs(plan, courseId, sectionId) {
   if (section.term !== plan.term) throw new Error(`Esa sección es de otro término (${section.term})`);
 }
 
-export function addPlanItem(planId, { courseId, sectionId = null, note = null }) {
-  const plan = db.prepare('SELECT id, term FROM plans WHERE id = ?').get(planId);
+export function addPlanItem(userId, planId, { courseId, sectionId = null, note = null }) {
+  const plan = db.prepare('SELECT id, term FROM plans WHERE id = ? AND user_id = ?').get(planId, userId);
   if (!plan) throw new Error('Ese plan no existe');
   if (!db.prepare('SELECT id FROM courses WHERE id = ?').get(courseId)) {
     throw new Error('Esa materia no existe en el catálogo');
@@ -196,13 +199,13 @@ export function addPlanItem(planId, { courseId, sectionId = null, note = null })
     'INSERT INTO plan_items (plan_id, course_id, section_id, status, note) VALUES (?, ?, ?, ?, ?)'
   ).run(planId, courseId, sectionId, sectionId != null ? 'planned' : 'desired', note);
   touchStmt.run(planId);
-  return readPlan(planId);
+  return readPlan(userId, planId);
 }
 
 // sectionId acepta tres valores: un id (elegir/cambiar grupo), null (volver la
 // materia a "deseada") y undefined (no tocar la sección, solo nota/candado).
-export function updatePlanItem(planId, itemId, { sectionId, note, locked }) {
-  const plan = db.prepare('SELECT id, term FROM plans WHERE id = ?').get(planId);
+export function updatePlanItem(userId, planId, itemId, { sectionId, note, locked }) {
+  const plan = db.prepare('SELECT id, term FROM plans WHERE id = ? AND user_id = ?').get(planId, userId);
   if (!plan) throw new Error('Ese plan no existe');
   const item = db
     .prepare('SELECT id, course_id FROM plan_items WHERE id = ? AND plan_id = ?')
@@ -222,14 +225,15 @@ export function updatePlanItem(planId, itemId, { sectionId, note, locked }) {
     db.prepare('UPDATE plan_items SET locked = ? WHERE id = ?').run(locked ? 1 : 0, itemId);
   }
   touchStmt.run(planId);
-  return readPlan(planId);
+  return readPlan(userId, planId);
 }
 
-export function removePlanItem(planId, itemId) {
+export function removePlanItem(userId, planId, itemId) {
+  readPlan(userId, planId); // 404 si el plan no es de este usuario
   const { changes } = db
     .prepare('DELETE FROM plan_items WHERE id = ? AND plan_id = ?')
     .run(itemId, planId);
   if (!changes) throw new Error('Esa materia no está en el plan');
   touchStmt.run(planId);
-  return readPlan(planId);
+  return readPlan(userId, planId);
 }

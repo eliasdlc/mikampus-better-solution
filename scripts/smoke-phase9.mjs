@@ -21,7 +21,7 @@ const fixturePage = await browser.newPage();
 await fixturePage.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
 const raw = await fixturePage.evaluate(extractAdvisementTree);
 await fixturePage.close();
-saveRequirementTree(parseAdvisementTree(raw, {
+saveRequirementTree(1, parseAdvisementTree(raw, {
   knownSubjects: ['ICC', 'FIS', 'MAT', 'ILE', 'ITT', 'GFA', 'FIL'],
 }));
 
@@ -30,7 +30,7 @@ const visit = (group) => {
   for (const item of group.items) if (item.status === 'pending') pending.push(item);
   group.children.forEach(visit);
 };
-visit(readRequirementTree());
+visit(readRequirementTree(1));
 const offerings = [...new Map(pending.map((item) => [item.code, item])).values()].slice(0, 24);
 const days = [['Mo'], ['Tu'], ['We'], ['Th'], ['Fr'], ['Sa']];
 offerings.forEach((item, index) => {

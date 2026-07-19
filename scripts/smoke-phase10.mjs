@@ -29,12 +29,12 @@ const { knownSubjects } = await import('../src/peoplesoft/browseCatalog.js');
   await p.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
   const rawTree = await p.evaluate(extractAdvisementTree);
   const tree = parseAdvisementTree(rawTree, { knownSubjects: ['ICC', 'FIS', 'MAT', 'ILE', 'ITT', 'GFA', 'FIL'] });
-  console.log('árbol:', saveRequirementTree(tree, { cohortStartTerm: 'Septiembre de 2023' }));
+  console.log('árbol:', saveRequirementTree(1, tree, { cohortStartTerm: 'Septiembre de 2023' }));
 
   await p.setContent(await readFile('fixtures/recon-course-history.html', 'utf8'));
   const rawGrades = await p.evaluate(extractCourseHistory);
   const courses = parseCourseHistory(rawGrades.rows, { knownSubjects: knownSubjects() });
-  saveGrades(courses);
+  saveGrades(1, courses);
   console.log('notas:', courses.length);
 
   await b.close();

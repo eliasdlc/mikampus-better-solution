@@ -16,45 +16,45 @@ function assertTarget(target) {
   return Math.round(n * 1000) / 1000;
 }
 
-export function listGoals() {
+export function listGoals(userId) {
   return db
     .prepare(
       `SELECT id, kind, target, deadline_term AS deadlineTerm, created_at AS createdAt, achieved_at AS achievedAt
-       FROM goals ORDER BY created_at DESC, id DESC`
+       FROM goals WHERE user_id = ? ORDER BY created_at DESC, id DESC`
     )
-    .all();
+    .all(userId);
 }
 
-export function createGoal({ kind = 'gpa', target, deadlineTerm = null } = {}) {
+export function createGoal(userId, { kind = 'gpa', target, deadlineTerm = null } = {}) {
   if (kind !== 'gpa') throw new Error('Por ahora solo se pueden fijar metas de índice');
   const { lastInsertRowid } = db
-    .prepare(`INSERT INTO goals (kind, target, deadline_term) VALUES (?, ?, ?)`)
-    .run(kind, assertTarget(target), deadlineTerm?.trim() || null);
-  return getGoal(Number(lastInsertRowid));
+    .prepare(`INSERT INTO goals (user_id, kind, target, deadline_term) VALUES (?, ?, ?, ?)`)
+    .run(userId, kind, assertTarget(target), deadlineTerm?.trim() || null);
+  return getGoal(userId, Number(lastInsertRowid));
 }
 
-export function getGoal(id) {
+export function getGoal(userId, id) {
   const row = db
     .prepare(
       `SELECT id, kind, target, deadline_term AS deadlineTerm, created_at AS createdAt, achieved_at AS achievedAt
-       FROM goals WHERE id = ?`
+       FROM goals WHERE id = ? AND user_id = ?`
     )
-    .get(id);
+    .get(id, userId);
   if (!row) throw new Error('La meta no existe');
   return row;
 }
 
-export function updateGoal(id, { target, deadlineTerm } = {}) {
-  getGoal(id); // 404 si no existe, con el mensaje de siempre
+export function updateGoal(userId, id, { target, deadlineTerm } = {}) {
+  getGoal(userId, id); // 404 si no existe, con el mensaje de siempre
   if (target !== undefined) db.prepare(`UPDATE goals SET target = ? WHERE id = ?`).run(assertTarget(target), id);
   if (deadlineTerm !== undefined) {
     db.prepare(`UPDATE goals SET deadline_term = ? WHERE id = ?`).run(deadlineTerm?.trim() || null, id);
   }
-  return getGoal(id);
+  return getGoal(userId, id);
 }
 
-export function deleteGoal(id) {
-  const { changes } = db.prepare(`DELETE FROM goals WHERE id = ?`).run(id);
+export function deleteGoal(userId, id) {
+  const { changes } = db.prepare(`DELETE FROM goals WHERE id = ? AND user_id = ?`).run(id, userId);
   if (!changes) throw new Error('La meta no existe');
   return { deleted: id };
 }
