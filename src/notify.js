@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { dispatchPush } from './webpush.js';
 
 // Notificaciones unificadas (plan §7, Fase 5). Antes cada operación decidía por
 // su cuenta si molestar al usuario: el enroll llamaba a notify() desde tres
@@ -78,6 +79,15 @@ const lastSent = new Map();
 export function notifyFromEvent(event, now = Date.now()) {
   const notice = noticeFor(event);
   if (!notice) return null;
+
+  // Web Push (§5.5): en hosted, un evento con dueño también va al teléfono de
+  // ESE usuario. Va antes del dedupe de escritorio y con su propio dedupe por
+  // usuario (webpush.js) — el popup local es de una sola persona; la push es
+  // por dueño y no puede quedar silenciada porque el server local no tenga
+  // escritorio. Fire-and-forget: un push service lento no frena esta política.
+  if (event.userId != null) {
+    dispatchPush(event.userId, notice, event, now);
+  }
 
   const previo = lastSent.get(notice.key);
   if (previo != null && now - previo < DEDUPE_MS) return null;

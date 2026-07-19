@@ -36,6 +36,7 @@ import { readEnrollmentWindows, syncEnrollmentWindows } from './peoplesoft/enrol
 import { dropClass } from './peoplesoft/dropClass.js';
 import { startBackupCron, stopBackupCron } from './backups.js';
 import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js';
+import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
@@ -163,6 +164,33 @@ app.get('/api/account/overview', (req, res) => {
     credential: credentialInfo(req.userId),
     syncs: syncKinds.map(([kind, label]) => ({ kind, label, syncedAt: lastSync(kind, { userId: req.userId }) })),
   });
+});
+
+// ── Web Push (§5.5): la mitad accionable del watcher ────────────────────────
+// La llave pública es lo único que el navegador necesita para suscribirse; es
+// pública por diseño (la privada nunca sale del server). null = canal apagado,
+// y la UI lo trata como "push no disponible" en vez de romper.
+app.get('/api/push/vapid-key', (req, res) => {
+  res.json({ publicKey: vapidPublicKey() });
+});
+
+// El navegador manda su suscripción (endpoint + claves del dispositivo); se
+// guarda atada a este usuario. Un re-subscribe del mismo teléfono actualiza.
+app.post('/api/push/subscribe', (req, res) => {
+  try {
+    saveSubscription(req.userId, req.body?.subscription, req.headers['user-agent'] ?? null);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Al revocar permiso o cerrar sesión en un dispositivo, se borra SOLO ese
+// endpoint: los otros teléfonos del usuario siguen recibiendo.
+app.post('/api/push/unsubscribe', (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (endpoint) removeSubscription(req.userId, endpoint);
+  res.json({ ok: true });
 });
 
 app.delete('/api/account/data', async (req, res) => {
