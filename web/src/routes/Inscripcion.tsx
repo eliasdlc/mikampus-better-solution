@@ -12,8 +12,11 @@ import {
   fetchEnrollmentWindows,
   syncEnrollmentWindows,
   fetchTermContext,
+  fetchCatalog,
+  fetchPensum,
 } from '../lib/api.ts';
-import type { CartRow } from '../../../src/shared/schemas.ts';
+import type { CartRow, CatalogCourse } from '../../../src/shared/schemas.ts';
+import { AlertTriangle, CheckCircle2, CircleDot, Clock3, Radio, Zap } from 'lucide-react';
 import { sectionToBlocks, type Block } from '../lib/grid.ts';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
 import { CourseChip } from '../components/CourseChip.tsx';
@@ -22,6 +25,7 @@ import { LiveOpBanner } from '../components/LiveOpBanner.tsx';
 import { Countdown } from '../components/Countdown.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
+import { CourseSearchBox } from '../components/CourseSearchBox.tsx';
 
 // El carrito enriquecido trae horario por fila: se proyecta en el WeeklyGrid
 // para ver el horario que estás a punto de inscribir — imposible en micampus.
@@ -50,6 +54,12 @@ export function Inscripcion() {
     queryKey: ['enrollment-windows', nextTerm],
     queryFn: () => fetchEnrollmentWindows(nextTerm),
     enabled: terms.isSuccess,
+  });
+  const catalog = useQuery({ queryKey: ['catalog'], queryFn: fetchCatalog });
+  const pensum = useQuery({
+    queryKey: ['pensum', nextTerm],
+    queryFn: () => fetchPensum(nextTerm),
+    enabled: !!nextTerm,
   });
 
   const [at, setAt] = useState('');
@@ -101,6 +111,26 @@ export function Inscripcion() {
   const rows = cart.data?.rows ?? [];
   const blocks = useMemo(() => cartBlocks(rows), [rows]);
   const enrollmentWindow = windows.data?.windows[0] ?? null;
+  const hasClosedSection = rows.some((row) => row.status === 'closed');
+  const hasCollision = blocks.some((block) => block.conflictsWith.length > 0);
+  const isLive = enroll.isPending || validation.isPending || refresh.isPending || refreshWindow.isPending;
+  const stage = enroll.isSuccess
+    ? 'result'
+    : isLive
+      ? 'live'
+      : rows.length === 0 || hasClosedSection || hasCollision
+        ? 'preparing'
+        : scheduledAt || watcherOn
+          ? 'armed'
+          : 'ready';
+  const recommendedCourses = useMemo(() => {
+    const byId = new Map((catalog.data?.courses ?? []).map((course) => [course.id, course]));
+    return (pensum.data?.courses ?? [])
+      .filter((course) => course.status === 'pending' && course.offered && course.courseId != null)
+      .map((course) => byId.get(course.courseId!))
+      .filter((course): course is CatalogCourse => !!course)
+      .filter((course) => course.sections.some((section) => !nextTerm || section.term === nextTerm));
+  }, [catalog.data, pensum.data, nextTerm]);
   const liveMessage = enroll.isPending
     ? 'Ejecutando inscripción del carrito en PeopleSoft…'
     : validation.isPending
@@ -121,12 +151,54 @@ export function Inscripcion() {
       )}
 
       <LiveOpBanner
-        active={enroll.isPending || validation.isPending || refreshWindow.isPending}
+        active={isLive}
         message={liveMessage}
       />
 
+      <section className="border-line bg-surface overflow-hidden rounded-[var(--radius)] border" aria-live="polite">
+        <div className={`h-1 ${stage === 'preparing' ? 'bg-waitlist' : stage === 'result' ? 'bg-open' : 'bg-accent'}`} aria-hidden />
+        <div className="grid gap-4 p-4 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
+          <StageIcon stage={stage} />
+          <div>
+            <p className="text-muted text-xs font-medium tracking-wide uppercase">Estado de inscripción</p>
+            <h2 className="font-display mt-0.5 text-xl font-semibold tracking-tight">{stageCopy(stage).title}</h2>
+            <p className="text-muted mt-1 text-sm">{stageCopy(stage).description}</p>
+          </div>
+          {stage === 'ready' && (
+            <button
+              type="button"
+              disabled={enroll.isPending}
+              onClick={() => enroll.mutate()}
+              className="bg-accent text-accent-fg flex min-h-11 items-center justify-center gap-2 rounded-[var(--radius)] px-4 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              <Zap className="size-4" aria-hidden />Inscribir ahora
+            </button>
+          )}
+        </div>
+      </section>
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
+          {stage === 'preparing' && catalog.data && (
+            <section className="border-line bg-surface rounded-[var(--radius)] border p-4">
+              <div className="mb-3">
+                <h2 className="text-sm font-medium">Completá tu carrito</h2>
+                <p className="text-muted mt-1 text-xs">Primero te mostramos las materias pendientes de tu pénsum que se ofrecen este ciclo.</p>
+              </div>
+              <CourseSearchBox
+                courses={catalog.data.courses.filter((course) => course.sections.some((section) => !nextTerm || section.term === nextTerm))}
+                suggestions={recommendedCourses}
+                placeholder="Buscar una materia para el carrito…"
+              />
+            </section>
+          )}
+
+          {stage === 'preparing' && (hasCollision || hasClosedSection) && (
+            <section className="border-waitlist/40 bg-waitlist/10 text-waitlist rounded-[var(--radius)] border p-3 text-sm">
+              {hasCollision && <p>Hay secciones que chocan en el horario proyectado. Ajustá el carrito antes de programar el disparo.</p>}
+              {hasClosedSection && <p className={hasCollision ? 'mt-1' : ''}>Hay secciones cerradas. Podés activar el watcher o elegir otro grupo.</p>}
+            </section>
+          )}
           <section className="border-line bg-surface rounded-[var(--radius)] border">
             <header className="border-line border-b px-4 py-2.5">
               <h2 className="text-sm font-medium">Carrito</h2>
@@ -179,7 +251,8 @@ export function Inscripcion() {
             )}
           </section>
 
-          {/* El horario que este carrito inscribiría, choques incluidos. */}
+          {/* El horario sube al chequeo maestro: aquí se lee como una prueba,
+              no como decoración al final de la pantalla. */}
           {blocks.length > 0 && <WeeklyGrid blocks={blocks} />}
         </div>
 
@@ -339,17 +412,42 @@ export function Inscripcion() {
             {watch.error && <p className="text-closed text-xs">{watch.error.message}</p>}
           </div>
 
-          <button
-            disabled={enroll.isPending}
-            onClick={() => enroll.mutate()}
-            className="border-line hover:bg-surface-2 w-full rounded-[var(--radius)] border px-3 py-2 text-sm font-medium disabled:opacity-50"
-          >
-            Inscribir ahora (manual)
-          </button>
+          {stage !== 'ready' && stage !== 'live' && (
+            <button
+              disabled={enroll.isPending || rows.length === 0}
+              onClick={() => enroll.mutate()}
+              className="border-line hover:bg-surface-2 w-full rounded-[var(--radius)] border px-3 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              Inscribir ahora de todas formas
+            </button>
+          )}
         </aside>
       </div>
 
       <ActivityFeed />
     </div>
   );
+}
+
+type EnrollmentStage = 'preparing' | 'ready' | 'armed' | 'live' | 'result';
+
+function stageCopy(stage: EnrollmentStage) {
+  switch (stage) {
+    case 'preparing':
+      return { title: 'Preparando', description: 'Revisá el carrito, los choques y los cupos antes de comprometer el disparo.' };
+    case 'ready':
+      return { title: 'Armado para inscribir', description: 'El carrito no muestra problemas. Podés inscribir ahora o programar tu hora.' };
+    case 'armed':
+      return { title: 'Disparo armado', description: 'Tu horario quedó preparado. mikampus conserva el contexto y te muestra cada paso al ejecutarse.' };
+    case 'live':
+      return { title: 'Operación en vivo', description: 'No cierres esta pantalla: el feed registra la respuesta de PeopleSoft paso a paso.' };
+    case 'result':
+      return { title: 'Resultado recibido', description: 'Revisá el feed para confirmar cada materia y activá el watcher para las que no entraron.' };
+  }
+}
+
+function StageIcon({ stage }: { stage: EnrollmentStage }) {
+  const Icon = stage === 'preparing' ? AlertTriangle : stage === 'ready' ? CircleDot : stage === 'armed' ? Clock3 : stage === 'live' ? Radio : CheckCircle2;
+  const tone = stage === 'preparing' ? 'text-waitlist bg-waitlist/10' : stage === 'result' ? 'text-open bg-open/10' : 'text-accent bg-accent/10';
+  return <span className={`flex size-10 items-center justify-center rounded-full ${tone}`}><Icon className="size-5" aria-hidden /></span>;
 }

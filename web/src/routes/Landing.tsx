@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { Check, X } from 'lucide-react';
 import { ThemeToggle } from '../components/ThemeToggle.tsx';
 import { courseColor } from '../lib/color.ts';
 
@@ -117,11 +118,11 @@ function ReportRow({ concepto, ellos, nosotros }: { concepto: string; ellos: str
     <div className="border-line grid border-t sm:grid-cols-[10rem_1fr_1fr] sm:gap-6">
       <div className="text-muted pt-4 text-xs font-medium tracking-wide uppercase sm:py-5">{concepto}</div>
       <div className="text-muted pt-2 pb-1 text-sm leading-6 sm:py-5">
-        <span className="text-closed sm:hidden">✗ </span>
+        <X className="text-closed mr-1 inline size-3.5 sm:hidden" aria-hidden />
         {ellos}
       </div>
       <div className="pt-1 pb-4 text-sm leading-6 sm:py-5">
-        <span className="text-open">✓ </span>
+        <Check className="text-open mr-1 inline size-3.5" aria-hidden />
         {nosotros}
       </div>
     </div>
@@ -194,8 +195,8 @@ function MockLog() {
   const lines = [
     { t: '09:59:55', msg: 'esperando la ventana de inscripción…', tone: 'text-muted' },
     { t: '10:00:00', msg: 'abriendo carrito (4 materias)', tone: '' },
-    { t: '10:00:03', msg: 'ICC-223 · sección 4567 — inscrita ✓', tone: 'text-open' },
-    { t: '10:00:05', msg: 'ITE-326 · sección 2201 — inscrita ✓', tone: 'text-open' },
+    { t: '10:00:03', msg: 'ICC-223 · sección 4567 — inscrita', tone: 'text-open', ok: true },
+    { t: '10:00:05', msg: 'ITE-326 · sección 2201 — inscrita', tone: 'text-open', ok: true },
     { t: '10:00:06', msg: '1ITE-326 · lista de espera, posición 2', tone: 'text-waitlist' },
     { t: '10:00:07', msg: 'listo: 3/4 inscritas, reporte guardado', tone: '' },
   ];
@@ -211,7 +212,7 @@ function MockLog() {
         {lines.map((l, i) => (
           <div key={l.t} className="log-line flex gap-3" style={{ '--i': i } as React.CSSProperties}>
             <span className="text-muted tabular shrink-0">{l.t}</span>
-            <span className={l.tone}>{l.msg}</span>
+            <span className={`${l.tone} flex items-center gap-1`}>{l.msg}{l.ok && <Check className="size-3" aria-hidden />}</span>
           </div>
         ))}
       </div>
