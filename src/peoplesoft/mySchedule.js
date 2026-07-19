@@ -26,9 +26,9 @@ import { upsertTerm } from '../terms.js';
 // ── Capa de escritura ──────────────────────────────────────────────────────
 
 const upsertEnrollmentStmt = db.prepare(`
-  INSERT INTO enrollments (term, course_id, section_id, status, units, grading, grade, start_date, end_date, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  ON CONFLICT(term, section_id) DO UPDATE SET
+  INSERT INTO enrollments (user_id, term, course_id, section_id, status, units, grading, grade, start_date, end_date, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  ON CONFLICT(user_id, term, section_id) DO UPDATE SET
     status = excluded.status,
     units = excluded.units,
     grading = excluded.grading,
@@ -42,10 +42,10 @@ const upsertEnrollmentStmt = db.prepare(`
 // término antes de reinsertar: si diste de baja una materia, un upsert solo la
 // dejaría para siempre en tu horario. Va en transacción para que el horario
 // nunca se lea a medio reemplazar.
-export function saveSchedule({ term, termLabel = null, courses }) {
+export function saveSchedule(userId, { term, termLabel = null, courses }) {
   db.exec('BEGIN');
   try {
-    db.prepare('DELETE FROM enrollments WHERE term = ?').run(term);
+    db.prepare('DELETE FROM enrollments WHERE user_id = ? AND term = ?').run(userId, term);
 
     // La ventana del término sale de las fechas de sus secciones (MTG_DATES):
     // el primer inicio y el último fin. Es lo que el modelo de tiempo usa para
@@ -75,6 +75,7 @@ export function saveSchedule({ term, termLabel = null, courses }) {
         );
         const courseId = db.prepare('SELECT course_id FROM sections WHERE id = ?').get(sectionId).course_id;
         upsertEnrollmentStmt.run(
+          userId,
           term,
           courseId,
           sectionId,
@@ -105,12 +106,14 @@ export function saveSchedule({ term, termLabel = null, courses }) {
 // El término del horario que se sincronizó más recientemente. Sirve para que
 // /horario funcione sin configurar nada: PeopleSoft ya sabe cuál es tu término
 // activo, así que el primer sync lo descubre y desde ahí es el default.
-export function latestScheduledTerm() {
-  const row = db.prepare('SELECT term FROM enrollments ORDER BY updated_at DESC, term DESC LIMIT 1').get();
+export function latestScheduledTerm(userId) {
+  const row = db
+    .prepare('SELECT term FROM enrollments WHERE user_id = ? ORDER BY updated_at DESC, term DESC LIMIT 1')
+    .get(userId);
   return row?.term ?? null;
 }
 
-export function readSchedule(term) {
+export function readSchedule(userId, term) {
   // Sin término (nunca se sincronizó) no es un error:
   // es un horario vacío, y la UI ofrece traerlo del portal.
   if (!term) {
@@ -125,10 +128,10 @@ export function readSchedule(term) {
        FROM enrollments e
        JOIN sections s ON s.id = e.section_id
        JOIN courses c ON c.id = e.course_id
-       WHERE e.term = ?
+       WHERE e.user_id = ? AND e.term = ?
        ORDER BY c.code, s.class_nbr`
     )
-    .all(term);
+    .all(userId, term);
 
   const byCourse = new Map();
   for (const row of rows) {
@@ -161,18 +164,18 @@ export function readSchedule(term) {
   return {
     term: term ?? null,
     generatedAt: new Date().toISOString(),
-    syncedAt: lastSync('mySchedule', term),
+    syncedAt: lastSync('mySchedule', { term, userId }),
     courses: [...byCourse.values()],
   };
 }
 
-export function removeEnrollmentCourse(term, courseCode) {
+export function removeEnrollmentCourse(userId, term, courseCode) {
   return db
     .prepare(
       `DELETE FROM enrollments
-       WHERE term = ? AND course_id IN (SELECT id FROM courses WHERE code = ?)`
+       WHERE user_id = ? AND term = ? AND course_id IN (SELECT id FROM courses WHERE code = ?)`
     )
-    .run(term, courseCode).changes;
+    .run(userId, term, courseCode).changes;
 }
 
 // ── Scraper ────────────────────────────────────────────────────────────────
@@ -326,7 +329,7 @@ async function selectTerm(page, targetTerm, onStep) {
 // Lee el horario inscrito del portal y lo persiste. Devuelve lo guardado.
 // targetTerm (STRM) fija qué ciclo sincronizar; sin él, el que el portal dé por
 // defecto (el arranque, cuando todavía no conocemos el STRM del ciclo actual).
-export async function syncSchedule(page, { onStep = () => {}, targetTerm = null } = {}) {
+export async function syncSchedule(page, { userId, onStep = () => {}, targetTerm = null }) {
   try {
     onStep('abriendo Mi Horario…');
     await page.goto(SCHEDULE_URL, { waitUntil: 'commit' });
@@ -363,8 +366,9 @@ export async function syncSchedule(page, { onStep = () => {}, targetTerm = null 
       );
     }
 
-    const saved = saveSchedule(schedule);
+    const saved = saveSchedule(userId, schedule);
     logSync({
+      userId,
       kind: 'mySchedule',
       term: schedule.term,
       status: 'ok',
@@ -373,7 +377,7 @@ export async function syncSchedule(page, { onStep = () => {}, targetTerm = null 
     });
     return schedule;
   } catch (err) {
-    logSync({ kind: 'mySchedule', status: 'error', detail: err.message });
+    logSync({ userId, kind: 'mySchedule', status: 'error', detail: err.message });
     throw err;
   }
 }

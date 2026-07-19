@@ -159,19 +159,20 @@ export async function validateCart(page) {
 // las notas y los holds: el GET sirve disco y el refresh es explícito.
 
 // El carrito del portal es un estado completo, no un incremento: se borra y se
-// reescribe entero. Guardarlo fila por fila dejaría en la DB materias que el
-// usuario ya sacó del carrito en micampus.
-export function saveCart(rows) {
+// reescribe entero (solo el del usuario en cuestión). Guardarlo fila por fila
+// dejaría en la DB materias que el usuario ya sacó del carrito en micampus.
+export function saveCart(userId, rows) {
   db.exec('BEGIN');
   try {
-    db.prepare('DELETE FROM cart_rows').run();
+    db.prepare('DELETE FROM cart_rows WHERE user_id = ?').run(userId);
     const insert = db.prepare(
-      `INSERT INTO cart_rows (idx, class_label, course_code, title, section, class_nbr,
+      `INSERT INTO cart_rows (user_id, idx, class_label, course_code, title, section, class_nbr,
                               instructor, credits, campus, meetings, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const row of rows) {
       insert.run(
+        userId,
         row.index,
         row.classLabel,
         row.courseCode,
@@ -190,18 +191,18 @@ export function saveCart(rows) {
     db.exec('ROLLBACK');
     throw err;
   }
-  logSync({ kind: 'cart', status: 'ok', detail: `${rows.length} materia(s)`, rows: rows.length });
+  logSync({ userId, kind: 'cart', status: 'ok', detail: `${rows.length} materia(s)`, rows: rows.length });
   return rows.length;
 }
 
-export function readCart() {
+export function readCart(userId) {
   const rows = db
     .prepare(
       `SELECT idx, class_label, course_code, title, section, class_nbr, instructor,
               credits, campus, meetings, status
-       FROM cart_rows ORDER BY idx`
+       FROM cart_rows WHERE user_id = ? ORDER BY idx`
     )
-    .all()
+    .all(userId)
     .map((r) =>
       cartRowSchema.parse({
         index: r.idx,
@@ -218,19 +219,20 @@ export function readCart() {
       })
     );
 
-  return { generatedAt: new Date().toISOString(), syncedAt: lastSync('cart'), rows };
+  return { generatedAt: new Date().toISOString(), syncedAt: lastSync('cart', { userId }), rows };
 }
 
 // La única lectura en vivo. La usa el refresh explícito de /inscripcion y cada
 // tick del watcher, así que el cache queda fresco sin pedirle nada extra al
-// portal.
-export async function syncCart(page) {
+// portal. La página YA es la sesión de ese usuario; userId dice de quién es el
+// cache que se escribe.
+export async function syncCart(page, { userId }) {
   try {
     const rows = await getCartStatus(page);
-    saveCart(rows);
+    saveCart(userId, rows);
     return rows;
   } catch (err) {
-    logSync({ kind: 'cart', status: 'error', detail: err.message });
+    logSync({ userId, kind: 'cart', status: 'error', detail: err.message });
     throw err;
   }
 }

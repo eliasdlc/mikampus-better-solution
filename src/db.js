@@ -24,6 +24,18 @@ db.exec('PRAGMA foreign_keys = ON');
 //   section  = una clase concreta de un término (class_nbr 4567) con horario.
 //   seats_snapshot = serie temporal del cupo de una sección (lo único volátil).
 db.exec(`
+  -- Quién usa mikampus (Fase 2 de LANZAMIENTO.md). El login ES el del portal:
+  -- no hay contraseña propia acá — la identidad es el username de micampus, y
+  -- verificarla es loguearse contra PeopleSoft. La fila 1 nace en la migración
+  -- adoptando los datos pre-multi-usuario; portal_username puede ser NULL hasta
+  -- que se conozca (el modo local lo adopta del .env/account.json al arrancar).
+  CREATE TABLE IF NOT EXISTS users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    portal_username TEXT UNIQUE COLLATE NOCASE,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login_at   TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS courses (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     code        TEXT NOT NULL UNIQUE,          -- canónico, ej. "ICC-303"
@@ -121,10 +133,11 @@ db.exec(`
     PRIMARY KEY (group_id, code)
   );
 
-  -- Una sola fila: quién es el estudiante. Carrera y número de pénsum salen del
-  -- advisement; la cohorte (primer término con notas) la aporta grades.
+  -- Quién es cada estudiante: carrera y número de pénsum salen del advisement;
+  -- la cohorte (primer término con notas) la aporta grades. Un perfil por
+  -- usuario (antes era una sola fila con id = 1).
   CREATE TABLE IF NOT EXISTS profile (
-    id                 INTEGER PRIMARY KEY CHECK (id = 1),
+    user_id            INTEGER PRIMARY KEY,
     career             TEXT,
     pensum_no          TEXT,
     plan_label         TEXT,
@@ -170,6 +183,7 @@ db.exec(`
   -- horario sea un solo SELECT.
   CREATE TABLE IF NOT EXISTS enrollments (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL DEFAULT 1,
     term        TEXT NOT NULL,
     course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
     section_id  INTEGER NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
@@ -180,13 +194,14 @@ db.exec(`
     start_date  TEXT,                         -- ISO; el ICS los necesita para
     end_date    TEXT,                         -- acotar la recurrencia
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (term, section_id)
+    UNIQUE (user_id, term, section_id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_enrollments_term ON enrollments(term);
 
   CREATE TABLE IF NOT EXISTS plans (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL DEFAULT 1,
     term        TEXT NOT NULL,
     name        TEXT NOT NULL,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
@@ -230,6 +245,7 @@ db.exec(`
   -- Guardar un número derivado acá sería una segunda verdad que puede mentir.
   CREATE TABLE IF NOT EXISTS grades (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL DEFAULT 1,
     term         TEXT NOT NULL,
     course_id    INTEGER REFERENCES courses(id) ON DELETE SET NULL,
     course_code  TEXT,
@@ -244,6 +260,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS progress_items (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL DEFAULT 1,
     requirement  TEXT,
     course_code  TEXT,
     title        TEXT,
@@ -258,6 +275,7 @@ db.exec(`
   -- "no bloquea": es "el portal no nos lo dijo".
   CREATE TABLE IF NOT EXISTS holds (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL DEFAULT 1,
     code         TEXT,
     title        TEXT NOT NULL,
     description  TEXT,
@@ -272,7 +290,8 @@ db.exec(`
   -- Existe para que abrir una pantalla nunca dispare Playwright (el Dashboard
   -- lo lee en cada carga); la lectura en vivo es explícita.
   CREATE TABLE IF NOT EXISTS cart_rows (
-    idx          INTEGER PRIMARY KEY,          -- posición en el carrito del portal
+    user_id      INTEGER NOT NULL DEFAULT 1,
+    idx          INTEGER NOT NULL,             -- posición en el carrito del portal
     class_label  TEXT NOT NULL,
     course_code  TEXT,
     title        TEXT NOT NULL,
@@ -283,11 +302,15 @@ db.exec(`
     campus       TEXT,
     meetings     TEXT,                         -- JSON: [{days,start,end,room}]
     status       TEXT,                         -- open / waitlist / closed
-    captured_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    captured_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, idx)
   );
 
+  -- user_id NULL = sync compartido (catálogo, subjects, títulos: los corre la
+  -- cuenta de servicio para todos); con valor, el sync personal de ese usuario.
   CREATE TABLE IF NOT EXISTS sync_log (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER,
     kind         TEXT NOT NULL,                -- catalog / mySchedule / grades / ...
     term         TEXT,
     status       TEXT NOT NULL,                -- ok / error
@@ -316,12 +339,39 @@ db.exec(`
 // nueva llega a las bases recién creadas y no a la que el usuario ya tiene.
 // Esto agrega la columna solo si falta, que es todo lo que necesita una app
 // local sin sistema de migraciones. Es aditivo: no borra ni reescribe nada.
+// Devuelve si la agregó, para que una migración pueda backfillear solo una vez.
 function addColumnIfMissing(table, column, definition) {
   const exists = db
     .prepare(`PRAGMA table_info(${table})`)
     .all()
     .some((c) => c.name === column);
   if (!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return !exists;
+}
+
+function hasColumn(table, column) {
+  return db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some((c) => c.name === column);
+}
+
+// ALTER TABLE no puede cambiar una PK ni un UNIQUE: para eso SQLite exige
+// recrear la tabla y copiar las filas. copySelect dice cómo salen las filas de
+// la tabla vieja (acá es donde la migración "adopta" lo existente como del
+// usuario 1). Todo o nada: si la copia falla, la tabla vieja queda intacta.
+function rebuildTable(table, createSql, copySelect) {
+  db.exec('BEGIN');
+  try {
+    db.exec(createSql.replace(`CREATE TABLE IF NOT EXISTS ${table}`, `CREATE TABLE ${table}__new`));
+    db.exec(`INSERT INTO ${table}__new ${copySelect}`);
+    db.exec(`DROP TABLE ${table}`);
+    db.exec(`ALTER TABLE ${table}__new RENAME TO ${table}`);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 // El estado de una materia del histórico (cursada / cursando / transferida) lo
@@ -333,27 +383,155 @@ addColumnIfMissing('grades', 'status', "TEXT NOT NULL DEFAULT 'taken'");
 addColumnIfMissing('grades', 'subject', 'TEXT');
 addColumnIfMissing('grades', 'catalog_nbr', 'TEXT');
 
-// Datos que pertenecen a una cuenta concreta: notas, horario inscrito, pénsum,
-// avance, holds y carrito. El catálogo (courses/subjects/sections/seats) y los
-// planes que armaste a mano son independientes de la cuenta y NO se tocan.
+// ── Migración multi-usuario (Fase 2 de LANZAMIENTO.md) ─────────────────────
+// Una DB pre-existente es la de una sola persona: sus filas se adoptan como
+// del usuario 1 (el DEFAULT 1 de las columnas nuevas hace el backfill solo).
+// Las tablas cuya identidad cambia (PK/UNIQUE ahora incluyen al usuario) se
+// recrean copiando las filas con user_id = 1.
+
+db.prepare('INSERT OR IGNORE INTO users (id) VALUES (1)').run();
+
+// Columnas simples: el ALTER con DEFAULT 1 adopta lo existente en el acto.
+addColumnIfMissing('grades', 'user_id', 'INTEGER NOT NULL DEFAULT 1');
+addColumnIfMissing('holds', 'user_id', 'INTEGER NOT NULL DEFAULT 1');
+addColumnIfMissing('progress_items', 'user_id', 'INTEGER NOT NULL DEFAULT 1');
+addColumnIfMissing('plans', 'user_id', 'INTEGER NOT NULL DEFAULT 1');
+
+// En sync_log NULL significa "sync compartido" (catálogo y afines): el
+// backfill marca como del usuario 1 solo los kinds personales, una única vez.
+const SHARED_SYNC_KINDS = ['catalog', 'subjects', 'titles'];
+if (addColumnIfMissing('sync_log', 'user_id', 'INTEGER')) {
+  const placeholders = SHARED_SYNC_KINDS.map(() => '?').join(', ');
+  db.prepare(`UPDATE sync_log SET user_id = 1 WHERE kind NOT IN (${placeholders})`).run(...SHARED_SYNC_KINDS);
+}
+
+// enrollments: el UNIQUE pasa de (term, section_id) a incluir al usuario.
+if (!hasColumn('enrollments', 'user_id')) {
+  rebuildTable(
+    'enrollments',
+    `CREATE TABLE IF NOT EXISTS enrollments (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER NOT NULL DEFAULT 1,
+      term        TEXT NOT NULL,
+      course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      section_id  INTEGER NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+      status      TEXT NOT NULL,
+      units       REAL,
+      grading     TEXT,
+      grade       TEXT,
+      start_date  TEXT,
+      end_date    TEXT,
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (user_id, term, section_id)
+    )`,
+    `(id, user_id, term, course_id, section_id, status, units, grading, grade, start_date, end_date, updated_at)
+     SELECT id, 1, term, course_id, section_id, status, units, grading, grade, start_date, end_date, updated_at
+     FROM enrollments`
+  );
+  db.exec('CREATE INDEX IF NOT EXISTS idx_enrollments_term ON enrollments(term)');
+}
+
+// cart_rows: la PK pasa de idx a (user_id, idx) — dos carritos no se pisan.
+if (!hasColumn('cart_rows', 'user_id')) {
+  rebuildTable(
+    'cart_rows',
+    `CREATE TABLE IF NOT EXISTS cart_rows (
+      user_id      INTEGER NOT NULL DEFAULT 1,
+      idx          INTEGER NOT NULL,
+      class_label  TEXT NOT NULL,
+      course_code  TEXT,
+      title        TEXT NOT NULL,
+      section      TEXT,
+      class_nbr    TEXT,
+      instructor   TEXT,
+      credits      REAL,
+      campus       TEXT,
+      meetings     TEXT,
+      status       TEXT,
+      captured_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, idx)
+    )`,
+    `(user_id, idx, class_label, course_code, title, section, class_nbr, instructor, credits, campus, meetings, status, captured_at)
+     SELECT 1, idx, class_label, course_code, title, section, class_nbr, instructor, credits, campus, meetings, status, captured_at
+     FROM cart_rows`
+  );
+}
+
+// profile: de "una sola fila id = 1" a un perfil por usuario.
+if (!hasColumn('profile', 'user_id')) {
+  rebuildTable(
+    'profile',
+    `CREATE TABLE IF NOT EXISTS profile (
+      user_id            INTEGER PRIMARY KEY,
+      career             TEXT,
+      pensum_no          TEXT,
+      plan_label         TEXT,
+      cohort_start_term  TEXT,
+      updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `(user_id, career, pensum_no, plan_label, cohort_start_term, updated_at)
+     SELECT 1, career, pensum_no, plan_label, cohort_start_term, updated_at
+     FROM profile WHERE id = 1`
+  );
+}
+
+db.exec('CREATE INDEX IF NOT EXISTS idx_grades_user ON grades(user_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_enrollments_user ON enrollments(user_id, term)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_plans_user ON plans(user_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_sync_log_kind ON sync_log(kind, user_id, finished_at)');
+
+// Datos que pertenecen a una cuenta concreta: notas, horario inscrito, avance,
+// holds, carrito y planes. El catálogo (courses/subjects/sections/seats) es
+// compartido y NO se toca. pensum y el árbol de requisitos siguen acá hasta el
+// re-modelado por carrera (§3.1): hoy son de un solo dueño.
+// plans y goals quedan fuera a propósito: son trabajo hecho a mano (como
+// siempre); cambiar de cuenta no los borra. El "Borrar todos mis datos" del §8
+// sí los incluye — esa es otra operación (deleteAllUserData).
 const PERSONAL_TABLES = [
-  'grades', 'enrollments', 'pensum', 'progress_items', 'holds', 'cart_rows',
-  'requirement_groups', 'requirement_courses', 'profile',
-  'enrollment_windows',
+  'grades', 'enrollments', 'progress_items', 'holds', 'cart_rows',
+  'profile', 'enrollment_windows',
 ];
+// Tablas del pénsum que todavía no distinguen usuario (se re-modelan en §3.1):
+// se vacían enteras porque solo pueden contener los datos de un dueño.
+const LEGACY_WHOLE_TABLES = ['pensum', 'requirement_groups', 'requirement_courses'];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
 const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows'];
 
-// Borra todo lo que es de la persona anterior. Se llama al cambiar de cuenta:
-// sin esto la página seguiría sirviendo desde SQLite las notas/horario/pénsum
-// del dueño viejo, porque los GET leen cache de disco, no el portal en vivo.
-export function clearPersonalData() {
+// Borra todo lo que es de UNA persona: sus filas, nunca las de otro usuario ni
+// lo compartido. Lo usa el cambio de cuenta local y el "Borrar mis datos" (§8).
+export function clearPersonalData(userId) {
+  if (!Number.isInteger(userId)) throw new Error('clearPersonalData necesita un userId');
   db.exec('BEGIN');
   try {
-    for (const table of PERSONAL_TABLES) db.exec(`DELETE FROM ${table}`);
+    for (const table of PERSONAL_TABLES) {
+      db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
+    }
+    for (const table of LEGACY_WHOLE_TABLES) db.exec(`DELETE FROM ${table}`);
     const placeholders = PERSONAL_SYNC_KINDS.map(() => '?').join(', ');
-    db.prepare(`DELETE FROM sync_log WHERE kind IN (${placeholders})`).run(...PERSONAL_SYNC_KINDS);
+    db.prepare(`DELETE FROM sync_log WHERE user_id = ? AND kind IN (${placeholders})`).run(
+      userId,
+      ...PERSONAL_SYNC_KINDS
+    );
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+// El "Borrar todos mis datos" del §8: lo de clearPersonalData MÁS el trabajo
+// hecho a mano (planes, metas) y el propio usuario. Su cuenta de micampus no se
+// toca — mikampus solo puede borrar lo suyo.
+export function deleteAllUserData(userId) {
+  clearPersonalData(userId);
+  db.exec('BEGIN');
+  try {
+    for (const table of ['plans', 'goals']) {
+      db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
+    }
+    db.prepare('DELETE FROM sync_log WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -363,29 +541,30 @@ export function clearPersonalData() {
 
 // Registra el resultado de una corrida de scraping para poder mostrar
 // StalenessTag ("actualizado hace 2h") y depurar selectores rotos.
-export function logSync({ kind, term = null, status, detail = null, rows = null }) {
+// userId null = sync compartido (catálogo); con valor, el de ese usuario.
+export function logSync({ userId = null, kind, term = null, status, detail = null, rows = null }) {
   db.prepare(
-    `INSERT INTO sync_log (kind, term, status, detail, rows, finished_at)
-     VALUES (?, ?, ?, ?, ?, datetime('now'))`
-  ).run(kind, term, status, detail, rows);
+    `INSERT INTO sync_log (user_id, kind, term, status, detail, rows, finished_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
+  ).run(userId, kind, term, status, detail, rows);
 }
 
 // Última sincronización exitosa de un tipo de dato (para el StalenessTag).
-export function lastSync(kind, term = null) {
-  const row = term
-    ? db
-        .prepare(
-          `SELECT finished_at FROM sync_log
-           WHERE kind = ? AND term = ? AND status = 'ok'
-           ORDER BY finished_at DESC LIMIT 1`
-        )
-        .get(kind, term)
-    : db
-        .prepare(
-          `SELECT finished_at FROM sync_log
-           WHERE kind = ? AND status = 'ok'
-           ORDER BY finished_at DESC LIMIT 1`
-        )
-        .get(kind);
+// Para un kind personal se pasa userId; para uno compartido se omite y matchea
+// las filas con user_id NULL.
+export function lastSync(kind, { term = null, userId = null } = {}) {
+  const conditions = ['kind = ?', "status = 'ok'", userId == null ? 'user_id IS NULL' : 'user_id = ?'];
+  const params = userId == null ? [kind] : [kind, userId];
+  if (term != null) {
+    conditions.push('term = ?');
+    params.push(term);
+  }
+  const row = db
+    .prepare(
+      `SELECT finished_at FROM sync_log
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY finished_at DESC LIMIT 1`
+    )
+    .get(...params);
   return row?.finished_at ?? null;
 }

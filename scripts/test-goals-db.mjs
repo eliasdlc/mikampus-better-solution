@@ -13,37 +13,37 @@ const goals = await import('../src/goals.js');
 
 try {
   // Crear y leer.
-  const g = goals.createGoal({ target: 3.0, deadlineTerm: 'Septiembre de 2027' });
+  const g = goals.createGoal(1, { target: 3.0, deadlineTerm: 'Septiembre de 2027' });
   assert.equal(g.kind, 'gpa');
   assert.equal(g.target, 3.0);
   assert.equal(g.deadlineTerm, 'Septiembre de 2027');
   assert.equal(g.achievedAt, null, 'el veredicto no se guarda: la fila no lo lleva');
-  assert.equal(goals.listGoals().length, 1);
+  assert.equal(goals.listGoals(1).length, 1);
 
   // La escala es 0–4: fuera de rango es error de entrada.
-  assert.throws(() => goals.createGoal({ target: 5 }), /entre 0 y 4/);
-  assert.throws(() => goals.createGoal({ target: 0 }), /entre 0 y 4/);
-  assert.throws(() => goals.createGoal({ kind: 'gpa-por-area', target: 3 }), /solo se pueden fijar metas de índice/);
+  assert.throws(() => goals.createGoal(1, { target: 5 }), /entre 0 y 4/);
+  assert.throws(() => goals.createGoal(1, { target: 0 }), /entre 0 y 4/);
+  assert.throws(() => goals.createGoal(1, { kind: 'gpa-por-area', target: 3 }), /solo se pueden fijar metas de índice/);
 
   // Actualizar y borrar.
-  const up = goals.updateGoal(g.id, { target: 3.2 });
+  const up = goals.updateGoal(1, g.id, { target: 3.2 });
   assert.equal(up.target, 3.2);
-  assert.throws(() => goals.updateGoal(9999, { target: 3 }), /no existe/);
-  goals.deleteGoal(g.id);
-  assert.equal(goals.listGoals().length, 0);
-  assert.throws(() => goals.deleteGoal(g.id), /no existe/);
+  assert.throws(() => goals.updateGoal(1, 9999, { target: 3 }), /no existe/);
+  goals.deleteGoal(1, g.id);
+  assert.equal(goals.listGoals(1).length, 0);
+  assert.throws(() => goals.deleteGoal(1, g.id), /no existe/);
 
   // Evaluación en vivo contra el histórico real (402/143, 81 faltantes).
   const context = { summary: { gradePoints: 402, unitsTowardGpa: 143 }, remainingCredits: 81 };
-  const reach = goals.evaluateGoal(goals.createGoal({ target: 3.0 }), context);
+  const reach = goals.evaluateGoal(goals.createGoal(1, { target: 3.0 }), context);
   assert.equal(reach.verdict, 'reachable');
   assert.ok(Math.abs(reach.requiredAverage - 270 / 81) < 1e-3, 'exige ~3.33 de promedio');
   assert.equal(reach.projectedIfMaintain, 2.8, 'si mantenés el ritmo terminás en 2.8');
 
-  const impossible = goals.evaluateGoal(goals.createGoal({ target: 3.5 }), context);
+  const impossible = goals.evaluateGoal(goals.createGoal(1, { target: 3.5 }), context);
   assert.equal(impossible.verdict, 'unreachable', '3.5 no se alcanza ni con todo A en lo que falta');
 
-  const all = goals.evaluateGoals(goals.listGoals(), context);
+  const all = goals.evaluateGoals(goals.listGoals(1), context);
   assert.equal(all.length, 2);
   assert.ok(all.every((x) => 'verdict' in x));
 

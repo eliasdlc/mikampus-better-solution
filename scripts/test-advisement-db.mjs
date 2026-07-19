@@ -34,7 +34,7 @@ const tree = parseAdvisementTree(raw, {
   knownSubjects: ['ICC', 'FIS', 'MAT', 'ILE', 'ITT', 'GFA', 'FIL'],
 });
 
-const saved = saveRequirementTree(tree, { cohortStartTerm: 'Septiembre de 2023' });
+const saved = saveRequirementTree(1, tree, { cohortStartTerm: 'Septiembre de 2023' });
 assert.equal(saved.groups, tree.groups.length, 'se guardan todos los grupos');
 assert.equal(saved.courses, tree.courses.length, 'se guardan todos los cursos del árbol');
 
@@ -95,15 +95,15 @@ assert.ok(
 );
 
 // ── El perfil se guarda; la cohorte que aporta grades se conserva. ──
-const profile = readProfile();
+const profile = readProfile(1);
 assert.equal(profile.pensum_no, '2020', 'el número de pénsum se guarda');
 assert.match(profile.career, /COMPUTACIÓN/, 'la carrera se guarda');
 assert.equal(profile.cohort_start_term, 'Septiembre de 2023', 'la cohorte se guarda');
 
 // Un re-sync SIN cohorte no la borra (viene de grades, no del informe).
-saveRequirementTree(tree, {});
+saveRequirementTree(1, tree, {});
 assert.equal(
-  readProfile().cohort_start_term,
+  readProfile(1).cohort_start_term,
   'Septiembre de 2023',
   'un re-sync sin cohorte conserva la anterior'
 );

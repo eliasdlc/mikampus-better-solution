@@ -24,6 +24,7 @@ import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
 import { computeInsights } from './shared/insights.ts';
 import { db, lastSync, clearPersonalData } from './db.js';
+import { LOCAL_USER_ID, adoptLocalUsername } from './users.js';
 import * as plans from './plans.js';
 import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
@@ -38,6 +39,14 @@ const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
 const app = express();
 app.use(express.json());
 app.use(express.static(DIST_DIR));
+
+// Quién pide. En modo local no hay login: todo request es del usuario 1 (la
+// cuenta del .env/account.json). El middleware existe desde ya para que ningún
+// handler lea datos sin dueño; el modo hosted lo reemplaza por auth real (§5).
+app.use('/api', (req, res, next) => {
+  req.userId = LOCAL_USER_ID;
+  next();
+});
 
 // ── Cuenta ───────────────────────────────────────────────────────────────────
 // Devuelve el usuario vigente y de dónde sale (account.json o .env), nunca la
@@ -58,8 +67,9 @@ app.post('/api/account', async (req, res) => {
   }
   try {
     const account = setCredentials({ username, password });
+    adoptLocalUsername(account.username);
     await resetSession();
-    clearPersonalData();
+    clearPersonalData(req.userId);
     scheduler.emitEvent({
       type: 'log',
       message: `Cuenta cambiada a ${account.username}. Sincronizá cada pantalla para traer tus datos.`,
@@ -74,13 +84,13 @@ app.post('/api/account', async (req, res) => {
 // su syncedAt (<10ms) y nunca dispara Playwright. Leer el carrito en vivo son
 // ~10s y el Dashboard lo muestra en cada carga.
 app.get('/api/cart', (req, res) => {
-  res.json(readCart());
+  res.json(readCart(req.userId));
 });
 
 app.post('/api/cart/sync', async (req, res) => {
   try {
-    await withPage((page) => syncCart(page));
-    const cart = readCart();
+    await withPage((page) => syncCart(page, { userId: req.userId }));
+    const cart = readCart(req.userId);
     scheduler.emitEvent({ type: 'cart-status', rows: cart.rows, syncedAt: cart.syncedAt });
     res.json(cart);
   } catch (err) {
@@ -102,19 +112,20 @@ app.post('/api/cart/validate', async (req, res) => {
 });
 
 app.get('/api/enrollment-windows', (req, res) => {
-  const term = req.query.term ? String(req.query.term) : planningTerm(null, latestScheduledTerm());
-  res.json(readEnrollmentWindows(term));
+  const term = req.query.term ? String(req.query.term) : planningTerm(null, latestScheduledTerm(req.userId));
+  res.json(readEnrollmentWindows(req.userId, term));
 });
 
 app.post('/api/enrollment-windows/sync', async (req, res) => {
   try {
     const windows = await withPage((page) =>
       syncEnrollmentWindows(page, {
+        userId: req.userId,
         onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
       })
     );
     scheduler.emitEvent({ type: 'log', message: `Ventana de inscripción actualizada: ${windows.length} sesión(es)` });
-    res.json(readEnrollmentWindows(req.body?.term ? String(req.body.term) : null));
+    res.json(readEnrollmentWindows(req.userId, req.body?.term ? String(req.body.term) : null));
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo Enrollment Dates: ${err.message}` });
     res.status(500).json({ error: err.message });
@@ -128,7 +139,7 @@ app.post('/api/enrollment-windows/sync', async (req, res) => {
 app.get('/api/catalog', (req, res) => {
   const term = req.query.term ? String(req.query.term) : null;
   const count = db.prepare('SELECT COUNT(*) AS n FROM sections' + (term ? ' WHERE term = ?' : '')).get(...(term ? [term] : [])).n;
-  const etag = `"cat-${term ?? 'all'}-${count}-${lastSync('catalog', term) ?? '0'}"`;
+  const etag = `"cat-${term ?? 'all'}-${count}-${lastSync('catalog', { term }) ?? '0'}"`;
   res.set('Cache-Control', 'no-cache');
   res.set('ETag', etag);
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
@@ -166,8 +177,8 @@ app.get('/api/my-schedule', (req, res) => {
   const current = readTerms().current;
   const term = req.query.term
     ? String(req.query.term)
-    : current?.term ?? latestScheduledTerm();
-  res.json(readSchedule(term));
+    : current?.term ?? latestScheduledTerm(req.userId);
+  res.json(readSchedule(req.userId, term));
 });
 
 // El refresh en vivo es explícito. Tarda (es Playwright detrás), así que va
@@ -180,6 +191,7 @@ app.post('/api/my-schedule/sync', async (req, res) => {
     const targetTerm = req.body?.term ? String(req.body.term) : null;
     const schedule = await withPage((page) =>
       syncSchedule(page, {
+        userId: req.userId,
         targetTerm,
         onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
       })
@@ -192,7 +204,7 @@ app.post('/api/my-schedule/sync', async (req, res) => {
       type: 'log',
       message: `Horario actualizado: ${schedule.courses.length} materia(s) inscritas`,
     });
-    res.json(readSchedule(schedule.term));
+    res.json(readSchedule(req.userId, schedule.term));
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el horario: ${err.message}` });
     res.status(500).json({ error: err.message });
@@ -225,14 +237,14 @@ app.post('/api/my-schedule/drop', async (req, res) => {
 
     // El resultado del Paso 3 confirmó la baja. Se retira del cache local sin
     // depender de que Mi Horario siga ofreciendo ese ciclo inmediatamente.
-    removeEnrollmentCourse(term, courseCode);
+    removeEnrollmentCourse(req.userId, term, courseCode);
     scheduler.emitEvent({
       type: 'notice',
       title: `${courseCode} fue dada de baja`,
       body: result.message,
       key: `drop:${term}:${courseCode}`,
     });
-    res.json({ ...result, schedule: readSchedule(term) });
+    res.json({ ...result, schedule: readSchedule(req.userId, term) });
   } catch (err) {
     scheduler.emitEvent({
       type: 'notice',
@@ -250,10 +262,10 @@ app.post('/api/my-schedule/drop', async (req, res) => {
 // nunca dispara scraping por entrar a la pantalla. El índice se calcula acá
 // (no se guarda) para que no exista una segunda verdad que pueda envejecer.
 app.get('/api/grades', (req, res) => {
-  const courses = readGrades();
+  const courses = readGrades(req.userId);
   res.json({
     generatedAt: new Date().toISOString(),
-    syncedAt: lastSync('grades'),
+    syncedAt: lastSync('grades', { userId: req.userId }),
     terms: termSummaries(courses),
     summary: summarizeGrades(courses),
   });
@@ -261,10 +273,10 @@ app.get('/api/grades', (req, res) => {
 
 app.post('/api/grades/sync', async (req, res) => {
   try {
-    const previous = readGrades();
-    const { courses, mismatches } = await withPage((page) => fetchGrades(page));
+    const previous = readGrades(req.userId);
+    const { courses, mismatches } = await withPage((page) => fetchGrades(page, { userId: req.userId }));
     const published = diffPublishedGrades(previous, courses);
-    saveGrades(courses);
+    saveGrades(req.userId, courses);
     // Las notas traen etiquetas de término que el modelo de tiempo no conocía.
     reconcileTerms();
     // Si el índice calculado no cuadra con el que publica el portal, la
@@ -284,9 +296,9 @@ app.post('/api/grades/sync', async (req, res) => {
     scheduler.emitEvent({ type: 'log', message: `Notas actualizadas: ${courses.length} materia(s)` });
     res.json({
       generatedAt: new Date().toISOString(),
-      syncedAt: lastSync('grades'),
-      terms: termSummaries(readGrades()),
-      summary: summarizeGrades(readGrades()),
+      syncedAt: lastSync('grades', { userId: req.userId }),
+      terms: termSummaries(readGrades(req.userId)),
+      summary: summarizeGrades(readGrades(req.userId)),
       mismatches,
     });
   } catch (err) {
@@ -301,7 +313,7 @@ app.post('/api/grades/sync', async (req, res) => {
 // recon de Fase 4)— es "te falta y se está ofertando". La UI no puede decir
 // más que eso sin mentir.
 app.get('/api/pensum', (req, res) => {
-  const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm());
+  const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
   const offered = new Set(
     term
       ? db
@@ -338,15 +350,19 @@ app.get('/api/pensum', (req, res) => {
       offered: r.status === 'pending' && offered.has(r.code),
     }));
 
-  res.json({ term, generatedAt: new Date().toISOString(), syncedAt: lastSync('advisement'), courses });
+  res.json({ term, generatedAt: new Date().toISOString(), syncedAt: lastSync('advisement', { userId: req.userId }), courses });
 });
 
 app.post('/api/pensum/sync', async (req, res) => {
   try {
     scheduler.emitEvent({ type: 'log', message: 'Generando el informe de avance (tarda: lo arma el portal)…' });
-    const { profile, groups, courses } = await withPage((page) => fetchAdvisement(page));
+    const { profile, groups, courses } = await withPage((page) => fetchAdvisement(page, { userId: req.userId }));
     // La cohorte (primer término con notas) es de grades, no del informe.
-    const saved = saveRequirementTree({ profile, groups, courses }, { cohortStartTerm: earliestGradeTerm() });
+    const saved = saveRequirementTree(
+      req.userId,
+      { profile, groups, courses },
+      { cohortStartTerm: earliestGradeTerm(req.userId) }
+    );
     scheduler.emitEvent({
       type: 'log',
       message: `Pénsum actualizado: ${saved.groups} grupos, ${saved.pensum} materia(s)`,
@@ -362,10 +378,15 @@ app.post('/api/pensum/sync', async (req, res) => {
 // informe de avance. Cada curso se enriquece con el courseId del catálogo (para
 // "agregar al plan") y si se oferta en el término pedido.
 app.get('/api/requirements', (req, res) => {
-  const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm());
+  const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
   const root = readRequirementTree();
   if (!root) {
-    return res.json({ term, syncedAt: lastSync('advisement'), profile: readProfile(), tree: null });
+    return res.json({
+      term,
+      syncedAt: lastSync('advisement', { userId: req.userId }),
+      profile: readProfile(req.userId),
+      tree: null,
+    });
   }
 
   const courseIdByCode = new Map(db.prepare('SELECT code, id FROM courses').all().map((r) => [r.code, r.id]));
@@ -387,11 +408,11 @@ app.get('/api/requirements', (req, res) => {
   };
   enrich(root);
 
-  res.json({ term, syncedAt: lastSync('advisement'), profile: readProfile(), tree: root });
+  res.json({ term, syncedAt: lastSync('advisement', { userId: req.userId }), profile: readProfile(req.userId), tree: root });
 });
 
 app.get('/api/profile', (req, res) => {
-  res.json({ profile: readProfile(), syncedAt: lastSync('advisement') });
+  res.json({ profile: readProfile(req.userId), syncedAt: lastSync('advisement', { userId: req.userId }) });
 });
 
 // ── Metas y señales (/academico, Fase 10 §12.7) ─────────────────────────────
@@ -399,35 +420,35 @@ app.get('/api/profile', (req, res) => {
 // que faltan del pénsum (del árbol de requisitos). Una sola fuente para las
 // proyecciones y para cada meta, así ambos miden lo mismo. Todo es cálculo local
 // (<10ms), cero PeopleSoft: nunca dispara scraping por entrar a la pantalla.
-function goalsContext() {
-  const summary = summarizeGrades(readGrades());
+function goalsContext(userId) {
+  const summary = summarizeGrades(readGrades(userId));
   const remainingCredits = readRequirementTree()?.units?.needed ?? 0;
   return { summary, remainingCredits };
 }
 
-function goalsResponse() {
-  const ctx = goalsContext();
+function goalsResponse(userId) {
+  const ctx = goalsContext(userId);
   const hasBasis = ctx.summary.unitsTowardGpa > 0 || ctx.remainingCredits > 0;
   return {
-    goals: goals.evaluateGoals(goals.listGoals(), ctx),
+    goals: goals.evaluateGoals(goals.listGoals(userId), ctx),
     projection: hasBasis ? projectFinalGpa(ctx.summary, ctx.remainingCredits) : null,
     basedOn: {
       gpa: ctx.summary.gpa,
       unitsTowardGpa: ctx.summary.unitsTowardGpa,
       remainingCredits: ctx.remainingCredits,
     },
-    syncedAt: lastSync('grades'),
+    syncedAt: lastSync('grades', { userId }),
   };
 }
 
-app.get('/api/goals', (req, res) => res.json(goalsResponse()));
+app.get('/api/goals', (req, res) => res.json(goalsResponse(req.userId)));
 
 // Las mutaciones devuelven la respuesta entera (metas + proyección reevaluadas):
 // la UI reemplaza el cache de un solo golpe, sin un segundo fetch.
 app.post('/api/goals', (req, res) => {
   try {
-    goals.createGoal({ kind: req.body?.kind ?? 'gpa', target: req.body?.target, deadlineTerm: req.body?.deadlineTerm });
-    res.json(goalsResponse());
+    goals.createGoal(req.userId, { kind: req.body?.kind ?? 'gpa', target: req.body?.target, deadlineTerm: req.body?.deadlineTerm });
+    res.json(goalsResponse(req.userId));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -435,8 +456,8 @@ app.post('/api/goals', (req, res) => {
 
 app.patch('/api/goals/:id', (req, res) => {
   try {
-    goals.updateGoal(Number(req.params.id), { target: req.body?.target, deadlineTerm: req.body?.deadlineTerm });
-    res.json(goalsResponse());
+    goals.updateGoal(req.userId, Number(req.params.id), { target: req.body?.target, deadlineTerm: req.body?.deadlineTerm });
+    res.json(goalsResponse(req.userId));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -444,8 +465,8 @@ app.patch('/api/goals/:id', (req, res) => {
 
 app.delete('/api/goals/:id', (req, res) => {
   try {
-    goals.deleteGoal(Number(req.params.id));
-    res.json(goalsResponse());
+    goals.deleteGoal(req.userId, Number(req.params.id));
+    res.json(goalsResponse(req.userId));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -454,8 +475,8 @@ app.delete('/api/goals/:id', (req, res) => {
 // Señales descriptivas del histórico. Solo salen las que pasan su umbral de
 // datos (shared/insights.ts); un arreglo vacío es "todavía no hay qué decir".
 app.get('/api/insights', (req, res) => {
-  const courses = readGrades();
-  res.json({ insights: computeInsights(termSummaries(courses), courses), syncedAt: lastSync('grades') });
+  const courses = readGrades(req.userId);
+  res.json({ insights: computeInsights(termSummaries(courses), courses), syncedAt: lastSync('grades', { userId: req.userId }) });
 });
 
 // Los códigos que le importan a TU carrera: todo lo del árbol de requisitos
@@ -466,26 +487,36 @@ app.get('/api/pensum/codes', (req, res) => {
   const reqCodes = db.prepare('SELECT DISTINCT code FROM requirement_courses').all().map((r) => r.code);
   const enrolled = db
     .prepare(
-      `SELECT DISTINCT c.code FROM enrollments e JOIN courses c ON c.id = e.course_id WHERE e.status = 'enrolled'`
+      `SELECT DISTINCT c.code FROM enrollments e JOIN courses c ON c.id = e.course_id
+       WHERE e.status = 'enrolled' AND e.user_id = ?`
     )
-    .all()
+    .all(req.userId)
     .map((r) => r.code);
   res.json({ codes: [...new Set([...reqCodes, ...enrolled])] });
 });
 
 app.get('/api/holds', (req, res) => {
-  res.json({ generatedAt: new Date().toISOString(), syncedAt: lastSync('holds'), holds: readHolds() });
+  res.json({
+    generatedAt: new Date().toISOString(),
+    syncedAt: lastSync('holds', { userId: req.userId }),
+    holds: readHolds(req.userId),
+  });
 });
 
 app.post('/api/holds/sync', async (req, res) => {
   try {
-    const parsed = await withPage((page) => fetchHolds(page));
-    saveHolds(parsed.holds);
+    const parsed = await withPage((page) => fetchHolds(page, { userId: req.userId }));
+    saveHolds(req.userId, parsed.holds);
     scheduler.emitEvent({
       type: 'log',
       message: parsed.holds.length ? `${parsed.holds.length} hold(s) activos` : 'Sin holds ni pendientes',
     });
-    res.json({ generatedAt: new Date().toISOString(), syncedAt: lastSync('holds'), holds: readHolds(), todos: parsed.todos });
+    res.json({
+      generatedAt: new Date().toISOString(),
+      syncedAt: lastSync('holds', { userId: req.userId }),
+      holds: readHolds(req.userId),
+      todos: parsed.todos,
+    });
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo los holds: ${err.message}` });
     res.status(500).json({ error: err.message });
@@ -546,9 +577,9 @@ app.post('/api/search/add', async (req, res) => {
 
 app.get('/api/recommendation', (req, res) => {
   try {
-    const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm());
+    const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
     const maxCredits = req.query.maxCredits ?? DEFAULT_MAX_CREDITS;
-    res.json(recommendationForTerm(term, maxCredits));
+    res.json(recommendationForTerm(req.userId, term, maxCredits));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -556,12 +587,12 @@ app.get('/api/recommendation', (req, res) => {
 
 app.post('/api/recommendation/plan', (req, res) => {
   try {
-    const term = planningTerm(req.body?.term ? String(req.body.term) : null, latestScheduledTerm());
-    const proposal = recommendationForTerm(term, req.body?.maxCredits ?? DEFAULT_MAX_CREDITS);
+    const term = planningTerm(req.body?.term ? String(req.body.term) : null, latestScheduledTerm(req.userId));
+    const proposal = recommendationForTerm(req.userId, term, req.body?.maxCredits ?? DEFAULT_MAX_CREDITS);
     if (!proposal.schedule.valid || proposal.recommendations.length === 0) {
       throw new Error(proposal.caveats[0] ?? 'No hay una combinación recomendada para este ciclo');
     }
-    const detail = plans.createPlanWithItems({
+    const detail = plans.createPlanWithItems(req.userId, {
       term: proposal.term,
       name: req.body?.name?.trim() || 'Plan recomendado',
       items: proposal.recommendations.map((item) => ({
@@ -577,12 +608,12 @@ app.post('/api/recommendation/plan', (req, res) => {
 });
 
 app.get('/api/plans', (req, res) => {
-  res.json({ plans: plans.listPlans() });
+  res.json({ plans: plans.listPlans(req.userId) });
 });
 
 app.post('/api/plans', (req, res) => {
   try {
-    res.json(plans.createPlan(req.body ?? {}));
+    res.json(plans.createPlan(req.userId, req.body ?? {}));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -590,7 +621,7 @@ app.post('/api/plans', (req, res) => {
 
 app.get('/api/plans/:id', (req, res) => {
   try {
-    res.json(plans.readPlan(Number(req.params.id)));
+    res.json(plans.readPlan(req.userId, Number(req.params.id)));
   } catch (err) {
     res.status(404).json({ error: err.message });
   }
@@ -598,7 +629,7 @@ app.get('/api/plans/:id', (req, res) => {
 
 app.patch('/api/plans/:id', (req, res) => {
   try {
-    res.json(plans.updatePlan(Number(req.params.id), req.body ?? {}));
+    res.json(plans.updatePlan(req.userId, Number(req.params.id), req.body ?? {}));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -606,7 +637,7 @@ app.patch('/api/plans/:id', (req, res) => {
 
 app.delete('/api/plans/:id', (req, res) => {
   try {
-    plans.deletePlan(Number(req.params.id));
+    plans.deletePlan(req.userId, Number(req.params.id));
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -615,7 +646,7 @@ app.delete('/api/plans/:id', (req, res) => {
 
 app.post('/api/plans/:id/duplicate', (req, res) => {
   try {
-    res.json(plans.duplicatePlan(Number(req.params.id)));
+    res.json(plans.duplicatePlan(req.userId, Number(req.params.id)));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -623,7 +654,7 @@ app.post('/api/plans/:id/duplicate', (req, res) => {
 
 app.post('/api/plans/:id/items', (req, res) => {
   try {
-    res.json(plans.addPlanItem(Number(req.params.id), req.body ?? {}));
+    res.json(plans.addPlanItem(req.userId, Number(req.params.id), req.body ?? {}));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -631,7 +662,7 @@ app.post('/api/plans/:id/items', (req, res) => {
 
 app.patch('/api/plans/:id/items/:itemId', (req, res) => {
   try {
-    res.json(plans.updatePlanItem(Number(req.params.id), Number(req.params.itemId), req.body ?? {}));
+    res.json(plans.updatePlanItem(req.userId, Number(req.params.id), Number(req.params.itemId), req.body ?? {}));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -639,7 +670,7 @@ app.patch('/api/plans/:id/items/:itemId', (req, res) => {
 
 app.delete('/api/plans/:id/items/:itemId', (req, res) => {
   try {
-    res.json(plans.removePlanItem(Number(req.params.id), Number(req.params.itemId)));
+    res.json(plans.removePlanItem(req.userId, Number(req.params.id), Number(req.params.itemId)));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -654,7 +685,7 @@ app.delete('/api/plans/:id/items/:itemId', (req, res) => {
 app.post('/api/plans/:id/to-cart', async (req, res) => {
   let plan;
   try {
-    plan = plans.readPlan(Number(req.params.id));
+    plan = plans.readPlan(req.userId, Number(req.params.id));
   } catch (err) {
     return res.status(404).json({ error: err.message });
   }
@@ -780,6 +811,9 @@ function lanUrls() {
 // grades) al arrancar, para que el modelo de tiempo esté al día sin esperar a
 // una sync. Es barato: son pocas filas y upserts idempotentes.
 reconcileTerms();
+// La fila migrada del usuario 1 deja de ser anónima: en modo local, la cuenta
+// configurada ES el usuario 1.
+adoptLocalUsername(getAccountInfo().username);
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);

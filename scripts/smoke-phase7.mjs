@@ -23,7 +23,7 @@ const { extractAdvisementTree, parseAdvisementTree, saveRequirementTree } = awai
   const raw = await p.evaluate(extractAdvisementTree);
   await b.close();
   const tree = parseAdvisementTree(raw, { knownSubjects: ['ICC', 'FIS', 'MAT', 'ILE', 'ITT', 'GFA', 'FIL'] });
-  const saved = saveRequirementTree(tree, { cohortStartTerm: 'Septiembre de 2023' });
+  const saved = saveRequirementTree(1, tree, { cohortStartTerm: 'Septiembre de 2023' });
   console.log('sembrado:', saved);
 }
 

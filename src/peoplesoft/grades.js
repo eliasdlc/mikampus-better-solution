@@ -242,8 +242,9 @@ async function findFrame(page, selector, { timeout = 30000 } = {}) {
 
 // El histórico completo del estudiante. Dos cargas: Course History trae las
 // materias con su nota, y View My Grades los totales del portal para
-// contrastar los nuestros.
-export async function fetchGrades(page) {
+// contrastar los nuestros. userId dice de quién es la sesión que scrapea — el
+// rastro en sync_log es personal.
+export async function fetchGrades(page, { userId }) {
   await page.goto(STUDENT_CENTER_URL, { waitUntil: 'commit' });
   await page.waitForTimeout(7000);
 
@@ -265,6 +266,7 @@ export async function fetchGrades(page) {
 
   const mismatches = checkAgainstPortal(summary, portal.cumulative);
   logSync({
+    userId,
     kind: 'grades',
     term: null,
     status: mismatches.length ? 'error' : 'ok',
@@ -276,19 +278,18 @@ export async function fetchGrades(page) {
 }
 
 const insertGradeStmt = db.prepare(`
-  INSERT INTO grades (term, course_code, subject, catalog_nbr, title, grade, credits, status, captured_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  INSERT INTO grades (user_id, term, course_code, subject, catalog_nbr, title, grade, credits, status, captured_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 `);
 
-// El histórico se reemplaza entero en cada sync: el portal es la verdad, y las
-// notas cambian de valor (una materia en curso pasa a calificada) en vez de
-// solo agregarse. Un upsert por código tampoco serviría — una materia repetida
-// existe dos veces, con términos distintos.
-export function saveGrades(courses) {
-  const replace = db.prepare('DELETE FROM grades');
-  replace.run();
+// El histórico de UN usuario se reemplaza entero en cada sync: el portal es la
+// verdad, y las notas cambian de valor (una materia en curso pasa a calificada)
+// en vez de solo agregarse. Un upsert por código tampoco serviría — una materia
+// repetida existe dos veces, con términos distintos.
+export function saveGrades(userId, courses) {
+  db.prepare('DELETE FROM grades WHERE user_id = ?').run(userId);
   for (const c of courses) {
-    insertGradeStmt.run(c.term, c.code, c.subject, c.catalogNbr, c.title, c.grade, c.units, c.status);
+    insertGradeStmt.run(userId, c.term, c.code, c.subject, c.catalogNbr, c.title, c.grade, c.units, c.status);
   }
   return courses;
 }
@@ -305,12 +306,12 @@ export function diffPublishedGrades(previous, incoming) {
   });
 }
 
-export function readGrades() {
+export function readGrades(userId) {
   return db
     .prepare(
       `SELECT term, course_code AS code, subject, catalog_nbr AS catalogNbr,
               title, grade, credits AS units, status
-       FROM grades`
+       FROM grades WHERE user_id = ?`
     )
-    .all();
+    .all(userId);
 }
