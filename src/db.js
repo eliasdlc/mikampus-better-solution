@@ -404,6 +404,25 @@ db.exec(`
     synced_at    TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, term_code, session)
   );
+
+  -- Suscripciones a Web Push (L4 §5.5): un cupo detectado dispara una push
+  -- inmediata al teléfono, gratis, sobre el service worker que la PWA ya tiene.
+  -- Una fila por dispositivo/navegador del usuario — endpoint es su identidad,
+  -- así que un re-subscribe del mismo teléfono actualiza en vez de duplicar. Los
+  -- endpoints muertos (410/404 al enviar) se podan solos en webpush.js: una push
+  -- que ya nadie recibe no debe seguir costando un envío cada vez.
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    endpoint    TEXT NOT NULL UNIQUE,
+    p256dh      TEXT NOT NULL,               -- clave pública del cliente (base64url)
+    auth        TEXT NOT NULL,               -- secreto de autenticación (base64url)
+    ua          TEXT,                        -- user-agent, para que Ajustes liste "este teléfono"
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    last_ok_at  TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 `);
 
 // CREATE TABLE IF NOT EXISTS no reforma una tabla que ya existe: una columna
@@ -715,7 +734,7 @@ export function deleteAllUserData(userId) {
   clearPersonalData(userId);
   db.exec('BEGIN');
   try {
-    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions']) {
+    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions', 'push_subscriptions']) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
     }
     db.prepare('DELETE FROM sync_log WHERE user_id = ?').run(userId);
