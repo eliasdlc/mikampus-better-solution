@@ -176,6 +176,34 @@ export function withPage(userId, fn, { retry = true } = {}) {
   return result;
 }
 
+// Verifica unas credenciales contra el portal SIN usuario todavía: es el paso
+// previo del login de mikampus (el usuario se crea recién cuando el portal dijo
+// que sí). Devuelve el context vivo para no tirar un login que costó ~30s.
+export async function verifyPortalCredentials({ username, password }) {
+  return loginContext(await ensureBrowser(), { username, password });
+}
+
+// Adopta un context ya logueado (el que dejó verifyPortalCredentials) como LA
+// sesión del usuario, y guarda su contraseña en RAM: el primer sync tras el
+// login no paga un segundo signon.
+export function adoptSession(userId, { context, page }, credentials = null) {
+  const entry = entryFor(userId);
+  if (credentials) setRamCredential(userId, credentials);
+  const run = async () => {
+    await teardownEntry(entry);
+    entry.context = context;
+    entry.page = page;
+    entry.lastUsedAt = Date.now();
+    scheduleIdleClose(entry);
+  };
+  const result = entry.queue.then(run, run);
+  entry.queue = result.then(
+    () => {},
+    () => {}
+  );
+  return result;
+}
+
 // Fuerza que la próxima acción de ESTE usuario re-loguee desde cero, y
 // descarta su contraseña en RAM. Se usa al cambiar de cuenta y al cerrar
 // sesión. Va por su fila para no matar el context a mitad de un scrape.

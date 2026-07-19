@@ -36,6 +36,21 @@ db.exec(`
     last_login_at   TEXT
   );
 
+  -- Sesiones de mikampus (no del portal): la cookie del browser lleva un token
+  -- aleatorio y acá vive solo su hash — robarse la DB no roba sesiones. El
+  -- csrf_token acompaña a cada sesión: toda mutación exige repetirlo en un
+  -- header, porque una API JSON mutante con cookie y sin CSRF es auth
+  -- decorativa (§5). La cookie es larga a propósito (§5.1): la app abre al
+  -- instante con lo cacheado; la credencial del portal vive mucho menos.
+  CREATE TABLE IF NOT EXISTS sessions (
+    token_hash  TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL,
+    csrf_token  TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at  TEXT NOT NULL,
+    revoked_at  TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS courses (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     code        TEXT NOT NULL UNIQUE,          -- canónico, ej. "ICC-303"
