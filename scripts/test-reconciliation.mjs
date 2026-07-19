@@ -30,11 +30,10 @@ try {
       startsAt: '2026-07-16',
       endsAt: '2026-09-03',
       precision: 'date',
-      userId: 1,
     },
   ]);
-  saveEnrollmentWindows(windows);
-  const stored = readEnrollmentWindows('1930');
+  saveEnrollmentWindows(1, windows);
+  const stored = readEnrollmentWindows(1, '1930');
   assert.equal(stored.windows.length, 1);
   assert.equal(stored.windows[0].precision, 'date', 'la hora ausente no se inventa como medianoche');
 

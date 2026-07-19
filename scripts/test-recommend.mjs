@@ -128,8 +128,8 @@ await page.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
 const raw = await page.evaluate(extractAdvisementTree);
 await browser.close();
 const parsed = parseAdvisementTree(raw, { knownSubjects: ['ICC', 'FIS', 'MAT', 'ILE', 'ITT', 'GFA', 'FIL'] });
-saveRequirementTree(parsed);
-const realTree = readRequirementTree();
+saveRequirementTree(1, parsed);
+const realTree = readRequirementTree(1);
 
 const pendingReal = [];
 const visit = (g) => {

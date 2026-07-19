@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useAuth } from './auth.tsx';
 
 // Actividad en vivo del backend (operaciones Playwright, watcher, scheduler)
 // vía el SSE existente. Además de alimentar el feed de actividad, empuja los
@@ -19,6 +20,7 @@ const Ctx = createContext<SSEContext | null>(null);
 
 export function SSEProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
+  const { authenticated } = useAuth();
   const [connected, setConnected] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
   const [lastEnroll, setLastEnroll] = useState<SSEContext['lastEnroll']>(null);
@@ -30,6 +32,10 @@ export function SSEProvider({ children }: { children: ReactNode }) {
     );
 
   useEffect(() => {
+    if (!authenticated) {
+      setConnected(false);
+      return;
+    }
     const source = new EventSource('/api/events');
     source.onopen = () => setConnected(true);
     source.onerror = () => setConnected(false);
@@ -65,7 +71,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
       }
     };
     return () => source.close();
-  }, [qc]);
+  }, [authenticated, qc]);
 
   return (
     <Ctx.Provider value={{ connected, log, lastEnroll, clearLog: () => setLog([]) }}>{children}</Ctx.Provider>

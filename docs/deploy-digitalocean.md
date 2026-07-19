@@ -1,7 +1,8 @@
-# Fase 1 — piloto single-user en DigitalOcean
+# Deploy hosted en DigitalOcean
 
-Este deploy mantiene la app actual single-user. Basic Auth solo protege el
-piloto: no sustituye la autenticación por estudiante de la Fase 3.
+La app usa el login normal de cada estudiante de PUCMM. Caddy termina HTTPS;
+la autenticación y el aislamiento por usuario viven en mikampus, no en una
+contraseña compartida de Basic Auth.
 
 ## Antes de publicar
 
@@ -20,14 +21,12 @@ Desde `/root/mikampus`:
 ```bash
 cp .env.hosted.example .env.hosted
 chmod 600 .env.hosted
-docker compose run --rm caddy caddy hash-password --plaintext 'elegí-una-frase-larga'
+openssl rand -hex 32
 ```
 
-Pega el hash resultante en `BASIC_AUTH_PASSWORD_HASH` envuelto en comillas
-simples, por ejemplo `BASIC_AUTH_PASSWORD_HASH='$2a$...'`; así Docker Compose
-no trata partes del hash como variables. Completa también `DOMAIN`,
-`PUCMM_USERNAME` y `PUCMM_PASSWORD` en `.env.hosted`. No subas ese archivo al
-repositorio ni lo copies a otro equipo.
+Completa `DOMAIN`, `MIKAMPUS_ALLOWLIST` y pega la salida del comando en
+`MIKAMPUS_CRED_KEY`. No subas `.env.hosted` al repositorio ni lo copies a otro
+equipo. Una allowlist vacía bloquea todos los logins hosted por seguridad.
 
 ```bash
 docker compose up -d --build

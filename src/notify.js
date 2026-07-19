@@ -12,6 +12,9 @@ import { spawn } from 'node:child_process';
 // notify-send ya está disponible en el entorno Hyprland/mako del usuario:
 // notificación de escritorio inmediata, sin depender de un bot externo.
 export function notify(title, body, { urgency = 'normal' } = {}) {
+  // Sin escritorio no hay popup que valga: el server hosted y los tests corren
+  // con MIKAMPUS_SILENT=1 y la política sigue siendo verificable en seco.
+  if (process.env.MIKAMPUS_SILENT) return;
   const child = spawn('notify-send', ['-u', urgency, '-a', 'mikampus', title, body], {
     stdio: 'ignore',
   });

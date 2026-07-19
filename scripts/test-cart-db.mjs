@@ -36,12 +36,12 @@ try {
 
   // Un carrito nunca sincronizado no es un carrito vacío: /inscripcion los
   // dibuja distinto y para eso necesita que syncedAt nazca null.
-  const virgen = readCart();
+  const virgen = readCart(1);
   assert.deepEqual(virgen.rows, [], 'sin sync, el cache está vacío');
   assert.equal(virgen.syncedAt, null, 'sin sync, no hay fecha de sync');
 
-  saveCart(rows);
-  const cache = cartResponseSchema.parse(readCart());
+  saveCart(1, rows);
+  const cache = cartResponseSchema.parse(readCart(1));
 
   assert.equal(cache.rows.length, rows.length, 'vuelven de la base todas las filas, atadas incluidas');
   assert.ok(cache.syncedAt, 'saveCart registra la sync para el StalenessTag');
@@ -57,13 +57,13 @@ try {
 
   // El carrito es un estado completo, no un incremento: si sacás una materia en
   // micampus, el cache tiene que dejar de mostrarla.
-  saveCart(rows.slice(0, 2));
-  const podado = readCart();
+  saveCart(1, rows.slice(0, 2));
+  const podado = readCart(1);
   assert.equal(podado.rows.length, 2, 're-sincronizar reemplaza el carrito entero, no acumula');
   assert.deepEqual(podado.rows.map((r) => r.index), [0, 1]);
 
-  saveCart([]);
-  assert.deepEqual(readCart().rows, [], 'un carrito vaciado en el portal se vacía acá');
+  saveCart(1, []);
+  assert.deepEqual(readCart(1).rows, [], 'un carrito vaciado en el portal se vacía acá');
 
   console.log(`✓ capa de cache del carrito (${rows.length} filas, ida y vuelta sin pérdidas)`);
 } finally {
