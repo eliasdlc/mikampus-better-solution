@@ -968,9 +968,9 @@ app.delete('/api/schedule', (req, res) => {
 });
 
 app.post('/api/watch', (req, res) => {
-  const { enabled, intervalMs } = req.body;
+  const { enabled } = req.body;
   if (enabled) {
-    scheduler.startWatcher(req.userId, intervalMs || 45000);
+    scheduler.startWatcher(req.userId);
   } else {
     scheduler.stopWatcher(req.userId);
   }

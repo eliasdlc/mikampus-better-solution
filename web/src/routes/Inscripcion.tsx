@@ -53,7 +53,6 @@ export function Inscripcion() {
   });
 
   const [at, setAt] = useState('');
-  const [intervalSecs, setIntervalSecs] = useState(45);
 
   const enroll = useMutation({ mutationFn: enrollNow });
   const validation = useMutation({ mutationFn: validateCart });
@@ -75,7 +74,7 @@ export function Inscripcion() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
   });
   const watch = useMutation({
-    mutationFn: (enabled: boolean) => setWatcher(enabled, intervalSecs * 1000),
+    mutationFn: (enabled: boolean) => setWatcher(enabled),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
   });
 
@@ -284,18 +283,12 @@ export function Inscripcion() {
                 <span className={`block size-5 rounded-full bg-white transition-transform duration-100 ${watcherOn ? 'translate-x-4' : ''}`} />
               </button>
             </div>
-            <label className="text-muted flex items-center gap-2 text-xs">
-              cada
-              <input
-                type="number"
-                min={30}
-                value={intervalSecs}
-                onChange={(e) => setIntervalSecs(Number(e.target.value))}
-                className="border-line bg-bg tabular w-16 rounded-[var(--radius)] border px-2 py-1 font-mono"
-              />
-              s
-            </label>
-            <p className="text-muted text-xs">No bajés de ~30–45s durante el pico de demanda.</p>
+            <p className="text-muted text-xs">
+              {watcherOn
+                ? `Ciclo efectivo: cada ${Math.round((state.data?.watcher?.intervalMs ?? 45_000) / 1000)}s.`
+                : 'Consulta compartida: una sola cuenta revisa las materias vigiladas de todos.'}
+            </p>
+            <p className="text-muted text-xs">El intervalo se ajusta al presupuesto del servidor durante el pico.</p>
           </div>
 
           <button
