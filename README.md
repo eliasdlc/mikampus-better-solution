@@ -22,13 +22,14 @@ npm start                  # levanta mikampus en http://localhost:4173
 
 ## Piloto hosted
 
-El despliegue single-user usa Docker Compose: Caddy termina HTTPS y Basic Auth
-provisional; la app y SQLite quedan detrás de él en un volumen Docker. Copiá
-`.env.hosted.example` a `.env.hosted`, configurá el dominio, hash de Basic Auth
-y credenciales del portal, y luego corré `docker compose up -d --build`.
+El despliegue hosted usa Docker Compose: Caddy termina HTTPS y mikampus maneja
+el login de cada estudiante; la app y SQLite quedan detrás de él en un volumen
+Docker. Copiá `.env.hosted.example` a `.env.hosted`, configurá el dominio,
+allowlist, credenciales operativas y luego corré `docker compose up -d --build`.
 Litestream se activa solo después de crear un bucket privado y sus credenciales;
 la configuración cifra la réplica y retiene 72 horas. El procedimiento operativo
-vive en `docs/deploy-digitalocean.md`.
+vive en `docs/deploy-digitalocean.md`; el gate y ensayo previos a invitar
+compañeros están en [`docs/launch.md`](./docs/launch.md).
 
 Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload: `npm run dev` (Vite en :5173 con proxy de `/api` al backend en :4173, que debe estar corriendo con `npm start`).
 
