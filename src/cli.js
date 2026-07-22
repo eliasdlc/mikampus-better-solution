@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { createBackup } from './backups.js';
 import { db, DB_PATH } from './db.js';
 import { agentToken, lockPath, processIsAlive, readAgentLock, runtimeDir } from './runtime.js';
+import { dataPaths } from './paths.js';
+import { installBrowser } from './browser.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const command = process.argv[2] || 'status';
@@ -34,7 +36,7 @@ async function start() {
   if (existing?.ok) return console.log(`mikampus ya está activo en ${existing.url}`);
   const lock = readAgentLock();
   if (lock && processIsAlive(lock.pid)) throw new Error(`Hay un proceso vivo (PID ${lock.pid}) pero su healthcheck falló; no se iniciará otro agente.`);
-  const child = spawn(process.execPath, [path.join(here, 'server.js')], {
+  const child = spawn(process.execPath, [path.join(here, 'launcher.js')], {
     detached: true, stdio: 'ignore', env: { ...process.env, MIKAMPUS_AGENT_TOKEN: agentToken() },
   });
   child.unref();
@@ -72,7 +74,7 @@ function doctor() {
   if (checks.some(([, ok]) => !ok)) process.exitCode = 1;
 }
 function serviceDefinition() {
-  const node = process.execPath; const entry = path.join(here, 'server.js');
+  const node = process.execPath; const entry = path.join(here, 'launcher.js');
   if (process.platform === 'linux') return { file: path.join(process.env.XDG_CONFIG_HOME || path.join(process.env.HOME, '.config'), 'systemd/user/mikampus.service'), content: `[Unit]\nDescription=mikampus local agent\n[Service]\nExecStart=${node} ${entry}\nRestart=on-failure\nRestartSec=3\nEnvironment=MIKAMPUS_AGENT_TOKEN=${agentToken()}\n[Install]\nWantedBy=default.target\n` };
   if (process.platform === 'darwin') return { file: path.join(process.env.HOME, 'Library/LaunchAgents/dev.mikampus.agent.plist'), content: `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Label</key><string>dev.mikampus.agent</string><key>ProgramArguments</key><array><string>${node}</string><string>${entry}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>\n` };
   return { file: path.join(runtimeDir, 'mikampus-task.cmd'), content: `@echo off\r\n"${node}" "${entry}"\r\n` };
@@ -102,14 +104,13 @@ function restore(file) {
 async function eraseData() {
   if (!process.argv.includes('--yes')) throw new Error('erase-data requiere --yes: borra credenciales, SQLite, backups y runtime local.');
   await stop();
-  const credentialDb = process.env.MIKAMPUS_CRED_DB || path.join(path.dirname(DB_PATH), 'credentials.db');
-  const backupDir = process.env.MIKAMPUS_BACKUP_DIR || path.join(path.dirname(DB_PATH), 'backups');
+  const { credentials: credentialDb, backups: backupDir } = dataPaths();
   const targets = [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`, credentialDb, `${credentialDb}-wal`, `${credentialDb}-shm`, backupDir, runtimeDir];
   for (const target of targets) fs.rmSync(target, { recursive: true, force: true, maxRetries: 1 });
   console.log('Datos locales, secretos, backups y runtime eliminados.');
 }
 async function main() {
-  if (command === 'start') return start(); if (command === 'stop') return stop(); if (command === 'status') return status(); if (command === 'open') return open(); if (command === 'doctor') return doctor();
+  if (command === 'start') return start(); if (command === 'stop') return stop(); if (command === 'status') return status(); if (command === 'open') return open(); if (command === 'doctor') return doctor(); if (command === 'install-browser') return installBrowser();
   if (command === 'install-service') return installService(false); if (command === 'uninstall-service') return installService(true);
   if (command === 'backup') return console.log(createBackup()); if (command === 'restore') return restore(process.argv[3]);
   if (command === 'erase-data') return eraseData();

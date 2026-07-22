@@ -13,7 +13,7 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
   `feat/open-source-ready` queda preservada tras el merge de Fase 0.
-- **Fase en curso:** siguiente Fase 3 — Spike de empaquetado y build de producción.
+- **Fase en curso:** siguiente Fase 4 — Onboarding, notificaciones y ciclo de vida de datos.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -42,13 +42,20 @@
   submit incierto. `deploy/home-server/` mantiene datos en volumen, reinicia el servicio y
   restringe el acceso remoto al túnel SSH de loopback. La fase queda validada en source;
   los smokes de artefactos y matriz nativa corresponden al spike de Fase 3.
+- **Cierre de Fase 3:** `build:production` compila SPA y backend ESM sin type stripping
+  y produce un payload limpio con dependencias de producción. El launcher fija app-data
+  antes de SQLite/Playwright; el artifact smoke verificó SPA, migración SQLite fuera del
+  CWD, notices y un fixture Chromium descargado en primer uso. El ADR documenta SEA/Bun,
+  tamaño, browser y matriz: RC1 soporta Linux x64 (Ubuntu 24.04/Debian 12); los demás
+  targets quedan explícitamente fuera hasta tener smoke nativo y resolver P3. `npm pack
+  --dry-run` contiene sólo runtime, SPA y avisos, no fixtures/recon/tests/hosted.
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
 | 0 | Contrato local, privacidad y desbloqueo open source | ✅ Hecho |
 | 1 | Single-user seguro (auth local, credenciales, retiro hosted) | ✅ Hecho |
 | 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ✅ Hecho |
-| 3 | Spike de empaquetado y build de producción | ⬜ Pendiente |
+| 3 | Spike de empaquetado y build de producción | ✅ Hecho |
 | 4 | Onboarding, notificaciones y ciclo de vida de datos | ⬜ Pendiente |
 | 5 | Distribución (instaladores/binarios + npm) | ⬜ Pendiente |
 | 6 | CI de releases, documentación y landing | ⬜ Pendiente |

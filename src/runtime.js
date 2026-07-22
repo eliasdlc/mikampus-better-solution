@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DB_PATH } from './db.js';
 import { db } from './db.js';
+import { dataPaths } from './paths.js';
 
 // El lock pertenece al agente, no a una pestaña. Es un archivo pequeño y
 // deliberadamente independiente de SQLite para poder diagnosticar un proceso
 // vivo aun cuando la base esté dañada.
-export const runtimeDir = process.env.MIKAMPUS_RUNTIME_DIR || path.join(path.dirname(DB_PATH), 'runtime');
+export const runtimeDir = dataPaths().runtime;
 export const lockPath = path.join(runtimeDir, 'agent.lock.json');
 export const tokenPath = path.join(runtimeDir, 'agent.token');
 

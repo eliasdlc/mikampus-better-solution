@@ -41,11 +41,29 @@ Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload:
 estar corriendo con `npm start`). El servidor se fija a loopback y rechaza
 orígenes y hosts ajenos: no expongas este proceso a una LAN o Internet.
 
+## Empaquetado (spike de Fase 3)
+
+El release candidate soportado hoy es Linux x64 (Ubuntu 24.04/Debian 12) con
+Node >=24; Windows y macOS esperan smoke nativo y la decisión de firma. El
+payload no trae Chromium: tras instalarlo, ejecutá `mikampus install-browser`
+para descargarlo a app-data con el progreso de Playwright. `npx mikampus` es
+foreground; el agente durable se controla con `mikampus install-service`.
+
+```bash
+npm run build:production
+npm run smoke:package
+npm pack --dry-run
+```
+
+El artifact usa `~/.local/share/mikampus` en Linux, `~/Library/Application Support/mikampus`
+en macOS y `%APPDATA%\\mikampus` en Windows. Definí `MIKAMPUS_DATA_DIR` para
+Home Server o para elegir otra ubicación; nunca usa el CWD para datos.
+
 Para que la búsqueda tenga contra qué buscar, llená el catálogo desde el portal: `node scripts/sync-catalog.mjs ICC` (ver [De dónde sale el nombre de cada materia](#de-dónde-sale-el-nombre-de-cada-materia)). Tarda unos minutos por subject y solo hace falta una vez por término. `scripts/seed-catalog.mjs` siembra 4 materias **inventadas** y es solo para probar la UI sin portal — no lo corras contra la base real.
 
 ## Stack
 
-- **Backend** — Node + Express, Playwright para el scraping, `node:sqlite` (built-in, sin compilación nativa) para el catálogo y los planes en `data/mikampus.db`.
+- **Backend** — Node + Express, Playwright para el scraping, `node:sqlite` (built-in, sin compilación nativa) para el catálogo y los planes en app-data del usuario.
 - **Frontend** — Vite + React + TypeScript + Tailwind v4, TanStack Query (stale-while-revalidate), React Router, MiniSearch. SPA en `web/`, build servido por el mismo Express.
 - **Contratos** — Zod en `src/shared/schemas.ts`, importado tal cual por backend (TS nativo de Node) y frontend: todo output de scraper se valida en el borde.
 

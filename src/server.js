@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
@@ -36,9 +35,9 @@ import { startBackupCron, stopBackupCron } from './backups.js';
 import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js';
 import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
 import { acquireAgentLock, agentHealthAuthorized, recordRuntimeStart, recordRuntimeStop, releaseAgentLock } from './runtime.js';
+import { resourcePath } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
+const DIST_DIR = resourcePath('public', 'dist');
 const app = express();
 app.use(express.json());
 app.use(express.static(DIST_DIR));

@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, DB_PATH } from './db.js';
+import { dataPaths } from './paths.js';
 
-const BACKUP_DIR = process.env.MIKAMPUS_BACKUP_DIR || path.join(path.dirname(DB_PATH), 'backups');
+const BACKUP_DIR = dataPaths().backups;
 const BACKUP_AT = process.env.MIKAMPUS_BACKUP_AT || '03:30';
 const KEEP = Math.max(1, Number(process.env.MIKAMPUS_BACKUP_KEEP || 7));
 let timer = null;

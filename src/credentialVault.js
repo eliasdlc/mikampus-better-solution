@@ -1,11 +1,8 @@
 import 'dotenv/config';
-import path from 'node:path';
+import { dataPaths } from './paths.js';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { Entry } from '@napi-rs/keyring';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Credenciales persistidas del portal. Desktop usa el almacén seguro nativo
 // (Credential Manager, Keychain o Secret Service mediante keyring-rs). Home
@@ -26,7 +23,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // El uso interactivo vive en RAM, atado al context de Playwright (session.js).
 
 const RUNTIME = process.env.MIKAMPUS_RUNTIME ?? (process.env.MIKAMPUS_CRED_DB ? 'home-server' : 'desktop');
-const VAULT_PATH = process.env.MIKAMPUS_CRED_DB ?? path.join(__dirname, '..', 'data', 'credentials.db');
+const VAULT_PATH = dataPaths().credentials;
 const KEYRING_SERVICE = 'mikampus.portal';
 
 let vaultDb = null;
