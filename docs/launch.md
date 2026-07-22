@@ -1,4 +1,8 @@
-# Fase 7 — lanzamiento controlado
+# Histórico — lanzamiento hosted (no ejecutar)
+
+> Este procedimiento corresponde al prototipo multiusuario. Se conserva como
+> registro histórico, no como guía operativa; no invites usuarios ni despliegues
+> esta configuración. Ver [`local-security.md`](./local-security.md).
 
 Esta fase prepara la instancia para los primeros compañeros. No convierte un
 check técnico en permiso para abrir DNS, guardar credenciales de terceros ni

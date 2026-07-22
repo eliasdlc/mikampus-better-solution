@@ -1,4 +1,8 @@
-# LANZAMIENTO.md — de herramienta personal a plataforma para compañeros
+# Histórico — plan de lanzamiento hosted (no ejecutar)
+
+> Este documento describe el prototipo multiusuario anterior. No es un plan de
+> lanzamiento vigente ni autoriza custodiar credenciales de terceros. El plan
+> vigente es [`PLAN-LOCAL-OPENSOURCE.md`](./PLAN-LOCAL-OPENSOURCE.md).
 
 > Audit de decisiones para llevar mikampus a producción en `mikampus.decruce.dev`, con login por estudiante y datos aislados por usuario. Cada decisión está anclada al código actual. v3: incorpora el segundo audit — pre-warming del disparo, la costura sesión/credencial, vida de credencial por ventana de inscripción, fairness entre watchers, presupuesto de scraping, audit log, y el supuesto `TARGET_TERM` que faltaba en el diagnóstico. Las notas de Elias de v2 que quedaban abiertas están resueltas en el texto.
 

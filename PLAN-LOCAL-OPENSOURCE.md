@@ -13,20 +13,26 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/open-source-ready`, creada desde `dev` y preservada tras el
   merge del PR #3 hacia `dev`.
-- **Fase en curso:** 0 — contrato local, privacidad y desbloqueo open source.
+- **Fase en curso:** ninguna — Fase 0 cerrada; Fase 1 aún no iniciada.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
-- **Avance de Fase 0:** el sanitizer de fixtures ya no depende del orden de atributos HTML;
-  `fixtures/recon-my-classes-view.html` se publicó con `ICSID` e `ICStateNum` sanitizados y
-  una prueba lo cubre. También se corrigió el typecheck en `web/src/lib/push.ts`.
-- **Pendiente de Fase 0:** LICENSE/notices/disclaimers, política de seguridad, auditoría
-  integral de PII e historia, reducción y política de fixtures, contrato de egress, scripts
-  de lint/typecheck y threat model. No existe todavía `bin/` (launcher), agente de fondo,
-  `deploy/home-server/`, `landing/`, gate `engines` ni compilación de producción TS→JS.
+- **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
+  contrato de egress, threat model y política de fixtures ya están versionados. Existen
+  gates `typecheck`, `lint`, `audit:public` y `audit:history`; el sanitizer cubre atributos
+  en cualquier orden, identificadores y nombres. La documentación hosted quedó marcada como
+  histórica/no ejecutable.
+- **Auditoría histórica:** se reescribió la historia alcanzable para sustituir el contenido
+  de los dos fixtures que introdujo `489a2a4` por versiones sanitizadas. Tras retirar las
+  referencias de respaldo y recolectar objetos antiguos, `npm run audit:history` pasa sobre
+  todas las ramas publicables. Los clones existentes deben re-clonarse o resincronizarse.
+- **Cierre de Fase 0:** se retiraron los dos fixtures sin cobertura; los 18 restantes tienen
+  propósito registrado y límite de tamaño en `fixtures/manifest.json`. `npm test`,
+  `npm run typecheck`, `npm run lint`, `npm run audit:public` y `npm run audit:history`
+  pasan. P1/P2 permanecen como blockers explícitos del primer package o release.
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
-| 0 | Contrato local, privacidad y desbloqueo open source | 🟨 En curso |
+| 0 | Contrato local, privacidad y desbloqueo open source | ✅ Hecho |
 | 1 | Single-user seguro (auth local, credenciales, retiro hosted) | ⬜ Pendiente |
 | 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ⬜ Pendiente |
 | 3 | Spike de empaquetado y build de producción | ⬜ Pendiente |

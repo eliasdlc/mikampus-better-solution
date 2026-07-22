@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { scheduleToICS } from '../web/src/lib/ics.ts';
 
-// ICC-233 tal como sale de fixtures/recon-schedule-list.html.
+// Caso de regresión de ICC-233: el término inicia martes y la clase es sábado.
 const courses = [
   {
     id: 1,
