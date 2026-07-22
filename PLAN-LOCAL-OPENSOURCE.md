@@ -10,23 +10,23 @@
 
 ## Estado actual
 
-- **Fecha de última actualización:** 2026-07-21
-- **Rama de trabajo:** `feat/open-source-ready` (a crear desde `dev`). Hoy todo sigue en `dev`.
-- **Fase en curso:** ninguna todavía — este documento es el paso previo a implementar.
-- **Precondición de rama:** el worktree de `dev` tiene cambios sin commit. Antes de crear
-  `feat/open-source-ready` hay que resolverlos sin absorber ni descartar trabajo ajeno.
-- **Nada implementado aún** del plan: no existe `bin/` (launcher), ni el agente de fondo,
-  ni `deploy/home-server/`, ni `landing/`, ni `LICENSE`, ni el gate `engines`, ni la
-  compilación de producción TS→JS.
-- **Baseline verificado antes de implementar:** el repositorio GitHub ya es público sin
-  LICENSE; el typecheck actual falla en `web/src/lib/push.ts`; no existe script de lint;
-  `npm pack --dry-run` incluye hosted/fixtures/tests y excluye `public/dist`; cuatro fixtures
-  tracked no pasan el check de nombre-placeholder y el fixture nuevo contiene dos campos de
-  sesión sin sanitizar. Fase 0 bloquea cualquier publicación hasta resolverlo.
+- **Fecha de última actualización:** 2026-07-22
+- **Rama de trabajo:** `feat/open-source-ready`, creada desde `dev` y preservada tras el
+  merge del PR #3 hacia `dev`.
+- **Fase en curso:** 0 — contrato local, privacidad y desbloqueo open source.
+- **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
+  preservó en commits propios y se integró mediante PR, sin descartar cambios.
+- **Avance de Fase 0:** el sanitizer de fixtures ya no depende del orden de atributos HTML;
+  `fixtures/recon-my-classes-view.html` se publicó con `ICSID` e `ICStateNum` sanitizados y
+  una prueba lo cubre. También se corrigió el typecheck en `web/src/lib/push.ts`.
+- **Pendiente de Fase 0:** LICENSE/notices/disclaimers, política de seguridad, auditoría
+  integral de PII e historia, reducción y política de fixtures, contrato de egress, scripts
+  de lint/typecheck y threat model. No existe todavía `bin/` (launcher), agente de fondo,
+  `deploy/home-server/`, `landing/`, gate `engines` ni compilación de producción TS→JS.
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
-| 0 | Contrato local, privacidad y desbloqueo open source | ⬜ Pendiente |
+| 0 | Contrato local, privacidad y desbloqueo open source | 🟨 En curso |
 | 1 | Single-user seguro (auth local, credenciales, retiro hosted) | ⬜ Pendiente |
 | 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ⬜ Pendiente |
 | 3 | Spike de empaquetado y build de producción | ⬜ Pendiente |
