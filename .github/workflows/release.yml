@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify source
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run audit:public
+      - run: npm run smoke:npm-package
+
+  artifacts:
+    name: Linux x64 artifact smoke
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:distribution
+      - run: npm run smoke:distribution
+      - run: node scripts/generate-release-manifest.mjs
+      - run: node scripts/test-release-manifest.mjs --manifest landing/public/releases/latest.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-linux-x64
+          path: |
+            release/
+            landing/public/releases/latest.json
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release, npm and landing
+    needs: artifacts
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-linux-x64
+      - run: npm ci
+      - name: Verify tag and generated manifest
+        run: |
+          test "${GITHUB_REF_NAME}" = "v$(node -p "require('./package.json').version")"
+          node scripts/test-release-manifest.mjs
+      - name: Create a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --draft --title "mikampus $GITHUB_REF_NAME" --generate-notes
+      - name: Publish npm with OIDC provenance
+        run: npm publish --provenance --access public
+      - name: Attach approved artifacts and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false
+      - name: Deploy static landing to Vercel
+        working-directory: landing
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          test -n "$VERCEL_TOKEN"
+          npx --yes vercel@48.11.0 pull --yes --environment=production --token="$VERCEL_TOKEN"
+          npx --yes vercel@48.11.0 build --prod --token="$VERCEL_TOKEN"
+          npx --yes vercel@48.11.0 deploy --prebuilt --prod --token="$VERCEL_TOKEN"

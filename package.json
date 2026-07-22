@@ -65,6 +65,7 @@
     "smoke:lifecycle": "node scripts/smoke-lifecycle.mjs",
     "build:distribution": "node scripts/build-distribution.mjs",
     "smoke:distribution": "node scripts/test-distribution.mjs",
+    "test:release-manifest": "node scripts/test-release-manifest.mjs",
     "prepack": "npm run build:production && node scripts/prepare-npm-package.mjs"
   },
   "dependencies": {

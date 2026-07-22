@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="mikampus: herramienta local para usar con tu propia cuenta y tu propio hardware." />
+    <title>mikampus — tus datos, tu cuenta, tu hardware</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main>
+      <header class="masthead"><a href="./" aria-label="Inicio mikampus">mikampus</a><span>local / single-user</span></header>
+      <section class="hero" aria-labelledby="title">
+        <p class="eyebrow">Herramienta local para estudiantes</p>
+        <h1 id="title">Tu cuenta.<br /><em>Tu equipo.</em><br />Tus decisiones.</h1>
+        <p class="lede">mikampus corre en hardware que controlas. No hay cuenta central, telemetría ni servicio hosted operado por este proyecto.</p>
+        <div class="actions"><a class="button" href="#download">Ver descarga</a><a class="text-link" href="https://github.com/eliasdlc/mikampus-better-solution">Código y documentación ↗</a></div>
+      </section>
+      <aside class="notice"><strong>Antes de instalar:</strong> usa únicamente tu propia cuenta. mikampus no está afiliado, autorizado ni respaldado por PUCMM. La automatización puede violar sus términos y tener consecuencias académicas.</aside>
+      <section class="modes" aria-labelledby="modes-title"><p class="eyebrow">Elige según tu realidad</p><h2 id="modes-title">Dos modos, una frontera clara</h2><div class="mode-grid"><article><h3>Desktop local</h3><p>Para usar desde tu PC. El agente puede seguir aunque cierres la pestaña, pero se detiene si el equipo se duerme, se apaga o pierde conexión.</p><code>Ideal para uso diario</code></article><article><h3>Home Server</h3><p>Para un equipo propio que permanece encendido. Acceso local mediante túnel SSH por defecto; no expongas el puerto a Internet.</p><code>Continuidad solo con hardware continuo</code></article></div></section>
+      <section class="download" id="download" aria-labelledby="download-title"><p class="eyebrow">Release verificado</p><h2 id="download-title">Descargar mikampus</h2><p id="release-status" role="status">Leyendo el manifiesto de release…</p><div id="artifacts" class="artifacts"></div><div class="npm-card"><h3>Para desarrollo con Node</h3><p><code>npx mikampus</code> corre en foreground: cerrar la terminal lo detiene. Requiere Node 24 o superior.</p><code>npm install -g mikampus && mikampus install-service</code></div></section>
+      <section class="how"><p class="eyebrow">No hay atajos ocultos</p><ol><li><strong>Verifica.</strong> Compara el SHA-256 del artefacto antes de abrirlo.</li><li><strong>Configura.</strong> El primer arranque descarga o verifica el browser y luego pide tu cuenta.</li><li><strong>Controla.</strong> Puedes detener el agente, exportar copias y borrar tus datos cuando quieras.</li></ol></section>
+      <footer><span>MIT · sin garantía · sin telemetría</span><nav><a href="https://github.com/eliasdlc/mikampus-better-solution/blob/dev/README.md">Guía</a><a href="https://github.com/eliasdlc/mikampus-better-solution/blob/dev/SECURITY.md">Seguridad</a><a href="https://github.com/eliasdlc/mikampus-better-solution/releases">Releases</a></nav></footer>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

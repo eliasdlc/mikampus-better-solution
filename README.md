@@ -1,9 +1,10 @@
 # mikampus
 
 > Estado: migración en curso a una herramienta open source, local y single-user.
-> Fases 0–4 completadas: mikampus no ofrece ni soporta despliegues hosted o
-> multiusuario, y ya cubre primer uso, notificaciones y ciclo de vida de datos.
-> Falta la distribución (instaladores, npm y releases firmadas).
+> Fases 0–5 implementadas: mikampus no ofrece ni soporta despliegues hosted o
+> multiusuario, tiene distribución Linux x64 y paquete npm candidatos. La
+> publicación de releases permanece protegida por los gates de CI y no se hace
+> desde un checkout local.
 
 mikampus busca convertirse en una herramienta que cada estudiante ejecuta en
 su propio hardware con su propia cuenta. No está afiliada, autorizada ni
@@ -14,6 +15,13 @@ No uses ni compartas credenciales de otra persona.
 El plan vigente está en [`PLAN-LOCAL-OPENSOURCE.md`](./PLAN-LOCAL-OPENSOURCE.md).
 La política de privacidad, egress, amenazas y fixtures está en
 [`docs/local-security.md`](./docs/local-security.md).
+
+La [landing de releases](./landing/) es estática: lee un manifest generado por
+el workflow del tag, no llama a una API de GitHub desde el navegador. Consulta
+la [matriz de plataformas](./docs/platform-support.md), la
+[guía de Home Server](./deploy/home-server/README.md), la
+[guía de release](./docs/releasing.md), la [política de fixtures](./docs/fixtures-policy.md)
+y la [guía de contribución](./CONTRIBUTING.md) antes de instalar o aportar.
 
 Hoy funciona:
 
@@ -133,6 +141,22 @@ flujo de update detiene el agente y respalda la base antes de tocar nada. El
 instalador por plataforma llega con la fase de distribución (ver
 [`docs/adr/0002-data-lifecycle.md`](./docs/adr/0002-data-lifecycle.md)).
 
+## Garantías y límites operativos
+
+| Tema | Lo que mikampus hace | Límite que no oculta |
+| --- | --- | --- |
+| Cuenta y datos | Corre single-user en tu hardware; no hay base central ni telemetría. | Usa solo tu propia cuenta; la licencia MIT no elimina riesgos de ToS o académicos. |
+| Desktop local | El agente sigue al cerrar la pestaña y muestra gaps/estado. | No vigila si el equipo duerme, se apaga, se queda sin red o el agente se detiene. |
+| Home Server | Puede continuar en un equipo tuyo encendido, con datos en su volumen. | Solo es continuo si ese hardware sigue encendido y conectado; no expongas el servicio a Internet. |
+| Credenciales | La sesión interactiva queda en RAM y la automatización requiere consentimiento. | MFA, CAPTCHA, contraseña rechazada o keychain bloqueado detienen el trabajo; no reintenta logins en bucle. |
+| Red y updates | PUCMM es el destino de runtime; browser/updates son explícitos y verificables. | GitHub, npm, Vercel y CDN de Playwright reciben datos normales de distribución (IP/plataforma), nunca datos académicos. |
+| Salida | Puedes parar el agente, hacer/exportar copias y previsualizar el borrado. | Un backup en el mismo disco no salva de robo, incendio o fallo físico. |
+
+Para recuperar datos, ejecutá `mikampus backup --to <otro-disco>` antes de
+desinstalar. `mikampus uninstall` ofrece conservarlos; `mikampus erase-data`
+primero muestra qué eliminará y exige confirmación. No hay soporte para
+recuperar datos borrados ni copias enviadas automáticamente a la nube.
+
 Para que la búsqueda tenga contra qué buscar, llená el catálogo desde el portal: `node scripts/sync-catalog.mjs ICC` (ver [De dónde sale el nombre de cada materia](#de-dónde-sale-el-nombre-de-cada-materia)). Tarda unos minutos por subject y solo hace falta una vez por término. `scripts/seed-catalog.mjs` siembra 4 materias **inventadas** y es solo para probar la UI sin portal — no lo corras contra la base real.
 
 ## Stack
@@ -153,6 +177,7 @@ node scripts/bench-search.mjs                    # keystroke → resultados < 16
 npm run smoke                                    # screenshots a 390/768/1440px + falla si hay desborde horizontal
 npm run smoke:lifecycle                          # agente real: primer uso sin terminal, origen ajeno rechazado, datos en app-data
 npm run smoke:package                            # artifact compilado: SPA, SQLite en app-data, payload mínimo
+npm run test:release-manifest                    # contrato del manifiesto que consume la landing
 ```
 
 `npm test` corre los parsers contra fixtures sanitizados y revisados (sin tokens

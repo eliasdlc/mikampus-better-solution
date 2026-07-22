@@ -21,9 +21,10 @@ no está distribuida; por eso este modo la rechaza por diseño.
 4. Respaldá con `docker compose exec mikampus mikampus backup`; restaurar exige
    detener el agente primero para no copiar una DB activa.
 
-El volumen `mikampus-data` es el dato durable. Funciona en x64 y ARM64 solo
-cuando se use una imagen publicada para esa arquitectura; la matriz final se
-cierra durante el spike de Fase 3.
+El volumen `mikampus-data` es el dato durable. Para RC1, la única plataforma
+publicada y smokeada es Linux x64 (Ubuntu 24.04/Debian 12). Una imagen ARM64 no
+se declara soportada hasta tener su build e installation smoke nativos; ver la
+[matriz de plataformas](../../docs/platform-support.md).
 
 ## Avisos: qué sale de este equipo
 

@@ -13,7 +13,8 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
   `feat/open-source-ready` queda preservada tras el merge de Fase 0.
-- **Fase en curso:** Fase 5 — implementación terminada; validación final diferida.
+- **Fase en curso:** Fase 6 — implementación local terminada; publicación y validación
+  de tag pendientes de credenciales/entorno protegidos.
 - **Cierre de implementación de Fase 5:** se genera un tarball standalone Linux x64 con
   runtime Node, installer/uninstaller, SHA-256, SBOM, procedencia y notices; el
   flujo de smoke definido cubre first-run, stop/start, upgrade y preservación de
@@ -24,6 +25,15 @@
   del scraper sin borrar datos. Por decisión del usuario, no se ejecutan los
   gates de validación ni se publica npm/release hasta cerrar el plan; por eso la
   fase conserva estado 🟨 y no afirma todavía su aceptación formal.
+- **Implementación de Fase 6:** el tag `vX.Y.Z` tiene un workflow de GitHub Actions con
+  dependencias bloqueadas y Actions fijadas por SHA: gates de source, scan público, npm
+  pack y smoke de artifact/instalación en Ubuntu nativo. Solo después crea un release en
+  borrador, publica npm con OIDC provenance, adjunta los assets aprobados y lo publica.
+  El manifest de la landing se genera desde esos assets; la landing estática de Vercel lo
+  consume sin API cliente de GitHub e informa plataforma, checksum, requisitos y npm.
+  README y guías públicas cubren modos, límites, seguridad, Home Server, fixtures,
+  plataformas, contribución y releases. Falta configurar el environment protegido y
+  ejecutar un tag real: no se publicaron npm, release ni Vercel desde este trabajo.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -83,7 +93,7 @@
 | 3 | Spike de empaquetado y build de producción | ✅ Hecho |
 | 4 | Onboarding, notificaciones y ciclo de vida de datos | ✅ Hecho |
 | 5 | Distribución (instaladores/binarios + npm) | 🟨 En curso |
-| 6 | CI de releases, documentación y landing | ⬜ Pendiente |
+| 6 | CI de releases, documentación y landing | 🟨 En curso |
 
 Leyenda: ⬜ pendiente · 🟨 en curso · ✅ hecho.
 
