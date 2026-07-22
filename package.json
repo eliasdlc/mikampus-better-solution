@@ -1,7 +1,20 @@
 {
-  "name": "mikampus-better-solution",
+  "name": "mikampus",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "Herramienta local y single-user para operar mikampus con tu propia cuenta.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eliasdlc/mikampus-better-solution.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eliasdlc/mikampus-better-solution/issues"
+  },
+  "homepage": "https://github.com/eliasdlc/mikampus-better-solution#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=24"
   },

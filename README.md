@@ -67,9 +67,15 @@ npm run smoke:npm-package
 
 El paquete npm conserva Node >=24 y `npx mikampus` se ejecuta en foreground:
 cerrar la terminal lo detiene. Una instalación global seguida de
-`mikampus install-service` habilita el agente durable. El candidato permanece
-privado hasta resolver P2 (la decisión de marca); no se publicará en npm con el
-nombre actual.
+`mikampus install-service` habilita el agente durable. El paquete público se
+llama `mikampus`; su publicación queda reservada al flujo de releases, nunca a
+un comando de desarrollo local.
+
+**Compatibilidad del scraper.** Un release de corrección puede arrancar con
+`MIKAMPUS_SCRAPER_MUTATIONS=blocked` cuando el portal cambió: así se detienen
+inscripción, baja, envío al carrito y auto-inscripción, sin borrar la base local
+ni las copias. Actualizá con un release cuya integridad hayas verificado o
+conservá tus datos y esperá la corrección.
 
 El artifact usa `~/.local/share/mikampus` en Linux, `~/Library/Application Support/mikampus`
 en macOS y `%APPDATA%\\mikampus` en Windows. Definí `MIKAMPUS_DATA_DIR` para

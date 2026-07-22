@@ -44,6 +44,7 @@ import { backupState, createBackup, exportBackup, setRetention } from './backups
 import { erasePreview, eraseLocalArtifacts } from './erase.js';
 import { exportDiagnostics, listDiagnostics } from './diagnostics.js';
 import { checkForUpdate, setUpdatePolicy } from './updates.js';
+import { requireScraperMutationSupport } from './scraperSupport.js';
 
 const DIST_DIR = resourcePath('public', 'dist');
 const app = express();
@@ -547,6 +548,7 @@ app.post('/api/my-schedule/sync', async (req, res) => {
 // exacto; además corre sin retry automático para que un timeout posterior al
 // submit no ejecute la baja dos veces.
 app.post('/api/my-schedule/drop', async (req, res) => {
+  try { requireScraperMutationSupport(); } catch (err) { return res.status(503).json({ error: err.message }); }
   const term = req.body?.term ? String(req.body.term) : null;
   const courseCode = req.body?.courseCode ? String(req.body.courseCode).trim().toUpperCase() : '';
   const classNbr = req.body?.classNbr ? String(req.body.classNbr) : null;
@@ -867,6 +869,7 @@ app.post('/api/holds/sync', async (req, res) => {
 
 app.post('/api/enroll', async (req, res) => {
   try {
+    requireScraperMutationSupport();
     const result = await scheduler.runEnrollNow(req.userId, 'manual');
     res.json(result);
   } catch (err) {
@@ -1032,6 +1035,7 @@ app.delete('/api/plans/:id/items/:itemId', (req, res) => {
 // por materia (agregada ✓ / ya estaba / falló ✗ y por qué) va en la
 // respuesta. Un fallo no corta el batch: las demás materias siguen.
 app.post('/api/plans/:id/to-cart', async (req, res) => {
+  try { requireScraperMutationSupport(); } catch (err) { return res.status(503).json({ error: err.message }); }
   let plan;
   try {
     plan = plans.readPlan(req.userId, Number(req.params.id));
@@ -1104,6 +1108,7 @@ app.get('/api/actions', (req, res) => {
 
 app.post('/api/schedule', (req, res) => {
   try {
+    requireScraperMutationSupport();
     const at = new Date(req.body?.atISO).getTime();
     if (Number.isNaN(at) || at <= Date.now()) throw new Error('La hora debe ser futura y válida');
     authorizeUnattendedCredential(req.userId, {
@@ -1128,6 +1133,7 @@ app.post('/api/watch', (req, res) => {
   try {
     const { enabled, autoEnroll = false, appointmentAt = null, term, consent = false } = req.body ?? {};
     if (enabled) {
+      if (autoEnroll) requireScraperMutationSupport();
       authorizeUnattendedCredential(req.userId, {
         consent,
         term,

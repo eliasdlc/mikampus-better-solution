@@ -14,7 +14,7 @@ const packed = JSON.parse(output)[0];
 const files = packed.files.map(({ path: file }) => file);
 for (const required of ['bin/mikampus.mjs', 'dist/app/launcher.js', 'dist/public/dist/index.html', 'LICENSE', 'THIRD_PARTY_NOTICES', 'README.md']) assert.ok(files.includes(required), `npm tarball contiene ${required}`);
 for (const forbidden of ['fixtures/', 'scripts/', 'src/', 'web/']) assert.ok(!files.some((file) => file.startsWith(forbidden)), `npm tarball excluye ${forbidden}`);
-assert.equal(packed.name, 'mikampus-better-solution', 'el candidato conserva el nombre privado hasta resolver P2');
+assert.equal(packed.name, 'mikampus', 'el candidato usa el nombre público resuelto en P2');
 const temp = await mkdtemp(path.join(tmpdir(), 'mikampus-npm-package-'));
 try {
   const packageOutput = await exec('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], { cwd: root });

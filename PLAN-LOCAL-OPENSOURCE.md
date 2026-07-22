@@ -17,9 +17,12 @@
 - **Avance de Fase 5:** se genera y smokea un tarball standalone Linux x64 con
   runtime Node, installer/uninstaller, SHA-256, SBOM, procedencia y notices; el
   smoke aislado cubre first-run, stop/start, upgrade y preservación de datos. El
-  candidato npm se empaqueta y ejecuta localmente con `npx`, pero permanece
-  privado. P2 bloquea publicar un paquete/release con el nombre actual; P3 se
-  declara de forma visible (el binario Linux no está firmado).
+  candidato npm se empaqueta y ejecuta localmente con `npx` bajo el nombre
+  público `mikampus`. P2 queda resuelta: se mantiene ese nombre, con disclaimer
+  visible de no afiliación a PUCMM. P3 se declara de forma visible (el binario
+  Linux no está firmado). El modo de compatibilidad puede bloquear mutaciones
+  del scraper sin borrar datos. La validación integral queda diferida al cierre
+  del plan por decisión del usuario.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -222,10 +225,9 @@ Confirmadas por el usuario. Cambiarlas requiere una decisión explícita nueva.
 - **P1 — Resuelta (2026-07-22):** se retiró el código hosted/multiusuario de `HEAD`,
   preservando la historia y las ramas existentes. La documentación de despliegue hosted se
   retiró junto con el runtime.
-- **P2 — El nombre "mikampus".** Es casi idéntico a "MiCampus", el nombre del portal de
-  PUCMM → posible cercanía de marca. Mínimo: disclaimer "no afiliado ni respaldado por
-  PUCMM" bien visible. A evaluar: renombrar. El repo ya es público; decidir antes de
-  publicar paquetes/instaladores y promocionar la landing.
+- **P2 — Resuelta (2026-07-22):** se mantiene el nombre **mikampus**. Conserva el
+  disclaimer visible de que no está afiliado ni respaldado por PUCMM; el nombre no se
+  presenta como autorización o respaldo institucional.
 - **P3 — Firma y notarización.** Definir después del spike si el primer release acepta la
   fricción de Gatekeeper/SmartScreen o si firma de macOS/Windows es requisito. Mientras
   siga pendiente, "descargar y doble clic" no se considera demostrado.
