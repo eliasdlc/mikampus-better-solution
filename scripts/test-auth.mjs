@@ -24,7 +24,7 @@ const {
   noteLoginFailure,
   noteLoginSuccess,
   authMiddleware,
-  isInvited,
+  localRequestGuard,
   SESSION_COOKIE,
   CSRF_HEADER,
 } = await import('../src/auth.js');
@@ -56,27 +56,12 @@ assert.ok(purgeExpiredSessions() >= 1, 'la purga limpia lo vencido');
 // ── Cookie: parseo y atributos. ──
 const header = sessionCookieHeader('abc123', { secure: true });
 assert.match(header, /HttpOnly/);
-assert.match(header, /SameSite=Lax/);
+assert.match(header, /SameSite=Strict/);
 assert.match(header, /Secure/);
 assert.ok(!sessionCookieHeader('abc123', { secure: false }).includes('Secure'), 'sin Secure en local/http');
 assert.match(clearedSessionCookieHeader({ secure: true }), /Max-Age=0/);
 assert.equal(cookieValue(`otra=x; ${SESSION_COOKIE}=abc123; mas=y`, SESSION_COOKIE), 'abc123');
 assert.equal(cookieValue(undefined, SESSION_COOKIE), null);
-
-// ── Allowlist hosted: una beta pública no acepta usuarios por accidente. ──
-const previousMode = process.env.MIKAMPUS_MODE;
-const previousAllowlist = process.env.MIKAMPUS_ALLOWLIST;
-process.env.MIKAMPUS_MODE = 'hosted';
-process.env.MIKAMPUS_ALLOWLIST = 'elias, ANA ';
-assert.equal(isInvited('Elias'), true, 'la allowlist no depende de mayúsculas');
-assert.equal(isInvited('ana'), true, 'la allowlist recorta espacios');
-assert.equal(isInvited('beto'), false, 'un usuario fuera de invitación no llega al portal');
-process.env.MIKAMPUS_ALLOWLIST = '';
-assert.equal(isInvited('elias'), false, 'hosted sin allowlist queda cerrado por defecto');
-if (previousMode == null) delete process.env.MIKAMPUS_MODE;
-else process.env.MIKAMPUS_MODE = previousMode;
-if (previousAllowlist == null) delete process.env.MIKAMPUS_ALLOWLIST;
-else process.env.MIKAMPUS_ALLOWLIST = previousAllowlist;
 
 // ── Rate-limit: 5 fallos bloquean 15 minutos; el éxito limpia. ──
 for (let i = 0; i < 4; i++) noteLoginFailure('elias');
@@ -124,6 +109,21 @@ out = call({
   headers: { cookie: `${SESSION_COOKIE}=${live.token}`, [CSRF_HEADER]: live.csrfToken },
 });
 assert.ok(out.passed, 'con cookie + CSRF la mutación pasa');
+
+// ── Frontera loopback: Host y Origin ajenos se rechazan antes de auth. ──
+const guard = (req) => {
+  const res = fakeRes();
+  let passed = false;
+  localRequestGuard(req, res, () => (passed = true));
+  return { res, passed };
+};
+assert.ok(guard({ method: 'GET', headers: { host: 'localhost:4173' } }).passed, 'localhost es válido');
+assert.equal(guard({ method: 'GET', headers: { host: '192.168.1.5:4173' } }).res.statusCode, 421, 'la LAN no entra');
+assert.equal(
+  guard({ method: 'POST', headers: { host: 'localhost:4173', origin: 'https://evil.example' } }).res.statusCode,
+  403,
+  'un origen web ajeno no puede mutar localhost'
+);
 
 await rm(dir, { recursive: true, force: true });
 console.log('✓ auth: sesiones con hash + expiración, cookie SameSite, CSRF obligatorio en mutaciones, rate-limit de login');

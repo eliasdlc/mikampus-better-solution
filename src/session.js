@@ -1,17 +1,9 @@
 import { chromium } from 'playwright';
 import { loginContext } from './login.js';
-import { getCredentials } from './credentials.js';
 import { getCredential as vaultCredential, storeCredential } from './credentialVault.js';
-import { LOCAL_USER_ID } from './users.js';
 
-// El pool de sesiones del portal (LANZAMIENTO §1): UN Chromium compartido y un
-// browser context por usuario — cookies y sesión de PeopleSoft aisladas — con
-// su propia fila de acciones. La lentitud de un usuario nunca encola a otro;
-// dentro de un mismo usuario jamás corren dos acciones de Playwright a la vez.
-//
-// La cuenta de servicio (§1, la cuenta de Elias) es un context más del pool:
-// sirve el sync compartido (catálogo, cupos) sin exponer sesiones ajenas.
-export const SERVICE_USER_ID = LOCAL_USER_ID;
+// Una sola sesión del portal para el único operador. La cola evita que dos
+// acciones de Playwright se solapen sobre el mismo context.
 
 // ~80–150MB por context activo: se cierran solos tras un rato ociosos y hay un
 // techo global. El techo es blando — antes de abrir un context nuevo se cierra
@@ -58,8 +50,7 @@ export function hasLiveCredentials(userId) {
   }
 }
 
-// ¿Con qué re-loguear a este usuario? RAM → almacén cifrado → y solo para el
-// usuario local/de servicio, el .env/account.json de siempre. Sin nada de eso,
+// ¿Con qué re-loguear? RAM → almacén cifrado. Sin nada de eso,
 // el error lleva needsCredentials: la UI lo traduce al prompt de re-tipeo
 // (la costura sesión/credencial de §5.1), no a un error genérico.
 function credentialsFor(userId) {
@@ -67,10 +58,6 @@ function credentialsFor(userId) {
   if (ram) return ram;
   const vaulted = vaultCredential(userId);
   if (vaulted) return vaulted;
-  if (userId === LOCAL_USER_ID) {
-    const { username, password } = getCredentials();
-    if (username && password) return { username, password };
-  }
   const err = new Error('No hay credenciales vivas para este usuario: hay que iniciar sesión de nuevo');
   err.needsCredentials = true;
   throw err;

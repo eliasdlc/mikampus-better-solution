@@ -27,7 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const result = await portalLogin(input);
     setCsrfToken(result.csrfToken);
     queryClient.setQueryData<AuthMe>(['auth-me'], {
-      mode: 'hosted',
+      mode: 'local',
       user: result.user,
       csrfToken: result.csrfToken,
     });
@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await portalLogout();
     setCsrfToken(null);
     queryClient.clear();
-    queryClient.setQueryData<AuthMe>(['auth-me'], { mode: 'hosted', user: null, csrfToken: null });
+    queryClient.setQueryData<AuthMe>(['auth-me'], { mode: 'local', user: null, csrfToken: null });
   };
 
   return (
@@ -45,7 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         me,
         loading: meQuery.isLoading,
-        authenticated: me?.mode === 'local' || me?.user != null,
+        authenticated: me?.user != null,
         login,
         logout,
       }}

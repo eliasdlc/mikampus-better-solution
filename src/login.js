@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import { chromium } from 'playwright';
-import { getCredentials } from './credentials.js';
 
 const SIGNON_URL = 'https://micampus.pucmm.edu.do/psp/cs92pro/?cmd=login&languageCd=ENG';
 
@@ -39,11 +38,9 @@ export async function loginContext(browser, { username, password }) {
   }
 }
 
-// El flujo standalone de siempre (recon, scripts): browser propio + las
-// credenciales de credentials.js (data/account.json si la página cambió de
-// cuenta, si no el .env — leídas en cada login, no congeladas al arrancar).
-export async function loginToPeopleSoft({ headless = true } = {}) {
-  const { username, password } = getCredentials();
+// Flujo para recon local: la credencial se entrega explícitamente desde un
+// caller interactivo; no se lee de .env ni de un archivo en claro.
+export async function loginToPeopleSoft({ headless = true, username, password } = {}) {
   const browser = await chromium.launch({ headless });
   try {
     const { context, page } = await loginContext(browser, { username, password });

@@ -1,10 +1,8 @@
 import 'dotenv/config';
 import path from 'node:path';
-import { networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
-import { getAccountInfo, setCredentials } from './credentials.js';
 import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readCatalog } from './peoplesoft/catalog.js';
@@ -24,8 +22,8 @@ import {
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
 import { computeInsights } from './shared/insights.ts';
-import { db, lastSync, clearPersonalData, deleteAllUserData, logAction, readActions } from './db.js';
-import { LOCAL_USER_ID, adoptLocalUsername, getUser } from './users.js';
+import { db, lastSync, deleteAllUserData, logAction, readActions } from './db.js';
+import { getUser } from './users.js';
 import * as auth from './auth.js';
 import { credentialInfo, deleteCredential, purgeExpiredCredentials } from './credentialVault.js';
 import * as plans from './plans.js';
@@ -50,13 +48,7 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
-// Quién pide. MIKAMPUS_MODE decide (§2, "es el mismo código con MODE=local"):
-//   local (default) — sin login: todo request es del usuario 1, la cuenta del
-//   .env/account.json. Es el comportamiento single-user de siempre.
-//   hosted — toda /api exige la cookie de sesión de mikampus y toda mutación
-//   su token CSRF (auth.js); ningún handler lee datos sin dueño.
-const MODE = process.env.MIKAMPUS_MODE ?? 'local';
-const SECURE_COOKIES = MODE === 'hosted';
+const SECURE_COOKIES = false;
 
 // El portal solo publicó fechas en el recon actual. Para que la credencial no
 // sobreviva al período de inscripción, convertimos el cierre publicado en el
@@ -74,7 +66,6 @@ function unattendedExpiry(userId, term) {
 }
 
 function authorizeUnattendedCredential(userId, { consent, term, reason }) {
-  if (MODE !== 'hosted') return;
   if (consent !== true) throw new Error('Confirmá el consentimiento para guardar la credencial cifrada hasta el cierre de inscripción');
   persistRamCredential(userId, { expiresAt: unattendedExpiry(userId, term), reason });
 }
@@ -125,16 +116,7 @@ async function refreshExpired(userId, { force = false } = {}) {
   return results;
 }
 
-if (MODE === 'hosted') {
-  // Detrás de Caddy: el proto real viene en X-Forwarded-Proto.
-  app.set('trust proxy', 1);
-  app.use('/api', auth.authMiddleware);
-} else {
-  app.use('/api', (req, res, next) => {
-    req.userId = LOCAL_USER_ID;
-    next();
-  });
-}
+app.use('/api', auth.localRequestGuard, auth.authMiddleware);
 
 // ── Auth (§5): el login de mikampus ES el login del portal ──────────────────
 app.post('/api/auth/login', async (req, res) => {
@@ -163,7 +145,7 @@ app.get('/api/auth/me', (req, res) => {
   const user = getUser(req.userId);
   const session = req.sessionToken ? auth.sessionFor(req.sessionToken) : null;
   res.json({
-    mode: MODE,
+    mode: 'local',
     user: user ? { id: user.id, username: user.portalUsername } : null,
     csrfToken: session?.csrfToken ?? null,
   });
@@ -248,40 +230,6 @@ app.post('/api/refresh', async (req, res) => {
   }
   const results = await pending;
   res.json({ results });
-});
-
-// ── Cuenta ───────────────────────────────────────────────────────────────────
-// Devuelve el usuario vigente y de dónde sale (account.json o .env), nunca la
-// contraseña. La pantalla de Ajustes lo usa para mostrar con qué cuenta estás.
-app.get('/api/account', (req, res) => {
-  if (MODE === 'hosted') return res.status(404).json({ error: 'Esta ruta solo existe en modo local' });
-  res.json(getAccountInfo());
-});
-
-// Cambiar de cuenta desde la página. Hace las tres cosas que editar el .env a
-// mano no hacía: persiste las credenciales, tira la sesión de Playwright (para
-// que la próxima acción re-loguee con la cuenta nueva) y borra el cache
-// personal en SQLite (si no, la página seguiría mostrando a la persona
-// anterior, porque los GET sirven disco). Los datos se retraen con "sync".
-app.post('/api/account', async (req, res) => {
-  if (MODE === 'hosted') return res.status(404).json({ error: 'Esta ruta solo existe en modo local' });
-  const { username, password } = req.body ?? {};
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Faltan usuario o contraseña' });
-  }
-  try {
-    const account = setCredentials({ username, password });
-    adoptLocalUsername(account.username);
-    await resetSession(req.userId);
-    clearPersonalData(req.userId);
-    scheduler.emitEvent({
-      type: 'log',
-      message: `Cuenta cambiada a ${account.username}. Sincronizá cada pantalla para traer tus datos.`,
-    });
-    res.json({ ok: true, account });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 // Mismo trato que el horario y las notas: el GET sirve el cache de SQLite con
@@ -1055,34 +1003,14 @@ app.get('*', (req, res, next) => {
 
 const PORT = process.env.PORT || 4173;
 
-// Por defecto SOLO localhost. app.listen(PORT) sin host escucha en todas las
-// interfaces, así que hasta acá mikampus estaba abierto a la red entera sin que
-// nadie lo hubiera pedido: cualquiera en el mismo WiFi podía abrirlo y usar tu
-// sesión de PeopleSoft — inscribir, dar de baja, leer tus notas. No hay login:
-// la app asume que quien la abre sos vos.
-//
-// HOST=0.0.0.0 lo expone a propósito para abrirlo desde el teléfono (plan §6).
-// Las credenciales siguen sin salir de tu máquina — el .env y la sesión de
-// Playwright viven acá— pero la app queda al alcance de tu red. En el WiFi de
-// tu casa es razonable; en el de la universidad, durante la inscripción, no.
-const HOST = process.env.HOST || '127.0.0.1';
-
-// Las IPs por las que el teléfono puede llegar. Se imprimen porque el usuario
-// las necesita para tipearlas y "averiguá tu IP" no es una instrucción.
-function lanUrls() {
-  return Object.values(networkInterfaces())
-    .flat()
-    .filter((i) => i && i.family === 'IPv4' && !i.internal)
-    .map((i) => `http://${i.address}:${PORT}`);
-}
+// El core local nunca escucha la LAN. El modo Home Server se introducirá como
+// host separado, con pairing y TLS explícitos; HOST no es un escape hatch.
+const HOST = '127.0.0.1';
 
 // Cruza los términos que ya están en disco (STRM inscritos + etiquetas de
 // grades) al arrancar, para que el modelo de tiempo esté al día sin esperar a
 // una sync. Es barato: son pocas filas y upserts idempotentes.
 reconcileTerms();
-// La fila migrada del usuario 1 deja de ser anónima: en modo local, la cuenta
-// configurada ES el usuario 1.
-adoptLocalUsername(getAccountInfo().username);
 // Higiene al arrancar: sesiones vencidas fuera, credenciales vencidas fuera.
 auth.purgeExpiredSessions();
 purgeExpiredCredentials();
@@ -1095,10 +1023,6 @@ if (timers.schedules || timers.watchers) {
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);
-  if (HOST === '0.0.0.0') {
-    for (const url of lanUrls()) console.log(`  · en tu red: ${url}`);
-    console.log('  ⚠ abierto a tu red local: cualquiera en este WiFi puede usar tu sesión del portal.');
-  }
   // Apagado salvo que CATALOG_CRON_AT diga a qué hora (ver src/cron.js).
   startCatalogCron();
   startBackupCron();

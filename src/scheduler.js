@@ -1,5 +1,6 @@
 import { enrollFromCart, finishPreparedEnrollment, prepareEnrollment } from './peoplesoft/enroll.js';
-import { hasLiveCredentials, withPage, SERVICE_USER_ID } from './session.js';
+import { hasLiveCredentials, withPage } from './session.js';
+import { LOCAL_USER_ID } from './users.js';
 import { notifyFromEvent } from './notify.js';
 import { db, logAction } from './db.js';
 import { syncCatalogCourse } from './peoplesoft/catalog.js';
@@ -265,7 +266,7 @@ let lastCourseKey = null;
 // Es una costura de transporte, no una alternativa de producto: permite que
 // el test ejercite el diff y la persistencia sin abrir Chromium ni tocar PUCMM.
 let scanWatchedCourse = (target) =>
-  withPage(SERVICE_USER_ID, (page) =>
+  withPage(LOCAL_USER_ID, (page) =>
     syncCatalogCourse(page, { term: target.term, career: target.career, courseCode: target.courseCode })
   );
 

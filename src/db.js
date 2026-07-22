@@ -28,7 +28,7 @@ db.exec(`
   -- no hay contraseña propia acá — la identidad es el username de micampus, y
   -- verificarla es loguearse contra PeopleSoft. La fila 1 nace en la migración
   -- adoptando los datos pre-multi-usuario; portal_username puede ser NULL hasta
-  -- que se conozca (el modo local lo adopta del .env/account.json al arrancar).
+  -- que se conozca (la sesión local la adopta después de verificar el portal).
   CREATE TABLE IF NOT EXISTS users (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     portal_username TEXT UNIQUE COLLATE NOCASE,

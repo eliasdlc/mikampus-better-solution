@@ -344,10 +344,10 @@ export async function saveAccount(input: { username: string; password: string })
   return accountInfoSchema.parse((data as { account?: unknown }).account);
 }
 
-// ── Ciclo de cuenta hosted (Fase 3) ────────────────────────────────────────
+// ── Sesión local ───────────────────────────────────────────────────────────
 
 const authMeSchema = z.object({
-  mode: z.enum(['local', 'hosted']),
+  mode: z.literal('local'),
   user: z.object({ id: z.number(), username: z.string() }).nullable(),
   csrfToken: z.string().nullable(),
 });

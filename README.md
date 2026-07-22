@@ -1,8 +1,8 @@
 # mikampus
 
 > Estado: migración en curso a una herramienta open source, local y single-user.
-> La rama actual conserva código hosted heredado que **no debe desplegarse ni
-> usarse**; su retiro es la Fase 1 del plan de migración.
+> La Fase 1 está retirando el prototipo hosted heredado. mikampus no ofrece ni
+> soporta despliegues multiusuario.
 
 mikampus busca convertirse en una herramienta que cada estudiante ejecuta en
 su propio hardware con su propia cuenta. No está afiliada, autorizada ni
@@ -27,15 +27,15 @@ Todo corre sobre una única sesión de Playwright (headless) que el backend mant
 ```bash
 npm install
 npm run install-browsers   # descarga Chromium para Playwright
-cp .env.example .env       # completa PUCMM_USERNAME y PUCMM_PASSWORD
+cp .env.example .env
 npm run build              # compila la SPA (web/ → public/dist)
 npm start                  # backend local de desarrollo en http://localhost:4173
 ```
 
 Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload:
 `npm run dev` (Vite en :5173 con proxy de `/api` al backend en :4173, que debe
-estar corriendo con `npm start`). No expongas este servidor a una LAN o Internet:
-la frontera de autenticación local segura todavía no está implementada.
+estar corriendo con `npm start`). El servidor se fija a loopback y rechaza
+orígenes y hosts ajenos: no expongas este proceso a una LAN o Internet.
 
 Para que la búsqueda tenga contra qué buscar, llená el catálogo desde el portal: `node scripts/sync-catalog.mjs ICC` (ver [De dónde sale el nombre de cada materia](#de-dónde-sale-el-nombre-de-cada-materia)). Tarda unos minutos por subject y solo hace falta una vez por término. `scripts/seed-catalog.mjs` siembra 4 materias **inventadas** y es solo para probar la UI sin portal — no lo corras contra la base real.
 

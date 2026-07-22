@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { db } from './db.js';
-import { ensureUser, touchLastLogin } from './users.js';
+import { LOCAL_USER_ID, adoptLocalUsername, getUser, touchLastLogin } from './users.js';
 import { verifyPortalCredentials, adoptSession, resetSession } from './session.js';
 
 // El login de mikampus ES el login del portal (§5): no hay cuenta paralela.
@@ -67,7 +67,7 @@ export function sessionCookieHeader(token, { secure, maxAgeSeconds = SESSION_DAY
     `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    'SameSite=Strict',
     `Max-Age=${maxAgeSeconds}`,
   ];
   if (secure) attrs.push('Secure');
@@ -84,19 +84,6 @@ export function clearedSessionCookieHeader({ secure } = {}) {
 const attempts = new Map(); // usernameLower → { count, blockedUntil }
 const MAX_ATTEMPTS = 5;
 const BLOCK_MS = 15 * 60_000;
-
-// Hosted no es un directorio público de estudiantes. La lista se mantiene en
-// el entorno de la instancia, nunca en la base de datos ni en el bundle web.
-// Exigir que exista evita que publicar el DNS convierta por accidente la beta
-// de 10–20 personas en una puerta abierta para toda la universidad.
-export function isInvited(username) {
-  if ((process.env.MIKAMPUS_MODE ?? 'local') !== 'hosted') return true;
-  const invited = (process.env.MIKAMPUS_ALLOWLIST ?? '')
-    .split(',')
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-  return invited.includes(String(username ?? '').trim().toLowerCase());
-}
 
 export function loginBlocked(username, now = Date.now()) {
   const entry = attempts.get(username.toLowerCase());
@@ -124,9 +111,6 @@ export function noteLoginSuccess(username) {
 export async function loginWithPortal({ username, password }) {
   const user = String(username ?? '').trim();
   if (!user || !password) throw Object.assign(new Error('Faltan usuario o contraseña'), { status: 400 });
-  if (!isInvited(user)) {
-    throw Object.assign(new Error('Esta beta es solo por invitación'), { status: 403 });
-  }
   if (loginBlocked(user)) {
     throw Object.assign(
       new Error('Demasiados intentos fallidos: esperá 15 minutos antes de reintentar'),
@@ -147,7 +131,11 @@ export async function loginWithPortal({ username, password }) {
   }
 
   noteLoginSuccess(user);
-  const account = ensureUser(user);
+  // Esta distribución solo tiene un operador. Reutilizar siempre la identidad
+  // local evita que una segunda cuenta del portal cree un segundo espacio de
+  // datos en la misma instalación.
+  adoptLocalUsername(user);
+  const account = getUser(LOCAL_USER_ID);
   touchLastLogin(account.id);
   await adoptSession(account.id, live, { username: user, password });
   const session = createSession(account.id);
@@ -161,11 +149,26 @@ export async function logout(token) {
 }
 
 // ── Middleware ─────────────────────────────────────────────────────────────
-// Modo hosted: toda /api exige sesión salvo las rutas públicas, y toda
-// mutación exige además el CSRF header de esa sesión (la cookie viaja sola;
-// el header solo lo puede poner nuestra página).
+// Toda /api exige sesión salvo las rutas públicas, y toda mutación exige CSRF.
 const PUBLIC_API = new Set(['/health', '/auth/login']);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// El agente Desktop solo sirve loopback. Validamos Host en todas las requests
+// y Origin en las mutaciones, incluso antes del login: así una página ajena no
+// puede usar localhost como puente hacia PeopleSoft ni intentar fijar sesión.
+export function localRequestGuard(req, res, next) {
+  const host = String(req.headers.host ?? '').toLowerCase();
+  if (!/^((localhost|127\.0\.0\.1)(:\d+)?)$/.test(host)) {
+    return res.status(421).json({ error: 'mikampus solo acepta requests desde localhost' });
+  }
+  if (!SAFE_METHODS.has(req.method)) {
+    const origin = req.headers.origin;
+    if (origin && origin !== `http://${host}`) {
+      return res.status(403).json({ error: 'El origen de esta operación no está autorizado' });
+    }
+  }
+  next();
+}
 
 export function authMiddleware(req, res, next) {
   if (PUBLIC_API.has(req.path)) return next();

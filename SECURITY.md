@@ -2,9 +2,8 @@
 
 ## Supported versions
 
-There is no supported release yet. The current branch is a migration from a
-legacy hosted prototype to a local, single-user application. Do not deploy the
-legacy hosted configuration.
+There is no supported release yet. mikampus is a local, single-user
+application; deploying it as a hosted or multi-user service is unsupported.
 
 ## Reporting a vulnerability
 

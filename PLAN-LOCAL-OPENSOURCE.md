@@ -11,9 +11,9 @@
 ## Estado actual
 
 - **Fecha de última actualización:** 2026-07-22
-- **Rama de trabajo:** `feat/open-source-ready`, creada desde `dev` y preservada tras el
-  merge del PR #3 hacia `dev`.
-- **Fase en curso:** ninguna — Fase 0 cerrada; Fase 1 aún no iniciada.
+- **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
+  `feat/open-source-ready` queda preservada tras el merge de Fase 0.
+- **Fase en curso:** Fase 1 — Single-user seguro.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -33,7 +33,7 @@
 | Fase | Nombre | Estado |
 |------|--------|--------|
 | 0 | Contrato local, privacidad y desbloqueo open source | ✅ Hecho |
-| 1 | Single-user seguro (auth local, credenciales, retiro hosted) | ⬜ Pendiente |
+| 1 | Single-user seguro (auth local, credenciales, retiro hosted) | 🟨 En curso |
 | 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ⬜ Pendiente |
 | 3 | Spike de empaquetado y build de producción | ⬜ Pendiente |
 | 4 | Onboarding, notificaciones y ciclo de vida de datos | ⬜ Pendiente |
