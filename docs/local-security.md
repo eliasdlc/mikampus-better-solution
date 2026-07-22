@@ -53,7 +53,10 @@ Los fixtures existen para probar parsers sin tocar el portal. Deben ser DOM
 mínimo y sintético; se permite un fragmento sanitizado solo cuando conservar su
 estructura es necesario para cubrir un selector. Nunca se versionan credenciales,
 cookies, `ICSID`, `ICStateNum`, matrícula/EMPLID real, request IDs, nombres de
-estudiante, capturas, diagnósticos ni HTML crudo.
+estudiante, capturas, diagnósticos ni HTML crudo. El inventario
+[`fixtures/manifest.json`](../fixtures/manifest.json) registra el propósito de
+cada excepción heredada; `test-fixture-policy.mjs` rechaza entradas sin revisión,
+obsoletas o mayores de 300 KiB. No se admiten páginas completas nuevas.
 
 `npm run audit:public` inspecciona los archivos versionados de `HEAD` y falla
 ante patrones de secretos o PII conocida en fixtures. `npm run audit:history`

@@ -13,7 +13,7 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/open-source-ready`, creada desde `dev` y preservada tras el
   merge del PR #3 hacia `dev`.
-- **Fase en curso:** 0 — contrato local, privacidad y desbloqueo open source.
+- **Fase en curso:** ninguna — Fase 0 cerrada; Fase 1 aún no iniciada.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -25,13 +25,14 @@
   de los dos fixtures que introdujo `489a2a4` por versiones sanitizadas. Tras retirar las
   referencias de respaldo y recolectar objetos antiguos, `npm run audit:history` pasa sobre
   todas las ramas publicables. Los clones existentes deben re-clonarse o resincronizarse.
-- **Pendiente de Fase 0:** reducir fixtures completos a DOM mínimo/sintético y revisar sus
-  derechos de redistribución. No existe todavía `bin/` (launcher), agente de fondo,
-  `deploy/home-server/`, `landing/`, gate `engines` ni compilación de producción TS→JS.
+- **Cierre de Fase 0:** se retiraron los dos fixtures sin cobertura; los 18 restantes tienen
+  propósito registrado y límite de tamaño en `fixtures/manifest.json`. `npm test`,
+  `npm run typecheck`, `npm run lint`, `npm run audit:public` y `npm run audit:history`
+  pasan. P1/P2 permanecen como blockers explícitos del primer package o release.
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
-| 0 | Contrato local, privacidad y desbloqueo open source | 🟨 En curso |
+| 0 | Contrato local, privacidad y desbloqueo open source | ✅ Hecho |
 | 1 | Single-user seguro (auth local, credenciales, retiro hosted) | ⬜ Pendiente |
 | 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ⬜ Pendiente |
 | 3 | Spike de empaquetado y build de producción | ⬜ Pendiente |

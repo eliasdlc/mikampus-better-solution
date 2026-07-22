@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "policy": "Cada fixture debe cubrir un parser o smoke concreto, estar sanitizado y no superar 300 KiB. No se aceptan páginas completas nuevas: se agrega el fragmento sintético mínimo que preserve el selector o caso de borde.",
+  "fixtures": {
+    "recon-advisement.html": "Informe de progreso: bloques, estados, notas y electivas para parser, DB y smokes.",
+    "recon-browse-ICC-expanded.html": "Catálogo expandido: códigos atípicos y títulos del Browse Catalog.",
+    "recon-browse-landing.html": "Landing del Browse Catalog: lista de subjects.",
+    "recon-cart-phase85-step1.html": "Carrito: primer paso del flujo de reconciliación.",
+    "recon-cart-phase85-step2.html": "Carrito: segundo paso del flujo de reconciliación.",
+    "recon-cart.html": "Carrito: filas, horarios y capa de persistencia.",
+    "recon-catalog-ICC.html": "Class Search: aviso de límite de 50 resultados.",
+    "recon-catalog-ICC3.html": "Class Search: grupos, secciones, cupos y reuniones.",
+    "recon-course-history.html": "Historial: notas y términos para parser, DB y smokes.",
+    "recon-drop-landing.html": "Baja: pantalla de selección de término.",
+    "recon-drop-paso2-confirmacion.html": "Baja: confirmación final de la reconciliación.",
+    "recon-enrollment-appointment.html": "Inscripción: appointment y restricciones de reconciliación.",
+    "recon-grades-enero2025.html": "Notas: término intersesional para parser.",
+    "recon-grades-landing.html": "Notas: landing y cambio de término.",
+    "recon-grades-past.html": "Notas: término pasado y estados.",
+    "recon-my-classes-view.html": "Mi Horario: extracción y normalización de clases inscritas.",
+    "recon-related-sections.html": "Class Search: radios de secciones relacionadas.",
+    "recon-student-center.html": "Student Center: panel vacío de holds."
+  }
+}

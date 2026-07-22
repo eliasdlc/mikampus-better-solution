@@ -57,15 +57,17 @@ node scripts/bench-search.mjs                    # keystroke → resultados < 16
 npm run smoke                                    # screenshots a 390/768/1440px + falla si hay desborde horizontal
 ```
 
-`npm test` corre los parsers contra HTML real volcado del portal y guardado en
-`fixtures/` (sin tokens ni datos personales — ver `scripts/make-fixture.mjs`).
-Es la red de los selectores: PeopleSoft cambia IDs entre parches y esto falla
-antes que un barrido en vivo. Para regenerar un fixture:
+`npm test` corre los parsers contra fixtures sanitizados y revisados (sin tokens
+ni datos personales — ver `scripts/make-fixture.mjs` y
+`fixtures/manifest.json`). Es la red de los selectores: PeopleSoft cambia IDs
+entre parches y esto falla antes que un barrido en vivo. Los fixtures nuevos
+deben ser fragmentos sintéticos mínimos; no subas una página completa. Para
+preparar un fragmento desde recon local:
 
 ```bash
 npm run recon:catalog                            # RECON_PREFIX=ICC3 acota la búsqueda
 npm run recon:schedule
-node scripts/make-fixture.mjs screenshots/recon-schedule-list.html
+node scripts/make-fixture.mjs screenshots/recon-schedule-list.html  # revisar y reducir antes de commitear
 ```
 
 ## Cómo funciona por dentro
