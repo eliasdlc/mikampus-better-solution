@@ -13,7 +13,13 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
   `feat/open-source-ready` queda preservada tras el merge de Fase 0.
-- **Fase en curso:** siguiente Fase 5 — Distribución (instaladores/binarios + npm).
+- **Fase en curso:** Fase 5 — Distribución (instaladores/binarios + npm), en curso.
+- **Avance de Fase 5:** se genera y smokea un tarball standalone Linux x64 con
+  runtime Node, installer/uninstaller, SHA-256, SBOM, procedencia y notices; el
+  smoke aislado cubre first-run, stop/start, upgrade y preservación de datos. El
+  candidato npm se empaqueta y ejecuta localmente con `npx`, pero permanece
+  privado. P2 bloquea publicar un paquete/release con el nombre actual; P3 se
+  declara de forma visible (el binario Linux no está firmado).
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -72,7 +78,7 @@
 | 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ✅ Hecho |
 | 3 | Spike de empaquetado y build de producción | ✅ Hecho |
 | 4 | Onboarding, notificaciones y ciclo de vida de datos | ✅ Hecho |
-| 5 | Distribución (instaladores/binarios + npm) | ⬜ Pendiente |
+| 5 | Distribución (instaladores/binarios + npm) | 🟨 En curso |
 | 6 | CI de releases, documentación y landing | ⬜ Pendiente |
 
 Leyenda: ⬜ pendiente · 🟨 en curso · ✅ hecho.

@@ -42,19 +42,34 @@ Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload:
 estar corriendo con `npm start`). El servidor se fija a loopback y rechaza
 orígenes y hosts ajenos: no expongas este proceso a una LAN o Internet.
 
-## Empaquetado (spike de Fase 3)
+## Instalación Linux (RC1)
 
-El release candidate soportado hoy es Linux x64 (Ubuntu 24.04/Debian 12) con
-Node >=24; Windows y macOS esperan smoke nativo y la decisión de firma. El
-payload no trae Chromium: tras instalarlo, ejecutá `mikampus install-browser`
-para descargarlo a app-data con el progreso de Playwright. `npx mikampus` es
-foreground; el agente durable se controla con `mikampus install-service`.
+El release candidate soportado hoy es **Linux x64 (Ubuntu 24.04/Debian 12)**.
+El tarball standalone trae su propio runtime Node, core y launcher: verificá el
+SHA-256 publicado, extraelo y ejecutá `install.sh`. Instala el servicio de
+usuario y el acceso `mikampus`; `uninstall.sh` retira ambos y pregunta si querés
+preservar los datos. El payload no trae Chromium: después, ejecutá
+`mikampus install-browser` para descargarlo a app-data con el progreso de
+Playwright.
+
+Windows, macOS y ARM **no están soportados**: necesitan smoke nativo; macOS y
+Windows además requieren resolver firma/notarización. El binario Linux aún no
+está firmado: verificá su SHA-256 y `provenance.json` antes de ejecutarlo. No
+presentamos esos avisos como un detalle invisible.
+
+Para construir y probar localmente el artefacto:
 
 ```bash
-npm run build:production
-npm run smoke:package
-npm pack --dry-run
+npm run build:distribution
+npm run smoke:distribution
+npm run smoke:npm-package
 ```
+
+El paquete npm conserva Node >=24 y `npx mikampus` se ejecuta en foreground:
+cerrar la terminal lo detiene. Una instalación global seguida de
+`mikampus install-service` habilita el agente durable. El candidato permanece
+privado hasta resolver P2 (la decisión de marca); no se publicará en npm con el
+nombre actual.
 
 El artifact usa `~/.local/share/mikampus` en Linux, `~/Library/Application Support/mikampus`
 en macOS y `%APPDATA%\\mikampus` en Windows. Definí `MIKAMPUS_DATA_DIR` para

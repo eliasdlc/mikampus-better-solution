@@ -177,6 +177,7 @@ async function update() {
   }
 }
 async function main() {
+  if (command === 'version') return console.log(currentVersion());
   if (command === 'start') return start(); if (command === 'stop') return stop(); if (command === 'status') return status(); if (command === 'open') return open(); if (command === 'doctor') return doctor(); if (command === 'install-browser') return installBrowser();
   if (command === 'install-service') return installService(false); if (command === 'uninstall-service') return installService(true);
   if (command === 'backup') return backup(); if (command === 'restore') return restore(process.argv[3]);

@@ -6,11 +6,12 @@
     "node": ">=24"
   },
   "bin": {
-    "mikampus": "dist/app/launcher.js"
+    "mikampus": "bin/mikampus.mjs"
   },
   "files": [
     "dist/app/**",
     "dist/public/**",
+    "bin/**",
     "LICENSE",
     "THIRD_PARTY_NOTICES",
     "README.md"
@@ -47,7 +48,10 @@
     "mikampus": "node src/launcher.js cli",
     "build:production": "node scripts/build-production.mjs",
     "smoke:package": "node scripts/test-packaging.mjs",
+    "smoke:npm-package": "node scripts/test-npm-package.mjs",
     "smoke:lifecycle": "node scripts/smoke-lifecycle.mjs",
+    "build:distribution": "node scripts/build-distribution.mjs",
+    "smoke:distribution": "node scripts/test-distribution.mjs",
     "prepack": "npm run build:production && node scripts/prepare-npm-package.mjs"
   },
   "dependencies": {

@@ -34,7 +34,7 @@ await cp(path.join(root, 'public'), path.join(target, 'public'), { recursive: tr
 for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES', 'README.md']) await cp(path.join(root, file), path.join(target, file));
 const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 await writeFile(path.join(target, 'package.json'), JSON.stringify({
-  name: 'mikampus-local-artifact', private: true, type: 'module', engines: { node: '>=24' },
+  name: 'mikampus-local-artifact', version: manifest.version, private: true, type: 'module', engines: { node: '>=24' },
   dependencies: manifest.dependencies,
 }, null, 2) + '\n');
 await run('npm', ['install', '--omit=dev', '--ignore-scripts', '--package-lock=false'], { cwd: target });
