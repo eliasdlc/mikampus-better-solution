@@ -13,16 +13,17 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
   `feat/open-source-ready` queda preservada tras el merge de Fase 0.
-- **Fase en curso:** Fase 5 — Distribución (instaladores/binarios + npm), en curso.
-- **Avance de Fase 5:** se genera y smokea un tarball standalone Linux x64 con
+- **Fase en curso:** Fase 5 — implementación terminada; validación final diferida.
+- **Cierre de implementación de Fase 5:** se genera un tarball standalone Linux x64 con
   runtime Node, installer/uninstaller, SHA-256, SBOM, procedencia y notices; el
-  smoke aislado cubre first-run, stop/start, upgrade y preservación de datos. El
-  candidato npm se empaqueta y ejecuta localmente con `npx` bajo el nombre
+  flujo de smoke definido cubre first-run, stop/start, upgrade y preservación de
+  datos. El candidato npm se empaqueta y ejecuta localmente con `npx` bajo el nombre
   público `mikampus`. P2 queda resuelta: se mantiene ese nombre, con disclaimer
   visible de no afiliación a PUCMM. P3 se declara de forma visible (el binario
   Linux no está firmado). El modo de compatibilidad puede bloquear mutaciones
-  del scraper sin borrar datos. La validación integral queda diferida al cierre
-  del plan por decisión del usuario.
+  del scraper sin borrar datos. Por decisión del usuario, no se ejecutan los
+  gates de validación ni se publica npm/release hasta cerrar el plan; por eso la
+  fase conserva estado 🟨 y no afirma todavía su aceptación formal.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
