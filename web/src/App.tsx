@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Layout } from './components/Layout.tsx';
 import { Dashboard } from './routes/Dashboard.tsx';
 import { Planear } from './routes/Planear.tsx';
@@ -10,13 +11,30 @@ import { Ajustes } from './routes/Ajustes.tsx';
 import { Landing } from './routes/Landing.tsx';
 import { Login } from './routes/Login.tsx';
 import { Docs } from './routes/Docs.tsx';
+import { Onboarding } from './routes/Onboarding.tsx';
 import { useAuth } from './lib/auth.tsx';
+import { fetchOnboarding } from './lib/api.ts';
 
 export function App() {
   const { loading, authenticated } = useAuth();
+  // El onboarding es lo primero que se resuelve, incluso antes del landing: sin
+  // modo elegido ni browser instalado no hay nada que mikampus pueda hacer, y
+  // mandarlo a una terminal sería fallar el objetivo de la fase.
+  const onboarding = useQuery({ queryKey: ['onboarding'], queryFn: fetchOnboarding, enabled: !authenticated });
+  const needsSetup =
+    !authenticated && onboarding.data != null && ['mode', 'prerequisites', 'browser'].includes(onboarding.data.step);
 
-  if (loading) {
+  if (loading || (!authenticated && onboarding.isLoading)) {
     return <main className="text-muted flex min-h-full items-center justify-center text-sm">Abriendo mikampus…</main>;
+  }
+
+  if (needsSetup) {
+    return (
+      <Routes>
+        <Route path="/docs" element={<Docs />} />
+        <Route path="*" element={<Onboarding />} />
+      </Routes>
+    );
   }
 
   if (!authenticated) {

@@ -399,8 +399,221 @@ export async function fetchActions(): Promise<AccountAction[]> {
   return actionsSchema.parse(await getJSON('/api/actions')).actions;
 }
 
-export async function deleteAllMyData() {
-  return z.object({ ok: z.literal(true) }).parse(await send('/api/account/data', 'DELETE'));
+export async function deleteAllMyData(input?: { keepBackups?: boolean }) {
+  return z
+    .object({ ok: z.literal(true), removed: z.array(z.string()).default([]), note: z.string().optional() })
+    .parse(await send('/api/account/data', 'DELETE', input ?? {}));
+}
+
+// ── Onboarding (Fase 4): corre antes de que exista sesión ───────────────────
+
+const onboardingSchema = z.object({
+  step: z.enum(['mode', 'prerequisites', 'browser', 'credentials', 'done']),
+  completedAt: z.string().nullable(),
+  mode: z.enum(['desktop', 'home-server']).nullable(),
+  modes: z.array(z.object({ id: z.string(), label: z.string(), summary: z.string(), guarantees: z.array(z.string()) })),
+  prerequisites: z.array(z.object({ id: z.string(), label: z.string(), ok: z.boolean(), detail: z.string() })),
+  browser: z.object({
+    installed: z.boolean(),
+    root: z.string(),
+    install: z.object({
+      status: z.enum(['idle', 'running', 'done', 'error']),
+      percent: z.number(),
+      message: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+  }),
+  account: z.boolean(),
+});
+export type OnboardingState = z.infer<typeof onboardingSchema>;
+
+export async function fetchOnboarding(): Promise<OnboardingState> {
+  return onboardingSchema.parse(await getJSON('/api/onboarding'));
+}
+
+export async function chooseRuntimeMode(mode: 'desktop' | 'home-server') {
+  return send('/api/onboarding/mode', 'POST', { mode });
+}
+
+export async function startBrowserInstall() {
+  return send('/api/onboarding/browser', 'POST');
+}
+
+export async function completeOnboarding() {
+  return send('/api/onboarding/complete', 'POST');
+}
+
+// ── Estado permanente del agente (Fase 4 §3) ────────────────────────────────
+
+const statusSchema = z.object({
+  now: z.string(),
+  agent: z.object({
+    running: z.boolean(),
+    pid: z.number().nullable(),
+    port: z.number().nullable(),
+    startedAt: z.string().nullable(),
+    version: z.string(),
+  }),
+  mode: z.enum(['desktop', 'home-server']),
+  schema: z.object({ version: z.number(), applied: z.array(z.number()), migratedFrom: z.number(), preUpgradeBackup: z.string().nullable() }),
+  watcher: z
+    .object({
+      status: z.string(),
+      lastCheckAt: z.string().nullable(),
+      nextCheckAt: z.string().nullable(),
+      consecutiveFailures: z.number(),
+      pauseReason: z.string().nullable(),
+      autoEnroll: z.boolean(),
+      appointmentAt: z.string().nullable(),
+    })
+    .nullable(),
+  schedule: z.object({ atISO: z.string(), state: z.string(), lastError: z.string().nullable() }).nullable(),
+  monitoringGap: z.object({ from: z.string(), to: z.string(), ms: z.number(), detail: z.string().nullable() }).nullable(),
+  credential: z.object({ reason: z.string().nullable(), expiresAt: z.string(), store: z.string() }).nullable(),
+  backup: z.object({
+    lastSuccessfulAt: z.string().nullable(),
+    nextRunAt: z.string().nullable(),
+    due: z.boolean(),
+    keep: z.number(),
+    directory: z.string(),
+    copies: z.array(z.object({ name: z.string(), path: z.string(), bytes: z.number(), at: z.string(), kind: z.string() })),
+    sameDiskWarning: z.string(),
+  }),
+  update: z.object({
+    policy: z.enum(['manual', 'off']),
+    lastCheck: z
+      .object({ status: z.string(), current: z.string(), latest: z.string().nullable().optional(), url: z.string().nullable().optional(), checkedAt: z.string().optional(), error: z.string().optional() })
+      .nullable(),
+    inProgress: z.unknown().nullable(),
+  }),
+  power: z.object({ mustStayAwake: z.boolean(), note: z.string() }),
+});
+export type AgentStatus = z.infer<typeof statusSchema>;
+
+export async function fetchStatus(): Promise<AgentStatus> {
+  return statusSchema.parse(await getJSON('/api/status'));
+}
+
+// ── Notificaciones: feed durable y adaptadores externos ─────────────────────
+
+const feedSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.number(),
+      key: z.string(),
+      title: z.string(),
+      body: z.string(),
+      urgency: z.string(),
+      link: z.string().nullable(),
+      createdAt: z.string(),
+      readAt: z.string().nullable(),
+    })
+  ),
+  unread: z.number(),
+});
+export type NotificationFeed = z.infer<typeof feedSchema>;
+
+export async function fetchNotifications(): Promise<NotificationFeed> {
+  return feedSchema.parse(await getJSON('/api/notifications'));
+}
+
+export async function markNotificationsRead() {
+  return send('/api/notifications/read', 'POST');
+}
+
+const channelsSchema = z.object({
+  channels: z.array(
+    z.object({
+      id: z.number(),
+      kind: z.string(),
+      label: z.string(),
+      destination: z.string(),
+      enabled: z.boolean(),
+      external: z.boolean(),
+      dependency: z.string().nullable(),
+      lastTestAt: z.string().nullable(),
+      lastError: z.string().nullable(),
+      payloadSample: z.object({ title: z.string(), body: z.string(), urgency: z.string(), link: z.string().nullable() }),
+    })
+  ),
+  adapters: z.array(z.object({ kind: z.string(), label: z.string(), external: z.boolean(), dependency: z.string().nullable() })),
+});
+export type ChannelsResponse = z.infer<typeof channelsSchema>;
+
+export async function fetchChannels(): Promise<ChannelsResponse> {
+  return channelsSchema.parse(await getJSON('/api/notifications/channels'));
+}
+
+export async function createChannel(input: { kind: string; label?: string; destination: string }) {
+  return send('/api/notifications/channels', 'POST', input);
+}
+
+export async function toggleChannel(id: number, enabled: boolean) {
+  return send(`/api/notifications/channels/${id}`, 'PATCH', { enabled });
+}
+
+export async function removeChannel(id: number) {
+  return send(`/api/notifications/channels/${id}`, 'DELETE');
+}
+
+export async function testNotificationChannel(id: number) {
+  return z
+    .object({ ok: z.boolean(), error: z.string().optional() })
+    .parse(await send(`/api/notifications/channels/${id}/test`, 'POST'));
+}
+
+// ── Copias, diagnósticos y updates ──────────────────────────────────────────
+
+export async function createBackupNow() {
+  return send('/api/backups', 'POST');
+}
+
+export async function setBackupRetention(keep: number) {
+  return send('/api/backups', 'PATCH', { keep });
+}
+
+export async function exportBackupTo(directory: string) {
+  return z
+    .object({ file: z.string(), bytes: z.number(), schema: z.number(), sameDisk: z.boolean() })
+    .parse(await send('/api/backups/export', 'POST', { directory }));
+}
+
+const diagnosticsSchema = z.object({
+  files: z.array(z.object({ name: z.string(), bytes: z.number(), at: z.string(), pii: z.boolean() })),
+  note: z.string(),
+});
+
+export async function fetchDiagnostics() {
+  return diagnosticsSchema.parse(await getJSON('/api/diagnostics'));
+}
+
+export async function exportDiagnosticsTo(directory: string) {
+  return send('/api/diagnostics/export', 'POST', { directory });
+}
+
+export async function checkForUpdate() {
+  return z
+    .object({ status: z.string(), current: z.string(), latest: z.string().nullable().optional(), url: z.string().nullable().optional(), error: z.string().optional() })
+    .parse(await send('/api/updates/check', 'POST'));
+}
+
+export async function setUpdatePolicy(policy: 'manual' | 'off') {
+  return send('/api/updates', 'PATCH', { policy });
+}
+
+const erasePreviewSchema = z.object({
+  targets: z.array(
+    z.object({ id: z.string(), label: z.string(), path: z.string(), purpose: z.string(), exists: z.boolean(), bytes: z.number(), keepable: z.boolean(), runtimeSafe: z.boolean() })
+  ),
+  external: z.array(z.object({ id: z.string(), label: z.string(), purpose: z.string() })),
+  outsideReach: z.array(z.object({ id: z.string(), label: z.string(), purpose: z.string() })),
+  totalBytes: z.number(),
+  note: z.string(),
+});
+export type ErasePreview = z.infer<typeof erasePreviewSchema>;
+
+export async function fetchErasePreview(): Promise<ErasePreview> {
+  return erasePreviewSchema.parse(await getJSON('/api/account/erase-preview'));
 }
 
 export async function refreshExpiredData() {

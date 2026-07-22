@@ -1,9 +1,28 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { deleteAllMyData, fetchAccountOverview, fetchActions, refreshExpiredData } from '../lib/api.ts';
+import {
+  checkForUpdate,
+  createBackupNow,
+  createChannel,
+  deleteAllMyData,
+  exportBackupTo,
+  exportDiagnosticsTo,
+  fetchAccountOverview,
+  fetchActions,
+  fetchChannels,
+  fetchDiagnostics,
+  fetchErasePreview,
+  refreshExpiredData,
+  removeChannel,
+  setBackupRetention,
+  setUpdatePolicy,
+  testNotificationChannel,
+  toggleChannel,
+} from '../lib/api.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { ThemeToggle } from '../components/ThemeToggle.tsx';
+import { AgentStatusDetail, useAgentStatus } from '../components/AgentStatus.tsx';
 import { enablePush, disablePush, getPushState } from '../lib/push.ts';
 import { ago } from '../lib/time.ts';
 
@@ -86,7 +105,17 @@ export function Ajustes() {
         </div>
       </section>
 
+      <EstadoSection />
+
       <NotificacionesSection />
+
+      <CanalesSection />
+
+      <CopiasSection />
+
+      <DiagnosticosSection />
+
+      <ActualizacionesSection />
 
       <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
         <h2 className="text-sm font-medium">Historial</h2>
@@ -129,16 +158,14 @@ export function Ajustes() {
           ) : (
             <p className="text-muted leading-6">No hay una contraseña guardada. Tu sesión actual vive solo en memoria.</p>
           )}
-          <p className="text-muted mt-3 text-xs leading-5">
-            Si borrás tus datos, mikampus elimina tu información, planes, historial y cualquier credencial cifrada. Tu cuenta de micampus no se toca. Las copias de seguridad dejan de contenerlos en un máximo de 3 días.
-          </p>
+          <ErasePreview />
           <label className="mt-4 block space-y-1.5">
             <span className="text-muted text-xs">Escribí <span className="font-mono text-fg">BORRAR</span> para confirmar</span>
             <input value={confirmDelete} onChange={(e) => setConfirmDelete(e.target.value)} className="border-line bg-surface-2 focus:border-closed w-full rounded-[var(--radius)] border px-3 py-2 text-sm outline-none" />
           </label>
           <button
             type="button"
-            onClick={() => erase.mutate()}
+            onClick={() => erase.mutate({})}
             disabled={confirmDelete !== 'BORRAR' || erase.isPending}
             className="bg-closed mt-3 rounded-[var(--radius)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
@@ -147,6 +174,275 @@ export function Ajustes() {
           {erase.error && <p className="text-closed mt-2 text-sm">No se pudieron borrar los datos: {erase.error.message}</p>}
         </div>
       </section>
+    </div>
+  );
+}
+
+// El estado permanente también vive acá en su versión larga: la barra superior
+// contesta "¿está trabajando?" y esta tabla contesta "¿con qué y hasta cuándo?".
+function EstadoSection() {
+  const status = useAgentStatus();
+  if (!status.data) return null;
+  return (
+    <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+      <h2 className="text-sm font-medium">Estado de mikampus</h2>
+      <AgentStatusDetail status={status.data} />
+      {status.data.monitoringGap && (
+        <p className="text-muted mt-3 text-xs leading-5">
+          Hubo un intervalo sin vigilancia entre {new Date(status.data.monitoringGap.from).toLocaleString('es-DO')} y{' '}
+          {new Date(status.data.monitoringGap.to).toLocaleString('es-DO')}. Si un cupo abrió y cerró ahí adentro, mikampus
+          no puede reconstruirlo: al volver hace una consulta fresca, no repite los ticks perdidos.
+        </p>
+      )}
+    </section>
+  );
+}
+
+// Adaptadores externos (§5). Cada uno muestra a dónde va, qué manda y de qué
+// depende ANTES de encenderse, y nace apagado: el contrato de egress se cumple
+// mostrando el destino, no prometiéndolo.
+function CanalesSection() {
+  const queryClient = useQueryClient();
+  const channels = useQuery({ queryKey: ['channels'], queryFn: fetchChannels });
+  const [kind, setKind] = useState('ntfy');
+  const [destination, setDestination] = useState('');
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['channels'] });
+
+  const create = useMutation({ mutationFn: createChannel, onSuccess: () => { setDestination(''); invalidate(); } });
+  const toggle = useMutation({ mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => toggleChannel(id, enabled), onSuccess: invalidate });
+  const remove = useMutation({ mutationFn: removeChannel, onSuccess: invalidate });
+  const test = useMutation({ mutationFn: testNotificationChannel, onSuccess: invalidate });
+
+  return (
+    <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+      <h2 className="text-sm font-medium">Avisos hacia afuera</h2>
+      <p className="text-muted mt-1 text-xs leading-5">
+        El feed local y las notificaciones del sistema no salen de este equipo. Estos adaptadores sí: cada mensaje viaja a
+        un servicio que vos elegís. Nacen apagados y solo mandan título, texto corto y el enlace a localhost — nunca tu
+        contraseña ni tus notas.
+      </p>
+
+      {channels.data?.channels.map((channel) => (
+        <div key={channel.id} className="border-line mt-3 rounded-[var(--radius)] border p-3 text-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="font-medium">{channel.label}</span>
+            <span className={channel.enabled ? 'text-open text-xs' : 'text-muted text-xs'}>
+              {channel.enabled ? 'encendido' : 'apagado'}
+            </span>
+          </div>
+          <p className="text-muted mt-1 font-mono text-xs break-all">{channel.destination}</p>
+          <p className="text-muted mt-1 text-xs leading-5">Depende de: {channel.dependency}</p>
+          <p className="text-muted mt-1 text-xs leading-5">
+            Payload: <span className="font-mono">{JSON.stringify(channel.payloadSample)}</span>
+          </p>
+          {channel.lastError && <p className="text-closed mt-1 text-xs">Última falla: {channel.lastError}</p>}
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" onClick={() => test.mutate(channel.id)} className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2.5 py-1.5 text-xs">
+              Probar
+            </button>
+            <button type="button" onClick={() => toggle.mutate({ id: channel.id, enabled: !channel.enabled })} className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2.5 py-1.5 text-xs">
+              {channel.enabled ? 'Apagar' : 'Encender'}
+            </button>
+            <button type="button" onClick={() => remove.mutate(channel.id)} className="text-closed hover:bg-surface-2 rounded-[var(--radius)] px-2.5 py-1.5 text-xs">
+              Quitar
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <div className="border-line mt-4 flex flex-wrap items-end gap-2 border-t pt-4">
+        <label className="space-y-1.5">
+          <span className="text-muted block text-xs">Tipo</span>
+          <select value={kind} onChange={(e) => setKind(e.target.value)} className="border-line bg-surface-2 rounded-[var(--radius)] border px-3 py-2 text-sm">
+            {channels.data?.adapters.filter((a) => a.external).map((adapter) => (
+              <option key={adapter.kind} value={adapter.kind}>{adapter.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="min-w-[16rem] flex-1 space-y-1.5">
+          <span className="text-muted block text-xs">Destino (URL completa)</span>
+          <input value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="https://ntfy.midominio/mikampus" className="border-line bg-surface-2 w-full rounded-[var(--radius)] border px-3 py-2 text-sm outline-none" />
+        </label>
+        <button
+          type="button"
+          disabled={!destination.trim() || create.isPending}
+          onClick={() => create.mutate({ kind, destination: destination.trim() })}
+          className="bg-fg text-bg rounded-[var(--radius)] px-3 py-2 text-sm font-medium disabled:opacity-50"
+        >
+          Agregar apagado
+        </button>
+      </div>
+      {create.error && <p className="text-closed mt-2 text-sm">{create.error.message}</p>}
+      {test.data && <p className={test.data.ok ? 'text-open mt-2 text-sm' : 'text-closed mt-2 text-sm'}>{test.data.ok ? 'Prueba enviada.' : `La prueba falló: ${test.data.error}`}</p>}
+    </section>
+  );
+}
+
+// Copias (§7 y §8). El aviso de que una copia en el mismo disco no es disaster
+// recovery viaja con los datos, no en una nota al pie del README.
+function CopiasSection() {
+  const queryClient = useQueryClient();
+  const status = useAgentStatus();
+  const [directory, setDirectory] = useState('');
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['agent-status'] });
+
+  const backup = useMutation({ mutationFn: createBackupNow, onSuccess: invalidate });
+  const retention = useMutation({ mutationFn: setBackupRetention, onSuccess: invalidate });
+  const exportTo = useMutation({ mutationFn: exportBackupTo, onSuccess: invalidate });
+  const state = status.data?.backup;
+
+  return (
+    <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+      <h2 className="text-sm font-medium">Copias de seguridad</h2>
+      <p className="text-muted mt-1 text-xs leading-5">{state?.sameDiskWarning}</p>
+      <p className="text-muted mt-2 text-xs">
+        Última copia verificada: {state?.lastSuccessfulAt ? ago(state.lastSuccessfulAt) : 'todavía ninguna'} · próxima:{' '}
+        {state?.nextRunAt ? new Date(state.nextRunAt).toLocaleString('es-DO') : '—'} · se conservan {state?.keep ?? 0}
+      </p>
+      <p className="text-muted mt-1 font-mono text-xs break-all">{state?.directory}</p>
+
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <button type="button" onClick={() => backup.mutate()} disabled={backup.isPending} className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-3 py-2 text-sm disabled:opacity-50">
+          {backup.isPending ? 'Copiando…' : 'Hacer copia ahora'}
+        </button>
+        <label className="space-y-1.5">
+          <span className="text-muted block text-xs">Copias a conservar</span>
+          <input
+            type="number"
+            min={1}
+            defaultValue={state?.keep ?? 7}
+            onBlur={(e) => retention.mutate(Number(e.target.value))}
+            className="border-line bg-surface-2 w-24 rounded-[var(--radius)] border px-3 py-2 text-sm outline-none"
+          />
+        </label>
+      </div>
+
+      <div className="border-line mt-4 flex flex-wrap items-end gap-2 border-t pt-4">
+        <label className="min-w-[16rem] flex-1 space-y-1.5">
+          <span className="text-muted block text-xs">Exportar a otra carpeta o disco</span>
+          <input value={directory} onChange={(e) => setDirectory(e.target.value)} placeholder="/media/usb/mikampus" className="border-line bg-surface-2 w-full rounded-[var(--radius)] border px-3 py-2 text-sm outline-none" />
+        </label>
+        <button type="button" disabled={!directory.trim() || exportTo.isPending} onClick={() => exportTo.mutate(directory.trim())} className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-3 py-2 text-sm disabled:opacity-50">
+          Exportar
+        </button>
+      </div>
+      {exportTo.data && (
+        <p className="text-open mt-2 text-sm">
+          Copia verificada en {exportTo.data.file}.{exportTo.data.sameDisk ? ' Ojo: está en el mismo disco, no cubre robo ni daño físico.' : ''}
+        </p>
+      )}
+      {exportTo.error && <p className="text-closed mt-2 text-sm">{exportTo.error.message}</p>}
+    </section>
+  );
+}
+
+// Diagnósticos (§10): quedan en la carpeta de la app, redactados, y solo salen
+// de ahí con una acción explícita.
+function DiagnosticosSection() {
+  const diagnostics = useQuery({ queryKey: ['diagnostics'], queryFn: fetchDiagnostics });
+  const [directory, setDirectory] = useState('');
+  const exportTo = useMutation({ mutationFn: exportDiagnosticsTo });
+
+  return (
+    <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+      <h2 className="text-sm font-medium">Diagnósticos</h2>
+      <p className="text-muted mt-1 text-xs leading-5">{diagnostics.data?.note}</p>
+      {!diagnostics.data?.files.length ? (
+        <p className="text-muted mt-3 text-sm">No hay diagnósticos guardados.</p>
+      ) : (
+        <ul className="text-muted mt-3 space-y-1 text-xs">
+          {diagnostics.data.files.map((file) => (
+            <li key={file.name} className="font-mono break-all">
+              {file.name} · {file.bytes} bytes{file.pii ? ' · captura del portal' : ''}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="min-w-[16rem] flex-1 space-y-1.5">
+          <span className="text-muted block text-xs">Exportar a</span>
+          <input value={directory} onChange={(e) => setDirectory(e.target.value)} placeholder="/home/vos/diagnosticos" className="border-line bg-surface-2 w-full rounded-[var(--radius)] border px-3 py-2 text-sm outline-none" />
+        </label>
+        <button type="button" disabled={!directory.trim() || exportTo.isPending} onClick={() => exportTo.mutate(directory.trim())} className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-3 py-2 text-sm disabled:opacity-50">
+          Exportar
+        </button>
+      </div>
+      {exportTo.error && <p className="text-closed mt-2 text-sm">{exportTo.error.message}</p>}
+    </section>
+  );
+}
+
+// Updates (§11): manual u apagado. No existe "automático" — sería tráfico
+// periódico a GitHub que nadie pidió.
+function ActualizacionesSection() {
+  const queryClient = useQueryClient();
+  const status = useAgentStatus();
+  const check = useMutation({ mutationFn: checkForUpdate, onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-status'] }) });
+  const policy = useMutation({ mutationFn: setUpdatePolicy, onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-status'] }) });
+  const current = status.data?.update;
+
+  return (
+    <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+      <h2 className="text-sm font-medium">Actualizaciones</h2>
+      <p className="text-muted mt-1 text-xs leading-5">
+        mikampus no consulta versiones por su cuenta. Cuando pulsás "Buscar", se pregunta una vez a GitHub; lo que se
+        descargue se verifica por SHA-256 antes de instalarse, y el update detiene el agente y respalda la base antes de
+        tocar nada.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => check.mutate()} disabled={check.isPending || current?.policy === 'off'} className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-3 py-2 text-sm disabled:opacity-50">
+          {check.isPending ? 'Consultando…' : 'Buscar actualizaciones'}
+        </button>
+        <button type="button" onClick={() => policy.mutate(current?.policy === 'off' ? 'manual' : 'off')} className="text-muted hover:text-fg text-xs">
+          {current?.policy === 'off' ? 'Permitir el chequeo manual' : 'Desactivar del todo el chequeo'}
+        </button>
+      </div>
+      {check.data && (
+        <p className="text-muted mt-2 text-sm">
+          {check.data.status === 'update-available'
+            ? `Hay una versión ${check.data.latest} (tenés la ${check.data.current}).`
+            : check.data.status === 'error'
+              ? `No se pudo consultar: ${check.data.error}`
+              : `Estás en la última versión (${check.data.current}).`}
+        </p>
+      )}
+    </section>
+  );
+}
+
+// El preview de borrado (§9): qué se va a eliminar, dónde vive y qué no puede
+// tocar mikampus. Un "borrar todo" sin esto es una promesa no verificable.
+function ErasePreview() {
+  const preview = useQuery({ queryKey: ['erase-preview'], queryFn: fetchErasePreview });
+  if (!preview.data) return null;
+  return (
+    <div className="border-line mt-3 rounded-[var(--radius)] border p-3">
+      <p className="text-xs font-medium">Esto es lo que se borra</p>
+      <ul className="text-muted mt-2 space-y-1 text-xs leading-5">
+        {preview.data.targets.map((target) => (
+          <li key={target.id}>
+            {target.label} — <span className="font-mono break-all">{target.path}</span>
+            {target.exists ? ` (${Math.max(1, Math.round(target.bytes / 1024))} KiB)` : ' (no existe)'}
+          </li>
+        ))}
+        {preview.data.external.map((item) => (
+          <li key={item.id}>
+            {item.label} — {item.purpose}
+          </li>
+        ))}
+      </ul>
+      <p className="text-muted mt-2 text-xs leading-5">
+        {preview.data.note} Desde acá se borran tus datos, la credencial, las copias y los diagnósticos; para eliminar
+        además el archivo de base y el browser descargado, corré <span className="font-mono">mikampus erase-data --yes</span>.
+      </p>
+      <p className="text-xs font-medium mt-3">Esto queda fuera de su alcance</p>
+      <ul className="text-muted mt-1 space-y-1 text-xs leading-5">
+        {preview.data.outsideReach.map((item) => (
+          <li key={item.id}>
+            {item.label} — {item.purpose}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

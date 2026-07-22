@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { chromium } from 'playwright';
+import { captureFailure } from './diagnostics.js';
 
 const SIGNON_URL = 'https://micampus.pucmm.edu.do/psp/cs92pro/?cmd=login&languageCd=ENG';
 
@@ -77,7 +78,9 @@ async function doSignon(page, { username, password }) {
     });
   } catch {
     const loginError = await page.locator('#login_error').textContent().catch(() => '');
-    await page.screenshot({ path: 'screenshots/login-timeout.png', timeout: 5000 }).catch(() => {});
+    // La captura tiene PII del portal: va a app-data/diagnostics con permisos
+    // propios, nunca al CWD desde donde se lanzó el agente.
+    const shot = await captureFailure(page, 'login-timeout');
     if (loginError && loginError.trim().length > 0) {
       // El portal contestó: la credencial es mala (o la cuenta está bloqueada).
       // Distinguirlo de un timeout importa aguas arriba: esto NO se reintenta.
@@ -85,6 +88,8 @@ async function doSignon(page, { username, password }) {
       err.credentialRejected = true;
       throw err;
     }
-    throw new Error('Timeout esperando redirección post-login. Ver screenshots/login-timeout.png');
+    throw new Error(
+      `Timeout esperando redirección post-login.${shot ? ` Diagnóstico local: ${shot}` : ''}`
+    );
   }
 }

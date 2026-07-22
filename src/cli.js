@@ -3,13 +3,15 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { createBackup } from './backups.js';
-import { db, DB_PATH } from './db.js';
+import { backupState, createBackup, exportBackup, verifyBackup } from './backups.js';
+import { db, DB_PATH, schemaState } from './db.js';
 import { agentToken, lockPath, processIsAlive, readAgentLock, runtimeDir } from './runtime.js';
-import { dataPaths } from './paths.js';
-import { installBrowser } from './browser.js';
+import { browserStatus, installBrowser } from './browser.js';
+import { erasePreview, eraseLocalArtifacts } from './erase.js';
+import { exportDiagnostics, listDiagnostics } from './diagnostics.js';
+import { SCHEMA_VERSION } from './migrations.js';
+import { checkForUpdate, currentVersion, setUpdatePolicy, updatePolicy } from './updates.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const command = process.argv[2] || 'status';
@@ -55,7 +57,14 @@ async function stop() {
 async function status() {
   const lock = readAgentLock(); const live = await health();
   const watcher = db.prepare('SELECT status, last_check_at AS lastCheckAt, next_check_at AS nextCheckAt, pause_reason AS pauseReason, consecutive_failures AS consecutiveFailures FROM watchers WHERE user_id = 1').get() ?? null;
-  console.log(JSON.stringify({ running: Boolean(live?.ok), pid: lock?.pid ?? null, port, runtimeDir, lock: lockPath, watcher }, null, 2));
+  const backup = backupState();
+  console.log(JSON.stringify({
+    version: currentVersion(),
+    running: Boolean(live?.ok), pid: lock?.pid ?? null, port, runtimeDir, lock: lockPath, watcher,
+    schema: { version: SCHEMA_VERSION, applied: schemaState.applied },
+    backup: { lastSuccessfulAt: backup.lastSuccessfulAt, nextRunAt: backup.nextRunAt, keep: backup.keep, copies: backup.copies.length },
+    updates: updatePolicy(),
+  }, null, 2));
   if (!live?.ok) process.exitCode = 1;
 }
 async function open() {
@@ -64,13 +73,20 @@ async function open() {
   const result = spawnSync(opener[0], opener[1], { stdio: 'ignore' });
   if (result.error) console.log(`Abrí ${baseUrl} en tu navegador.`);
 }
-function doctor() {
+async function doctor() {
+  const browser = await browserStatus();
+  const backup = backupState();
   const checks = [
     ['Node >= 24', Number(process.versions.node.split('.')[0]) >= 24],
     ['runtime privado', (() => { try { fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 }); return true; } catch { return false; } })()],
     ['base de datos configurable', Boolean(DB_PATH)],
+    [`esquema ${SCHEMA_VERSION} aplicado`, true],
+    ['browser administrado instalado', browser.installed],
+    ['hay al menos una copia verificable', backup.copies.length > 0],
   ];
   for (const [name, ok] of checks) console.log(`${ok ? '✓' : '✗'} ${name}`);
+  if (!browser.installed) console.log('  → corré `mikampus install-browser` (o completá el onboarding en la UI)');
+  if (backup.copies.length === 0) console.log('  → corré `mikampus backup` para crear la primera copia');
   if (checks.some(([, ok]) => !ok)) process.exitCode = 1;
 }
 function serviceDefinition() {
@@ -93,27 +109,79 @@ function restore(file) {
   if (!file || !fs.existsSync(file)) throw new Error('Indicá un backup SQLite existente para restore');
   const lock = readAgentLock();
   if (lock && processIsAlive(lock.pid)) throw new Error('Detené el agente antes de restaurar para evitar corrupción');
-  const probe = new DatabaseSync(file, { readOnly: true });
-  try {
-    const result = probe.prepare('PRAGMA integrity_check').get();
-    if (result.integrity_check !== 'ok') throw new Error(`El backup no pasó integrity_check: ${result.integrity_check}`);
-  } finally { probe.close(); }
+  // La misma verificación que se hace al crear la copia: integridad, esquema
+  // legible por esta versión y contenido real. Restaurar sin verificar es cómo
+  // se descubre a destiempo que el respaldo estaba vacío.
+  const verified = verifyBackup(file);
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  fs.copyFileSync(file, DB_PATH); console.log(`Backup restaurado en ${DB_PATH}`);
+  fs.copyFileSync(file, DB_PATH);
+  // El WAL viejo pertenece a la base anterior: dejarlo puede reintroducir
+  // escrituras que la copia no tenía.
+  for (const suffix of ['-wal', '-shm']) fs.rmSync(`${DB_PATH}${suffix}`, { force: true });
+  console.log(`Backup restaurado en ${DB_PATH} (esquema ${verified.schema}, ${verified.tables} tablas)`);
+}
+function backup() {
+  const index = process.argv.indexOf('--to');
+  if (index === -1) return console.log(createBackup());
+  const result = exportBackup(process.argv[index + 1]);
+  console.log(`Copia exportada a ${result.file} (${result.bytes} bytes, esquema ${result.schema})`);
+  if (result.sameDisk) console.log('Aviso: el destino está en el mismo disco que tus datos; no cubre robo ni daño físico.');
+}
+function printErasePreview(preview) {
+  console.log('Se va a borrar:');
+  for (const target of preview.targets) {
+    console.log(`  ${target.exists ? '•' : '·'} ${target.label}: ${target.path}${target.exists ? ` (${target.bytes} bytes)` : ' (no existe)'}`);
+  }
+  for (const item of preview.external) console.log(`  • ${item.label} — ${item.purpose}`);
+  console.log(preview.note);
+  console.log('Queda fuera del alcance de mikampus:');
+  for (const item of preview.outsideReach) console.log(`  · ${item.label} — ${item.purpose}`);
 }
 async function eraseData() {
-  if (!process.argv.includes('--yes')) throw new Error('erase-data requiere --yes: borra credenciales, SQLite, backups y runtime local.');
+  const preview = erasePreview();
+  printErasePreview(preview);
+  if (!process.argv.includes('--yes')) {
+    console.log('\nNada se borró todavía. Repetí con --yes para confirmar (agregá --keep-backups para conservar las copias).');
+    return;
+  }
   await stop();
-  const { credentials: credentialDb, backups: backupDir } = dataPaths();
-  const targets = [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`, credentialDb, `${credentialDb}-wal`, `${credentialDb}-shm`, backupDir, runtimeDir];
-  for (const target of targets) fs.rmSync(target, { recursive: true, force: true, maxRetries: 1 });
-  console.log('Datos locales, secretos, backups y runtime eliminados.');
+  const keep = process.argv.includes('--keep-backups') ? ['backups'] : [];
+  const removed = eraseLocalArtifacts({ keep });
+  for (const target of removed) console.log(`borrado: ${target}`);
+  console.log(keep.length ? 'Datos y secretos eliminados; las copias quedaron donde estaban.' : 'Datos locales, secretos, copias, diagnósticos y runtime eliminados.');
+}
+async function uninstall() {
+  // Desinstalar es dos cosas distintas: sacar el servicio del OS y decidir qué
+  // pasa con los datos. Se hacen en ese orden y la segunda siempre pregunta.
+  installService(true);
+  await eraseData();
+}
+function diagnostics() {
+  const index = process.argv.indexOf('--export');
+  if (index === -1) {
+    const files = listDiagnostics();
+    if (files.length === 0) return console.log('No hay diagnósticos guardados.');
+    for (const file of files) console.log(`${file.at}  ${file.name}  ${file.bytes} bytes${file.pii ? '  (captura: puede mostrar datos del portal)' : ''}`);
+    return;
+  }
+  const result = exportDiagnostics(process.argv[index + 1]);
+  console.log(`${result.files.length} archivo(s) exportado(s) a ${result.directory}. Revisalos antes de compartirlos.`);
+}
+async function update() {
+  const index = process.argv.indexOf('--policy');
+  if (index !== -1) return console.log(`Política de updates: ${setUpdatePolicy(process.argv[index + 1])}`);
+  const result = await checkForUpdate();
+  console.log(JSON.stringify(result, null, 2));
+  if (result.status === 'update-available') {
+    console.log('\nLa descarga se verifica por SHA-256 antes de instalarse; el instalador por plataforma llega con la fase de distribución.');
+  }
 }
 async function main() {
   if (command === 'start') return start(); if (command === 'stop') return stop(); if (command === 'status') return status(); if (command === 'open') return open(); if (command === 'doctor') return doctor(); if (command === 'install-browser') return installBrowser();
   if (command === 'install-service') return installService(false); if (command === 'uninstall-service') return installService(true);
-  if (command === 'backup') return console.log(createBackup()); if (command === 'restore') return restore(process.argv[3]);
-  if (command === 'erase-data') return eraseData();
+  if (command === 'backup') return backup(); if (command === 'restore') return restore(process.argv[3]);
+  if (command === 'erase-data') return eraseData(); if (command === 'uninstall') return uninstall();
+  if (command === 'diagnostics') return diagnostics(); if (command === 'update') return update();
   throw new Error(`Comando desconocido: ${command}`);
 }
 main().catch((error) => { console.error(`mikampus: ${error.message}`); process.exitCode = 1; });

@@ -1,8 +1,9 @@
 # mikampus
 
 > Estado: migración en curso a una herramienta open source, local y single-user.
-> Fase 1 completada: mikampus no ofrece ni soporta despliegues hosted o
-> multiusuario.
+> Fases 0–4 completadas: mikampus no ofrece ni soporta despliegues hosted o
+> multiusuario, y ya cubre primer uso, notificaciones y ciclo de vida de datos.
+> Falta la distribución (instaladores, npm y releases firmadas).
 
 mikampus busca convertirse en una herramienta que cada estudiante ejecuta en
 su propio hardware con su propia cuenta. No está afiliada, autorizada ni
@@ -59,6 +60,58 @@ El artifact usa `~/.local/share/mikampus` en Linux, `~/Library/Application Suppo
 en macOS y `%APPDATA%\\mikampus` en Windows. Definí `MIKAMPUS_DATA_DIR` para
 Home Server o para elegir otra ubicación; nunca usa el CWD para datos.
 
+## Primer uso, operación y salida
+
+El primer arranque no necesita terminal: al abrir `http://localhost:4173` la app
+guía cuatro pasos en orden — elegir modo (Local Desktop u Home Server, con las
+garantías reales de cada uno), verificar prerequisitos, **descargar el browser
+administrado con barra de progreso** y recién entonces pedir tu cuenta de PUCMM.
+La contraseña se pide solo cuando mikampus ya puede verificarla; la descarga la
+hace el agente, así que cerrar la pestaña no la interrumpe.
+
+Durante el uso, una barra siempre visible responde si mikampus está trabajando:
+estado del agente, del watcher, último check, fallos consecutivos, intervalo no
+vigilado, vencimiento de la credencial guardada y si el equipo tiene que seguir
+despierto. La versión larga vive en *Ajustes → Estado de mikampus*.
+
+**Notificaciones.** En Desktop llegan como notificación nativa desde el agente,
+aunque el navegador esté cerrado; en Linux traen un botón que abre la pantalla
+correspondiente (macOS y Windows no exponen ese click sin app firmada, así que
+ahí el enlace va en el texto). El feed queda guardado y el dedupe sobrevive a un
+reinicio. Home Server no tiene escritorio: su base es el feed local, y cualquier
+adaptador externo (ntfy, webhook) se agrega **apagado** mostrando destino,
+dependencia y payload exacto antes de encenderse.
+
+**Datos.** El esquema tiene versión y migraciones numeradas y transaccionales;
+antes de migrar una base con datos se guarda una copia `pre-upgrade-*`, y una
+migración fallida se revierte entera indicando qué restaurar. Las copias diarias
+se deciden contra la última copia verificada —si el equipo estuvo apagado a la
+hora programada, se hace al volver—, se verifican con `integrity_check` y se
+pueden exportar a otro disco. **Una copia en el mismo disco no protege de robo ni
+de un disco muerto**; no hay respaldo a ninguna nube.
+
+```bash
+mikampus status              # agente, watcher, esquema, copias y política de updates
+mikampus doctor              # prerequisitos, browser instalado, copias disponibles
+mikampus backup              # copia verificada en app-data
+mikampus backup --to /media/usb/mikampus   # exportar a otro disco
+mikampus restore <archivo>   # verifica integridad y esquema antes de sobrescribir
+mikampus diagnostics         # listar; --export <carpeta> para sacarlos
+mikampus update              # consulta manual; --policy off la desactiva del todo
+mikampus erase-data          # muestra qué borraría; --yes confirma, --keep-backups conserva copias
+mikampus uninstall           # retira el servicio del OS y ofrece el mismo borrado
+```
+
+**Diagnósticos.** Las capturas de una falla van a `app-data/diagnostics` con
+permisos propios y redactadas en su parte textual, nunca al directorio desde el
+que arrancaste el proceso. Solo salen de ahí si las exportás a mano.
+
+**Actualizaciones.** mikampus nunca consulta versiones por su cuenta: el chequeo
+es manual y se puede apagar. Lo que se descargue se verifica por SHA-256, y el
+flujo de update detiene el agente y respalda la base antes de tocar nada. El
+instalador por plataforma llega con la fase de distribución (ver
+[`docs/adr/0002-data-lifecycle.md`](./docs/adr/0002-data-lifecycle.md)).
+
 Para que la búsqueda tenga contra qué buscar, llená el catálogo desde el portal: `node scripts/sync-catalog.mjs ICC` (ver [De dónde sale el nombre de cada materia](#de-dónde-sale-el-nombre-de-cada-materia)). Tarda unos minutos por subject y solo hace falta una vez por término. `scripts/seed-catalog.mjs` siembra 4 materias **inventadas** y es solo para probar la UI sin portal — no lo corras contra la base real.
 
 ## Stack
@@ -77,6 +130,8 @@ npm run audit:public                              # secretos/PII conocidos en HE
 npm run build && node scripts/check-budget.mjs   # bundle inicial < 250KB gz
 node scripts/bench-search.mjs                    # keystroke → resultados < 16ms
 npm run smoke                                    # screenshots a 390/768/1440px + falla si hay desborde horizontal
+npm run smoke:lifecycle                          # agente real: primer uso sin terminal, origen ajeno rechazado, datos en app-data
+npm run smoke:package                            # artifact compilado: SPA, SQLite en app-data, payload mínimo
 ```
 
 `npm test` corre los parsers contra fixtures sanitizados y revisados (sin tokens

@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { dataPaths } from './paths.js';
+import { runMigrations } from './migrations.js';
 // MIKAMPUS_DB deja que los tests corran contra una DB desechable en vez de la
 // real (scripts/test-catalog-db.mjs). En uso normal no se define.
 export const DB_PATH = dataPaths().db;
@@ -17,6 +18,13 @@ export const db = new DatabaseSync(DB_PATH);
 // SQLite; lo prendemos para que las FK de plan_items/sections se respeten.
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
+
+// Antes de crear nada: ¿esta base ya existía? El esquema baseline de abajo es
+// idempotente y deja tablas creadas siempre, así que después de correrlo es
+// imposible distinguir una instalación nueva de una con datos. La diferencia
+// importa: solo una base con datos previos merece copia pre-upgrade.
+const databaseExistedBefore =
+  db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get().n > 0;
 
 // El esquema es idempotente (IF NOT EXISTS): correrlo en cada arranque hace de
 // "migración" barata para una app local. Modelo:
@@ -723,6 +731,19 @@ if (!hasColumn('requirement_groups', 'plan_id')) {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+// Todo lo de arriba es la baseline histórica: idempotente y ya presente en las
+// bases existentes. De acá en adelante los cambios de esquema son migraciones
+// numeradas y transaccionales, con copia pre-upgrade y compatibilidad declarada
+// (src/migrations.js). El resultado se expone para `status`/`doctor`.
+export const schemaState = runMigrations(db, {
+  backupDir: dataPaths().backups,
+  preexisting: databaseExistedBefore,
+  onBackup: (file) => console.log(`[schema] copia pre-upgrade: ${file}`),
+});
+if (schemaState.applied.length > 0) {
+  console.log(`[schema] esquema ${schemaState.from} → ${schemaState.to}`);
 }
 
 db.exec('CREATE INDEX IF NOT EXISTS idx_grades_user ON grades(user_id)');

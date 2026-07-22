@@ -36,6 +36,14 @@ import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js
 import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
 import { acquireAgentLock, agentHealthAuthorized, recordRuntimeStart, recordRuntimeStop, releaseAgentLock } from './runtime.js';
 import { resourcePath } from './paths.js';
+import { chooseMode, markOnboardingComplete, onboardingState, startBrowserInstall } from './onboarding.js';
+import { fullStatus } from './status.js';
+import { clearNotifications, markFeedRead, readFeed, unreadCount } from './notifications.js';
+import { availableAdapters, deleteChannel, listChannels, saveChannel, setChannelEnabled, testChannel } from './channels.js';
+import { backupState, createBackup, exportBackup, setRetention } from './backups.js';
+import { erasePreview, eraseLocalArtifacts } from './erase.js';
+import { exportDiagnostics, listDiagnostics } from './diagnostics.js';
+import { checkForUpdate, setUpdatePolicy } from './updates.js';
 
 const DIST_DIR = resourcePath('public', 'dist');
 const app = express();
@@ -124,6 +132,40 @@ async function refreshExpired(userId, { force = false } = {}) {
 
 app.use('/api', auth.localRequestGuard, auth.authMiddleware);
 
+// ── Onboarding (Fase 4 §1 y §2): primer uso sin terminal ────────────────────
+// Público: corre antes de que exista una cuenta. No expone datos personales, y
+// el guard local ya exigió loopback y Origin propio.
+app.get('/api/onboarding', async (req, res) => {
+  try {
+    res.json(await onboardingState());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/onboarding/mode', (req, res) => {
+  try {
+    res.json({ mode: chooseMode(req.body?.mode) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// El browser se instala desde la UI, con progreso y sin pedir la contraseña
+// primero: hasta que Chromium no esté, mikampus no puede verificar nada contra
+// PUCMM y no tiene sentido recibir una credencial que no puede usar.
+app.post('/api/onboarding/browser', async (req, res) => {
+  try {
+    res.json(await startBrowserInstall());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/onboarding/complete', (req, res) => {
+  res.json({ completedAt: markOnboardingComplete() });
+});
+
 // ── Auth (§5): el login de mikampus ES el login del portal ──────────────────
 app.post('/api/auth/login', async (req, res) => {
   try {
@@ -202,6 +244,129 @@ app.post('/api/push/unsubscribe', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Estado permanente (Fase 4 §3) ───────────────────────────────────────────
+// Una sola lectura barata: agente, watcher, gap, backoff, próxima acción,
+// vencimiento de credencial, copias y si el equipo tiene que seguir despierto.
+app.get('/api/status', (req, res) => {
+  try {
+    res.json(fullStatus(req.userId));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Notificaciones: feed durable + adaptadores opcionales (§4 y §5) ─────────
+app.get('/api/notifications', (req, res) => {
+  res.json({ items: readFeed(req.userId), unread: unreadCount(req.userId) });
+});
+
+app.post('/api/notifications/read', (req, res) => {
+  res.json({ marked: markFeedRead(req.userId) });
+});
+
+app.get('/api/notifications/channels', (req, res) => {
+  res.json({ channels: listChannels(), adapters: availableAdapters() });
+});
+
+app.post('/api/notifications/channels', (req, res) => {
+  try {
+    const id = saveChannel({ kind: req.body?.kind, label: req.body?.label, destination: req.body?.destination });
+    res.json({ id, channels: listChannels() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch('/api/notifications/channels/:id', (req, res) => {
+  try {
+    setChannelEnabled(Number(req.params.id), Boolean(req.body?.enabled));
+    res.json({ channels: listChannels() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/notifications/channels/:id', (req, res) => {
+  deleteChannel(Number(req.params.id));
+  res.json({ channels: listChannels() });
+});
+
+app.post('/api/notifications/channels/:id/test', async (req, res) => {
+  try {
+    const result = await testChannel(Number(req.params.id));
+    res.json({ ...result, channels: listChannels() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Copias de seguridad (§7 y §8) ───────────────────────────────────────────
+app.get('/api/backups', (req, res) => {
+  res.json(backupState());
+});
+
+app.post('/api/backups', (req, res) => {
+  try {
+    res.json({ file: createBackup(), state: backupState() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/backups', (req, res) => {
+  try {
+    setRetention(req.body?.keep);
+    res.json(backupState());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Exportar es explícito y a una carpeta que elige el usuario. No hay backup a
+// una nube, ni silencioso ni opcional.
+app.post('/api/backups/export', (req, res) => {
+  try {
+    res.json(exportBackup(req.body?.directory));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Diagnósticos (§10) ──────────────────────────────────────────────────────
+app.get('/api/diagnostics', (req, res) => {
+  res.json({
+    files: listDiagnostics(),
+    note: 'Los diagnósticos viven en la carpeta de datos de la app. Las capturas pueden mostrar información del portal: revisalas antes de compartirlas.',
+  });
+});
+
+app.post('/api/diagnostics/export', (req, res) => {
+  try {
+    res.json(exportDiagnostics(req.body?.directory));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Updates (§11): manuales o apagados, nunca automáticos ───────────────────
+app.post('/api/updates/check', async (req, res) => {
+  res.json(await checkForUpdate());
+});
+
+app.patch('/api/updates', (req, res) => {
+  try {
+    res.json({ policy: setUpdatePolicy(req.body?.policy) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Qué se borraría, antes de borrarlo. Un "borrar todo" sin preview es una
+// promesa que el usuario no puede verificar.
+app.get('/api/account/erase-preview', (req, res) => {
+  res.json(erasePreview());
+});
+
 app.delete('/api/account/data', async (req, res) => {
   try {
     // Primero se corta todo lo que pueda tocar el portal; después se borra la
@@ -217,8 +382,17 @@ app.delete('/api/account/data', async (req, res) => {
     deleteCredential(req.userId);
     auth.revokeAllSessions(req.userId);
     deleteAllUserData(req.userId);
+    clearNotifications();
+    // Con el agente vivo la base y su runtime están abiertos: sus filas ya se
+    // borraron arriba. Lo que sí se puede quitar del disco ahora son las copias
+    // y los diagnósticos, que son justamente donde quedaría una captura del
+    // portal después de un "borrar todo". Los archivos restantes los elimina
+    // `mikampus erase-data`, que detiene el agente primero.
+    const removed = req.body?.keepBackups
+      ? eraseLocalArtifacts({ onlyRuntimeSafe: true, keep: ['backups'] })
+      : eraseLocalArtifacts({ onlyRuntimeSafe: true });
     res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: SECURE_COOKIES }));
-    res.json({ ok: true });
+    res.json({ ok: true, removed, note: 'Para borrar también la base, el vault y el browser descargado, ejecutá `mikampus erase-data --yes`.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

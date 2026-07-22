@@ -13,7 +13,7 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
   `feat/open-source-ready` queda preservada tras el merge de Fase 0.
-- **Fase en curso:** siguiente Fase 4 — Onboarding, notificaciones y ciclo de vida de datos.
+- **Fase en curso:** siguiente Fase 5 — Distribución (instaladores/binarios + npm).
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -50,13 +50,28 @@
   targets quedan explícitamente fuera hasta tener smoke nativo y resolver P3. `npm pack
   --dry-run` contiene sólo runtime, SPA y avisos, no fixtures/recon/tests/hosted.
 
+- **Cierre de Fase 4:** el primer uso corre sin terminal (modo con garantías,
+  prerequisitos, browser con progreso y recién después la credencial) y una barra
+  permanente publica agente, watcher, gap, backoff, próxima acción, vencimiento de
+  credencial y si el equipo debe seguir despierto. El esquema tiene versión,
+  migraciones transaccionales, copia pre-upgrade, recuperación ante fallo y
+  compatibilidad de rollback declarada. Las copias se deciden contra la última
+  exitosa con catch-up al arrancar, se verifican y se exportan a destino elegido.
+  El dedupe de notificaciones es durable, cada aviso lleva deep-link y los
+  adaptadores externos nacen apagados declarando destino, dependencia y payload.
+  Diagnósticos redactados en app-data con salida solo explícita; `erase-data` y
+  `uninstall` muestran preview antes de borrar. Update-check manual u apagado, con
+  descarga verificada por SHA-256 y flujo con respaldo y camino de vuelta. El paso
+  `install` del updater queda inyectado a propósito: el instalador real es Fase 5
+  (ver `docs/adr/0002-data-lifecycle.md`).
+
 | Fase | Nombre | Estado |
 |------|--------|--------|
 | 0 | Contrato local, privacidad y desbloqueo open source | ✅ Hecho |
 | 1 | Single-user seguro (auth local, credenciales, retiro hosted) | ✅ Hecho |
 | 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ✅ Hecho |
 | 3 | Spike de empaquetado y build de producción | ✅ Hecho |
-| 4 | Onboarding, notificaciones y ciclo de vida de datos | ⬜ Pendiente |
+| 4 | Onboarding, notificaciones y ciclo de vida de datos | ✅ Hecho |
 | 5 | Distribución (instaladores/binarios + npm) | ⬜ Pendiente |
 | 6 | CI de releases, documentación y landing | ⬜ Pendiente |
 

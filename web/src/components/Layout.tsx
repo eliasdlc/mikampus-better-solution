@@ -15,6 +15,7 @@ import {
 import { useSSE } from '../lib/sse.tsx';
 import { ThemeToggle } from './ThemeToggle.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
+import { AgentStatusBar } from './AgentStatus.tsx';
 import { refreshExpiredData } from '../lib/api.ts';
 
 // La navegación nombra las seis tareas, no las pantallas que el proyecto fue
@@ -136,7 +137,10 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="mx-auto w-full max-w-5xl px-4 py-6 print:max-w-none print:p-0 md:px-8 md:py-8">{children}</main>
+      <div className="min-w-0">
+        <AgentStatusBar />
+        <main className="mx-auto w-full max-w-5xl px-4 py-6 print:max-w-none print:p-0 md:px-8 md:py-8">{children}</main>
+      </div>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>

@@ -166,7 +166,17 @@ export async function logout(token) {
 
 // ── Middleware ─────────────────────────────────────────────────────────────
 // Toda /api exige sesión salvo las rutas públicas, y toda mutación exige CSRF.
-const PUBLIC_API = new Set(['/health', '/auth/login']);
+// El onboarding es público por necesidad: elegir modo, ver prerequisitos e
+// instalar el browser ocurre ANTES de que exista una cuenta que autenticar. No
+// devuelve ni acepta datos académicos, y sigue detrás de localRequestGuard
+// (loopback + Origin), igual que el propio login.
+const PUBLIC_API = new Set([
+  '/health',
+  '/auth/login',
+  '/onboarding',
+  '/onboarding/mode',
+  '/onboarding/browser',
+]);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 // El agente Desktop solo sirve loopback. Validamos Host en todas las requests
