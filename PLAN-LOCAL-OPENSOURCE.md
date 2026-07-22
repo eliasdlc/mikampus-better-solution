@@ -28,7 +28,10 @@
 - **Cierre de Fase 0:** se retiraron los dos fixtures sin cobertura; los 18 restantes tienen
   propósito registrado y límite de tamaño en `fixtures/manifest.json`. `npm test`,
   `npm run typecheck`, `npm run lint`, `npm run audit:public` y `npm run audit:history`
-  pasan. P1/P2 permanecen como blockers explícitos del primer package o release.
+  pasan. P2 permanece como blocker explícito del primer package o release.
+- **Fase 1 (avance):** P1 fue resuelta: el runtime y la documentación hosted se retiraron
+  de `HEAD`; las ramas e historia se preservan. Desktop persiste secretos en el almacén
+  seguro del OS; Home Server conserva el vault cifrado separado.
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
@@ -176,13 +179,11 @@ Confirmadas por el usuario. Cambiarlas requiere una decisión explícita nueva.
 | D11 | **Notificaciones locales por defecto** | Desktop usa notificaciones nativas. Home Server ofrece feed local; cualquier push/webhook/VPN/ntfy externo es opt-in y se declara como tráfico externo. | 2026-07-21 |
 | D12 | **Credenciales en almacén del OS** | Desktop usa Credential Manager/Keychain/Secret Service; Home Server usa vault cifrado con secret separado. `account.json` en claro se elimina. | 2026-07-21 |
 
-### Decisiones pendientes (a confirmar)
+### Decisiones resueltas y pendientes
 
-- **P1 — ¿Qué hacer con el código hosted/multiusuario?** Dos opciones: (a) **retirarlo del
-  HEAD** (queda preservado en la historia de git y en las ramas `phase/*`, cumpliendo la
-  convención de retención) — más limpio para un repo open source y legalmente más nítido;
-  (b) archivarlo solo como documentación histórica claramente separada de
-  `deploy/home-server/`. Recomendación: opción (a).
+- **P1 — Resuelta (2026-07-22):** se retiró el código hosted/multiusuario de `HEAD`,
+  preservando la historia y las ramas existentes. La documentación de despliegue hosted se
+  retiró junto con el runtime.
 - **P2 — El nombre "mikampus".** Es casi idéntico a "MiCampus", el nombre del portal de
   PUCMM → posible cercanía de marca. Mínimo: disclaimer "no afiliado ni respaldado por
   PUCMM" bien visible. A evaluar: renombrar. El repo ya es público; decidir antes de
@@ -572,8 +573,7 @@ Cada caso debe existir como test automatizado o smoke reproducible antes del pri
 
 - **Chats fuente:** legalidad → sesión `39d6f6b9`; descarte de Electron y forma de
   distribución → `2bcffda4` y `dc8b5f0a`.
-- **Docs del repo:** [`PLAN.md`](./PLAN.md) (producto, fases 1–10), [`LANZAMIENTO.md`](./LANZAMIENTO.md)
-  (piloto hosted — histórico), [`MAPA-MICAMPUS.md`](./MAPA-MICAMPUS.md) (mapa del portal),
-  [`README.md`](./README.md).
+- **Docs del repo:** [`PLAN.md`](./PLAN.md) (producto, fases 1–10),
+  [`MAPA-MICAMPUS.md`](./MAPA-MICAMPUS.md) (mapa del portal), [`README.md`](./README.md).
 - **Memoria del asistente:** `pivot-desktop-opensource`, `legalidad-local-bucket1`,
   `phase-progress`, `portal-map-full`.

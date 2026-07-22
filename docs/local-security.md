@@ -2,10 +2,8 @@
 
 ## Estado y límites
 
-mikampus está migrando a una herramienta local y single-user: tus datos, tu
-cuenta y tu hardware. **La implementación actual todavía contiene código y
-archivos de despliegue hosted heredados; no deben desplegarse ni usarse.** Su
-retiro de `HEAD` es trabajo de la Fase 1.
+mikampus es una herramienta local y single-user: tus datos, tu cuenta y tu
+hardware. No se incluye ni se soporta un despliegue hosted o multiusuario.
 
 El proyecto no está afiliado, autorizado ni respaldado por PUCMM. Úsalo solo
 con tu propia cuenta y bajo tu responsabilidad. La automatización puede violar
@@ -13,9 +11,8 @@ los términos de PUCMM o causar consecuencias académicas; la licencia MIT no
 garantiza legalidad, seguridad ni impide que terceros rehosteen un fork. Esto
 no es asesoría legal.
 
-P1 (retirar hosted de `HEAD`) y P2 (evaluar el nombre "mikampus") bloquean el
-primer paquete, instalador o release público. No se publica ninguno mientras
-sigan abiertos.
+P2 (evaluar el nombre "mikampus") bloquea el primer paquete, instalador o
+release público. No se publica ninguno mientras siga abierto.
 
 ## Contrato de egress, versión 1
 
@@ -41,7 +38,7 @@ release, no una afirmación sobre el código heredado.
 | Amenaza | Límite y mitigación requerida |
 | --- | --- |
 | Proceso local malicioso | Puede leer datos accesibles al usuario. Credential store y permisos reducen exposición, no protegen un host comprometido. |
-| Página web contra localhost | La Fase 1 exige token del launcher, cookie HttpOnly/SameSite, CSRF y validación estricta de Origin/Host. |
+| Página web contra localhost | Cookie HttpOnly/SameSite=Strict, CSRF y validación estricta de Origin/Host. El token emitido por launcher se incorpora con el runtime durable. |
 | Otro equipo de la LAN | Desktop se limita a loopback. Home Server usa loopback + SSH por defecto; LAN requiere HTTPS, pairing y auth. Nunca port forwarding directo. |
 | Robo de backups | Backups se cifran/protegen como datos académicos; una copia en el mismo disco no cubre robo o daño físico. |
 | Dependencia comprometida | Lockfile, revisión de licencias/notices, CI con scan y fijación por integridad antes de releases. |

@@ -20,5 +20,5 @@ secreto y se evalúa una reescritura de historia en una operación separada y
 autorizada.
 
 El contrato de egress, threat model, disclaimers y política de fixtures viven
-en [`local-security.md`](./local-security.md). P1 (retiro de hosted) y P2
-(nombre/marca) bloquean el primer package o release.
+en [`local-security.md`](./local-security.md). P2 (nombre/marca) bloquea el
+primer package o release.

@@ -3,10 +3,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { Entry } from '@napi-rs/keyring';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// El almacén cifrado de credenciales del portal (LANZAMIENTO §3 y §5, regla 2).
+// Credenciales persistidas del portal. Desktop usa el almacén seguro nativo
+// (Credential Manager, Keychain o Secret Service mediante keyring-rs). Home
+// Server usa el vault cifrado separado, con su secreto fuera del volumen.
 //
 // Las tres decisiones que lo definen:
 //   1. Archivo APARTE de mikampus.db. Litestream replica la DB principal a un
@@ -22,7 +25,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // watcher con auto-enroll) que necesitan re-loguear sin el usuario presente.
 // El uso interactivo vive en RAM, atado al context de Playwright (session.js).
 
+const RUNTIME = process.env.MIKAMPUS_RUNTIME ?? (process.env.MIKAMPUS_CRED_DB ? 'home-server' : 'desktop');
 const VAULT_PATH = process.env.MIKAMPUS_CRED_DB ?? path.join(__dirname, '..', 'data', 'credentials.db');
+const KEYRING_SERVICE = 'mikampus.portal';
 
 let vaultDb = null;
 
@@ -37,7 +42,28 @@ function key() {
 }
 
 export function vaultAvailable() {
+  if (RUNTIME === 'desktop') return true;
   return key() !== null;
+}
+
+function desktopEntry(userId) {
+  return new Entry(KEYRING_SERVICE, `user:${userId}`);
+}
+
+function desktopRecord(userId) {
+  try {
+    const raw = desktopEntry(userId).getPassword();
+    if (!raw) return null;
+    const record = JSON.parse(raw);
+    if (!record?.username || !record?.password || !record?.expiresAt) return null;
+    if (record.expiresAt <= new Date().toISOString()) {
+      desktopEntry(userId).deletePassword();
+      return null;
+    }
+    return record;
+  } catch {
+    return null;
+  }
 }
 
 // El archivo se crea recién cuando alguien guarda una credencial: un server
@@ -77,6 +103,17 @@ function decrypt({ ciphertext, iv, tag }) {
 // Guarda con consentimiento explícito y vida acotada: expiresAt es obligatorio
 // y el diálogo que llama esto ya le dijo al usuario hasta cuándo (§5 regla 3).
 export function storeCredential(userId, { username, password }, { expiresAt, reason = null }) {
+  if (RUNTIME === 'desktop') {
+    if (!Number.isInteger(userId)) throw new Error('storeCredential necesita un userId');
+    if (!username || !password) throw new Error('Usuario y contraseña son obligatorios');
+    if (!expiresAt) throw new Error('Una credencial persistida necesita fecha de vencimiento');
+    try {
+      desktopEntry(userId).setPassword(JSON.stringify({ username, password, reason, expiresAt, createdAt: new Date().toISOString() }));
+      return;
+    } catch (err) {
+      throw new Error(`No se pudo usar el almacén seguro del sistema: ${err.message}`);
+    }
+  }
   if (!vaultAvailable()) {
     throw new Error('El almacén de credenciales no está configurado (falta MIKAMPUS_CRED_KEY)');
   }
@@ -113,6 +150,10 @@ function liveRow(userId) {
 }
 
 export function getCredential(userId) {
+  if (RUNTIME === 'desktop') {
+    const record = desktopRecord(userId);
+    return record ? { username: record.username, password: record.password } : null;
+  }
   const row = liveRow(userId);
   if (!row) return null;
   return {
@@ -128,18 +169,36 @@ export function getCredential(userId) {
 // Lo que Ajustes puede mostrar (§8): que hay una credencial, por qué y hasta
 // cuándo. Nunca la contraseña.
 export function credentialInfo(userId) {
+  if (RUNTIME === 'desktop') {
+    const record = desktopRecord(userId);
+    return record
+      ? { username: record.username, reason: record.reason, expiresAt: record.expiresAt, createdAt: record.createdAt, store: 'system' }
+      : null;
+  }
   const row = liveRow(userId);
   if (!row) return null;
   return { username: row.username, reason: row.reason, expiresAt: row.expires_at, createdAt: row.created_at };
 }
 
 export function deleteCredential(userId) {
+  if (RUNTIME === 'desktop') {
+    try {
+      desktopEntry(userId).deletePassword();
+    } catch {
+      // El secreto ya puede no existir; el estado deseado sigue siendo vacío.
+    }
+    return;
+  }
   if (!vaultAvailable()) return;
   openVault().prepare('DELETE FROM credentials WHERE user_id = ?').run(userId);
 }
 
 // Se corre al arrancar y una vez al día: el almacén tiende a vacío solo.
 export function purgeExpiredCredentials() {
+  if (RUNTIME === 'desktop') {
+    const record = desktopRecord(1);
+    return record ? 0 : 1;
+  }
   if (!vaultAvailable()) return 0;
   return openVault()
     .prepare('DELETE FROM credentials WHERE expires_at <= ?')
