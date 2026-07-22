@@ -29,6 +29,7 @@ export function Onboarding() {
   });
 
   const data = state.data;
+  const actionError = chooseMode.error ?? install.error;
 
   if (!data) {
     return <main className="text-muted flex min-h-full items-center justify-center text-sm">Revisando esta instalación…</main>;
@@ -41,6 +42,7 @@ export function Onboarding() {
         Tus datos, tu cuenta y tu hardware. mikampus no está afiliada ni respaldada por PUCMM: la vas a usar con tu
         propia cuenta y bajo tu responsabilidad.
       </p>
+      {actionError && <p role="alert" className="text-closed mt-4 text-sm">No se pudo continuar: {actionError.message}</p>}
 
       <Step index={1} title="Elegí cómo va a correr" done={Boolean(data.mode)} active={data.step === 'mode'}>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -49,6 +51,7 @@ export function Onboarding() {
               key={mode.id}
               type="button"
               onClick={() => chooseMode.mutate(mode.id as 'desktop' | 'home-server')}
+              disabled={chooseMode.isPending}
               className={`rounded-[var(--radius)] border p-4 text-left transition-colors ${
                 data.mode === mode.id ? 'border-accent bg-surface-2' : 'border-line hover:bg-surface-2'
               }`}
@@ -85,12 +88,18 @@ export function Onboarding() {
       </Step>
 
       <Step index={3} title="Browser administrado" done={data.browser.installed} active={data.step === 'browser'}>
-        <p className="text-muted mt-2 text-xs leading-5">
-          mikampus usa un Chromium propio para hablar con el portal. Se descarga una sola vez a{' '}
-          <span className="font-mono break-all">{data.browser.root}</span> y no se instala en tu sistema.
-        </p>
+        {data.browser.source === 'system' ? (
+          <p className="text-muted mt-2 text-xs leading-5">
+            Se va a reutilizar el navegador compatible ya instalado en este equipo. mikampus lo controla en segundo plano y no instala otro navegador.
+          </p>
+        ) : (
+          <p className="text-muted mt-2 text-xs leading-5">
+            Si este equipo no tiene Chrome o Chromium, mikampus descarga un Chromium aislado a{' '}
+            <span className="font-mono break-all">{data.browser.root}</span>; no se instala en tu sistema.
+          </p>
+        )}
         {data.browser.installed ? (
-          <p className="text-open mt-3 text-sm">Listo para usar.</p>
+          <p className="text-open mt-3 text-sm">{data.browser.source === 'system' ? 'Navegador compatible encontrado.' : 'Browser administrado listo para usar.'}</p>
         ) : (
           <BrowserInstall state={data} onStart={() => install.mutate()} pending={install.isPending} />
         )}

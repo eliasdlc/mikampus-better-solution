@@ -416,6 +416,7 @@ const onboardingSchema = z.object({
   browser: z.object({
     installed: z.boolean(),
     root: z.string(),
+    source: z.enum(['system', 'managed']).nullable(),
     install: z.object({
       status: z.enum(['idle', 'running', 'done', 'error']),
       percent: z.number(),

@@ -81,11 +81,11 @@ async function doctor() {
     ['runtime privado', (() => { try { fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 }); return true; } catch { return false; } })()],
     ['base de datos configurable', Boolean(DB_PATH)],
     [`esquema ${SCHEMA_VERSION} aplicado`, true],
-    ['browser administrado instalado', browser.installed],
+    ['browser compatible', browser.installed ? (browser.source === 'system' ? 'Chrome/Chromium del sistema' : 'administrado por mikampus') : false],
     ['hay al menos una copia verificable', backup.copies.length > 0],
   ];
   for (const [name, ok] of checks) console.log(`${ok ? '✓' : '✗'} ${name}`);
-  if (!browser.installed) console.log('  → corré `mikampus install-browser` (o completá el onboarding en la UI)');
+  if (!browser.installed) console.log('  → instalá Chrome/Chromium o corré `mikampus install-browser` (también desde el onboarding)');
   if (backup.copies.length === 0) console.log('  → corré `mikampus backup` para crear la primera copia');
   if (checks.some(([, ok]) => !ok)) process.exitCode = 1;
 }

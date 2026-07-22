@@ -13,7 +13,16 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:4173',
+      '/api': {
+        target: 'http://localhost:4173',
+        changeOrigin: true,
+        configure: (proxy) => {
+          // El guard local compara Origin contra el agente. En desarrollo la
+          // SPA vive en :5173, por lo que el proxy debe presentar el origen del
+          // agente y no hacer que cada botón de onboarding falle con un 403.
+          proxy.on('proxyReq', (proxyReq) => proxyReq.setHeader('origin', 'http://localhost:4173'));
+        },
+      },
     },
   },
 });

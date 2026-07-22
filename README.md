@@ -39,7 +39,8 @@ SQLite y se sirven desde disco; solo lo volátil (cupos, carrito) va en vivo.
 
 ```bash
 npm install
-npm run install-browsers   # descarga Chromium para Playwright
+# Solo si no tenés Chrome/Chromium compatible:
+npm run install-browsers
 cp .env.example .env
 npm run build              # compila la SPA (web/ → public/dist)
 npm start                  # backend local de desarrollo en http://localhost:4173
@@ -56,9 +57,10 @@ El release candidate soportado hoy es **Linux x64 (Ubuntu 24.04/Debian 12)**.
 El tarball standalone trae su propio runtime Node, core y launcher: verificá el
 SHA-256 publicado, extraelo y ejecutá `install.sh`. Instala el servicio de
 usuario y el acceso `mikampus`; `uninstall.sh` retira ambos y pregunta si querés
-preservar los datos. El payload no trae Chromium: después, ejecutá
-`mikampus install-browser` para descargarlo a app-data con el progreso de
-Playwright.
+preservar los datos. Si ya tenés Chrome o Chromium, mikampus lo reutiliza en
+segundo plano y no instala otro navegador. Si no hay uno compatible, el
+onboarding ofrece descargar Chromium aislado a app-data; también podés hacerlo
+con `mikampus install-browser`.
 
 Windows, macOS y ARM **no están soportados**: necesitan smoke nativo; macOS y
 Windows además requieren resolver firma/notarización. El binario Linux aún no

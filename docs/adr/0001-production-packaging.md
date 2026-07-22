@@ -49,7 +49,9 @@ de Home Server. DB, vault, backups, lock y browsers quedan debajo de ella.
 
 - SEA y Bun se mantienen fuera del release inicial. Se pueden reconsiderar con
   un artifact smoke equivalente en cada target.
-- Chromium se descarga en primer uso a `app-data/browsers`, nunca se bundlea.
+- Antes de descargar nada, mikampus reutiliza Chrome/Chromium compatible ya
+  instalado en el equipo. Si no existe, Chromium se descarga a
+  `app-data/browsers`, nunca se bundlea ni se instala en el sistema.
   `mikampus install-browser` muestra la salida de Playwright, propaga
   cancelación y reintenta una vez los errores transitorios. Proxy, CA custom y
   sus variables estándar de Node/Playwright se transmiten al proceso hijo.

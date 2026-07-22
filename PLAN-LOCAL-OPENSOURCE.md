@@ -220,7 +220,7 @@ Confirmadas por el usuario. Cambiarlas requiere una decisión explícita nueva.
 |---|----------|---------|-------|
 | D1 | **NO Electron** | Se descartó por pesado. Un launcher/control CLI habla con un agente liviano y abre la UI en el navegador; el agente no depende de que la pestaña siga abierta. | 2026-07-21 |
 | D2 | **Distribución: ambas formas** | (a) artefacto/installer standalone por OS para estudiantes; (b) npm para devs con Node ≥24. Packager, tamaño y formatos exactos se cierran con evidencia en el spike. | 2026-07-21 |
-| D3 | **Browser administrado en primer arranque** | No se bundlea Chromium por defecto. Se prueba headless shell, browser compatible ya instalado y descarga Playwright; tamaño/estrategia final salen del spike. | 2026-07-21 |
+| D3 | **Browser existente primero; descarga como respaldo** | No se bundlea Chromium por defecto ni se obliga a instalar otro navegador: se reutiliza Chrome/Chromium compatible ya instalado. Solo si no existe uno se ofrece una descarga aislada administrada por Playwright. | 2026-07-22 |
 | D4 | **Landing en Vercel** | Sitio estático nuevo (`landing/`) que consume un manifest generado por release, sugiere OS y siempre muestra todos los artefactos/checksums + npm para devs. | 2026-07-21 |
 | D5 | **Licencia MIT** | Incluye la cláusula estándar de no-garantía, sin presentarla como garantía de legalidad o protección absoluta. | 2026-07-21 |
 | D6 | **Sin servicio hosted operado por el proyecto** | Se retira DigitalOcean/Caddy/Litestream y todo modo multiusuario. Sí se permite un `deploy/home-server/` single-user para hardware controlado por el estudiante. | 2026-07-21 |
@@ -445,8 +445,9 @@ reconcilia; Home Server sobrevive reboot y sigue siendo single-user.
    persistente configurado.
 5. El launcher debe fijar paths/secrets antes de importar módulos que abren SQLite; usar
    import dinámico o proceso hijo para evitar env configurado demasiado tarde.
-6. Chromium first-run: probar headless-only shell, browser instalado compatible y browser
-   administrado por Playwright; medir tamaño y fiabilidad antes de cerrar D3.
+6. Chromium first-run: reutilizar primero el browser compatible instalado; solo ofrecer el
+   browser administrado por Playwright como respaldo, sin instalarlo en el sistema. Medir
+   tamaño y fiabilidad antes de cerrar D3.
 7. Probar descarga con progreso, cancelación, retry, proxy, CA custom, poco disco,
    interrupción y upgrade de Playwright/browser; garbage-collect solo versiones seguras.
 8. Cerrar P4 con matriz explícita de OS/CPU y mínimos soportados. Linux significa distros

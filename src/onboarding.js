@@ -152,7 +152,7 @@ export async function onboardingState() {
     mode,
     modes: Object.values(MODES),
     prerequisites: checks,
-    browser: { installed: browser.installed, root: browser.root, install: browserInstallState() },
+    browser: { installed: browser.installed, root: browser.root, source: browser.source, install: browserInstallState() },
     account,
   };
 }

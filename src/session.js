@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 import { loginContext } from './login.js';
 import { getCredential as vaultCredential, storeCredential, deleteCredential } from './credentialVault.js';
+import { browserLaunchOptions } from './browser.js';
 
 // Una sola sesión del portal para el único operador. La cola evita que dos
 // acciones de Playwright se solapen sobre el mismo context.
@@ -72,7 +73,7 @@ function credentialsFor(userId) {
 
 async function ensureBrowser() {
   if (browser?.isConnected()) return browser;
-  const launched = await chromium.launch({ headless: true });
+  const launched = await chromium.launch({ headless: true, ...(await browserLaunchOptions()) });
   browser = launched;
   // Un crash invalida el único context y la próxima operación relanza desde
   // cero con una credencial todavía vigente.

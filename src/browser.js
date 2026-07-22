@@ -11,6 +11,27 @@ export function browserInstallCommand() {
   return [process.execPath, [path.join(playwrightDir, 'cli.js'), 'install', 'chromium']];
 }
 
+// Playwright puede automatizar un Chrome/Chromium ya instalado. No obligamos a
+// nadie a bajar otro navegador: la descarga administrada queda como respaldo
+// cuando el equipo no tiene uno compatible. `CHROME_PATH` permite cubrir
+// instalaciones portables o ubicaciones no estándar sin adivinar rutas.
+export function systemBrowserExecutable() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    ...(process.platform === 'win32'
+      ? [
+          path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+          path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+          path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+          path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Chromium', 'Application', 'chrome.exe'),
+        ]
+      : process.platform === 'darwin'
+        ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium']
+        : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser']),
+  ].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
 // ¿Ya hay un browser usable? Playwright es el dueño de la respuesta: sabe qué
 // build necesita esta versión y dónde la deja. Preguntarle evita inventar una
 // heurística de carpetas que se desincroniza en cada upgrade.
@@ -18,11 +39,22 @@ export async function browserStatus() {
   const { browsers } = dataPaths();
   try {
     const { chromium } = await import('playwright');
-    const executable = chromium.executablePath();
-    return { installed: fs.existsSync(executable), executable, root: browsers };
+    const managedExecutable = chromium.executablePath();
+    const systemExecutable = systemBrowserExecutable();
+    // Preferimos el navegador que la persona ya tiene. Playwright conserva la
+    // misma API y sigue ejecutándolo en background; no abre ni modifica Chrome.
+    if (systemExecutable) return { installed: true, executable: systemExecutable, root: browsers, source: 'system' };
+    if (fs.existsSync(managedExecutable)) return { installed: true, executable: managedExecutable, root: browsers, source: 'managed' };
+    return { installed: false, executable: null, root: browsers, source: null };
   } catch (error) {
-    return { installed: false, executable: null, root: browsers, error: error.message };
+    return { installed: false, executable: null, root: browsers, source: null, error: error.message };
   }
+}
+
+export async function browserLaunchOptions() {
+  const status = await browserStatus();
+  if (!status.installed || !status.executable) throw new Error('No hay un browser compatible instalado');
+  return status.source === 'system' ? { executablePath: status.executable } : {};
 }
 
 // Playwright reporta el avance como "|████ | 45% of 160.5 MiB". La UI no

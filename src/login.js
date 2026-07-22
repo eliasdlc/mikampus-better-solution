@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { chromium } from 'playwright';
 import { captureFailure } from './diagnostics.js';
+import { browserLaunchOptions } from './browser.js';
 
 const SIGNON_URL = 'https://micampus.pucmm.edu.do/psp/cs92pro/?cmd=login&languageCd=ENG';
 
@@ -40,7 +41,7 @@ export async function loginContext(browser, { username, password }) {
 // Flujo para recon local: la credencial se entrega explícitamente desde un
 // caller interactivo; no se lee de .env ni de un archivo en claro.
 export async function loginToPeopleSoft({ headless = true, username, password } = {}) {
-  const browser = await chromium.launch({ headless });
+  const browser = await chromium.launch({ headless, ...(await browserLaunchOptions()) });
   try {
     const { context, page } = await loginContext(browser, { username, password });
     return { browser, context, page };
