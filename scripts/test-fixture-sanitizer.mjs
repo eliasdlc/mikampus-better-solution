@@ -7,6 +7,7 @@ const fixture = `
   <input name="unrelated" value="keep-me">
   <a href="/portal?EMPLID=12345678">Student</a>
   <script>var state = {EMPLID:"12345678", ENRL_REQUEST_ID:"9876543210"}</script>
+  <div id="DERIVED_SSTSNAV_PERSON_NAME">ELÍAS DE PRUEBA</div>
 `;
 
 const result = scrub(fixture);
@@ -16,5 +17,6 @@ assert.ok(!result.includes('session-after-id'));
 assert.ok(result.includes('value="keep-me"'), 'preserves unrelated inputs');
 assert.ok(!result.includes('12345678'), 'scrubs student identifiers');
 assert.ok(!result.includes('9876543210'), 'scrubs enrollment request identifiers');
+assert.ok(!result.includes('ELÍAS DE PRUEBA'), 'scrubs student names');
 
 console.log('✓ sanitizer de fixtures (atributos en cualquier orden y PII)');

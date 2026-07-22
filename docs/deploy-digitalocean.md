@@ -1,4 +1,9 @@
-# Deploy hosted en DigitalOcean
+# Histórico — deploy hosted en DigitalOcean (no ejecutar)
+
+> Este documento se conserva solo como registro del prototipo hosted. Contradice
+> el contrato local actual y no debe usarse para desplegar, almacenar
+> credenciales ajenas ni abrir DNS público. Su configuración será retirada de
+> `HEAD` en la Fase 1.
 
 La app usa el login normal de cada estudiante de PUCMM. Caddy termina HTTPS;
 la autenticación y el aislamiento por usuario viven en mikampus, no en una

@@ -1,6 +1,18 @@
 # mikampus
 
-Plataforma local que reemplaza el día a día de micampus.pucmm.edu.do: buscar materias, armar horario, planificar ciclos, inscribirse y ver notas/avance, desde una interfaz propia rápida. PeopleSoft queda como backend invisible al que se le hace scraping vía Playwright. El plan completo está en [`PLAN.md`](./PLAN.md).
+> Estado: migración en curso a una herramienta open source, local y single-user.
+> La rama actual conserva código hosted heredado que **no debe desplegarse ni
+> usarse**; su retiro es la Fase 1 del plan de migración.
+
+mikampus busca convertirse en una herramienta que cada estudiante ejecuta en
+su propio hardware con su propia cuenta. No está afiliada, autorizada ni
+respaldada por PUCMM. Usarla puede violar términos institucionales y tener
+consecuencias académicas; la licencia MIT no garantiza legalidad ni seguridad.
+No uses ni compartas credenciales de otra persona.
+
+El plan vigente está en [`PLAN-LOCAL-OPENSOURCE.md`](./PLAN-LOCAL-OPENSOURCE.md).
+La política de privacidad, egress, amenazas y fixtures está en
+[`docs/local-security.md`](./docs/local-security.md).
 
 Hoy funciona:
 
@@ -10,34 +22,20 @@ Hoy funciona:
 
 Todo corre sobre una única sesión de Playwright (headless) que el backend mantiene y re-loguea sola si expira. Los datos estables (catálogo) viven en SQLite y se sirven desde disco; solo lo volátil (cupos, carrito) va en vivo.
 
-## Setup
+## Desarrollo (no es instalación de usuario final)
 
 ```bash
 npm install
 npm run install-browsers   # descarga Chromium para Playwright
 cp .env.example .env       # completa PUCMM_USERNAME y PUCMM_PASSWORD
 npm run build              # compila la SPA (web/ → public/dist)
-npm start                  # levanta mikampus en http://localhost:4173
+npm start                  # backend local de desarrollo en http://localhost:4173
 ```
 
-## Piloto hosted
-
-El despliegue hosted usa Docker Compose: Caddy termina HTTPS y mikampus maneja
-el login de cada estudiante; la app y SQLite quedan detrás de él en un volumen
-Docker. Copiá `.env.hosted.example` a `.env.hosted`, configurá el dominio,
-allowlist, credenciales operativas y luego corré `docker compose up -d --build`.
-Litestream se activa solo después de crear un bucket privado y sus credenciales;
-la configuración cifra la réplica y retiene 72 horas. El procedimiento operativo
-vive en `docs/deploy-digitalocean.md`; el gate y ensayo previos a invitar
-compañeros están en [`docs/launch.md`](./docs/launch.md).
-
-Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload: `npm run dev` (Vite en :5173 con proxy de `/api` al backend en :4173, que debe estar corriendo con `npm start`).
-
-### Desde el teléfono
-
-`HOST=0.0.0.0 npm start` lo abre a tu red local e imprime la URL a tipear en el teléfono (`http://192.168.x.x:4173`). Tus credenciales no salen de tu máquina — el `.env` y la sesión de Playwright siguen acá— **pero la app queda al alcance de todo el WiFi y no tiene login**: quien la abra usa tu sesión del portal y puede inscribir o dar de baja en tu nombre. En tu casa es razonable; en el WiFi de la universidad, no. Por eso el default es solo `localhost`.
-
-En localhost, mikampus se instala como PWA (manifest + service worker: abre standalone y el shell sobrevive sin red). Por LAN plana no: `http://192.168.x.x` no es contexto seguro y el navegador no registra service workers ahí, así que desde el teléfono es una web normal — funciona igual, pero sin instalar. El service worker cachea el shell y **nunca** `/api`: los datos vienen con su `syncedAt` y un cache invisible sin fecha te mostraría el horario de ayer diciendo "actualizado hace instantes".
+Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload:
+`npm run dev` (Vite en :5173 con proxy de `/api` al backend en :4173, que debe
+estar corriendo con `npm start`). No expongas este servidor a una LAN o Internet:
+la frontera de autenticación local segura todavía no está implementada.
 
 Para que la búsqueda tenga contra qué buscar, llená el catálogo desde el portal: `node scripts/sync-catalog.mjs ICC` (ver [De dónde sale el nombre de cada materia](#de-dónde-sale-el-nombre-de-cada-materia)). Tarda unos minutos por subject y solo hace falta una vez por término. `scripts/seed-catalog.mjs` siembra 4 materias **inventadas** y es solo para probar la UI sin portal — no lo corras contra la base real.
 
@@ -51,16 +49,13 @@ Para que la búsqueda tenga contra qué buscar, llená el catálogo desde el por
 
 ```bash
 npm test                                         # parsers + DB + grid + ICS, sin tocar el portal
+npm run typecheck                                 # contratos TypeScript de frontend/shared
+npm run lint                                      # errores estáticos de JavaScript
+npm run audit:public                              # secretos/PII conocidos en HEAD
 npm run build && node scripts/check-budget.mjs   # bundle inicial < 250KB gz
 node scripts/bench-search.mjs                    # keystroke → resultados < 16ms
 npm run smoke                                    # screenshots a 390/768/1440px + falla si hay desborde horizontal
 ```
-
-La validación que precede al deploy hosted está documentada en
-[`docs/phase-0-validation.md`](./docs/phase-0-validation.md). El comando
-`npm run validate:hosted-portal` hace un dry-run; la prueba real de logins
-desde el Droplet de DigitalOcean requiere la confirmación explícita indicada en
-ese documento.
 
 `npm test` corre los parsers contra HTML real volcado del portal y guardado en
 `fixtures/` (sin tokens ni datos personales — ver `scripts/make-fixture.mjs`).

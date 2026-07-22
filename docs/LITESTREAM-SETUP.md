@@ -1,4 +1,7 @@
-# Completar Litestream en Fase 1
+# Histórico — Litestream hosted (no ejecutar)
+
+> Configuración heredada del prototipo multiusuario. No crear bucket ni copiar
+> secretos siguiendo este documento; la Fase 1 retira este camino de `HEAD`.
 
 ## Contexto
 

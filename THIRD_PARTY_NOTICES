@@ -1,0 +1,32 @@
+# Third-party notices
+
+This repository distributes source code and, in future releases, may distribute
+bundled dependencies. Each dependency remains subject to its own license and
+copyright notice. The authoritative dependency graph is `package-lock.json`.
+Before producing an artifact, run `npm ci` and preserve the license texts
+required by every dependency included in that artifact.
+
+Current direct runtime dependencies:
+
+- @fontsource-variable/bricolage-grotesque — SIL Open Font License 1.1
+- @fontsource/inter — SIL Open Font License 1.1
+- @fontsource/jetbrains-mono — SIL Open Font License 1.1
+- @tanstack/react-query — MIT
+- cmdk — MIT
+- dotenv — BSD-2-Clause
+- express — MIT
+- lucide-react — ISC
+- minisearch — MIT
+- playwright — Apache-2.0
+- react and react-dom — MIT
+- react-router-dom — MIT
+- web-push — MIT
+- zod — MIT
+
+Chromium and Playwright browser binaries are not bundled by this source
+repository. Their download, licensing, and notices must be reviewed again in
+the packaging spike before any artifact is published.
+
+The files under `fixtures/` are test inputs, not product assets. Their use is
+governed by `docs/local-security.md`; new fixtures must be minimal and
+synthetic unless retaining a sanitized fragment is necessary to test a parser.

@@ -16,13 +16,19 @@
 - **Fase en curso:** 0 — contrato local, privacidad y desbloqueo open source.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
-- **Avance de Fase 0:** el sanitizer de fixtures ya no depende del orden de atributos HTML;
-  `fixtures/recon-my-classes-view.html` se publicó con `ICSID` e `ICStateNum` sanitizados y
-  una prueba lo cubre. También se corrigió el typecheck en `web/src/lib/push.ts`.
-- **Pendiente de Fase 0:** LICENSE/notices/disclaimers, política de seguridad, auditoría
-  integral de PII e historia, reducción y política de fixtures, contrato de egress, scripts
-  de lint/typecheck y threat model. No existe todavía `bin/` (launcher), agente de fondo,
-  `deploy/home-server/`, `landing/`, gate `engines` ni compilación de producción TS→JS.
+- **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
+  contrato de egress, threat model y política de fixtures ya están versionados. Existen
+  gates `typecheck`, `lint`, `audit:public` y `audit:history`; el sanitizer cubre atributos
+  en cualquier orden, identificadores y nombres. La documentación hosted quedó marcada como
+  histórica/no ejecutable.
+- **Bloqueo de Fase 0:** `npm run audit:history` detectó PII no anonimizada en dos fixtures
+  introducidos por el commit histórico `489a2a4`. No se reescribe historia sin autorización
+  explícita: hay que decidir rotación si aplica y una operación separada de limpieza de
+  historia. Por tanto la fase sigue en curso y ningún package/release puede publicarse.
+- **Pendiente de Fase 0:** reducir fixtures completos a DOM mínimo/sintético y revisar sus
+  derechos de redistribución; completar la decisión de limpieza histórica. No existe todavía
+  `bin/` (launcher), agente de fondo, `deploy/home-server/`, `landing/`, gate `engines` ni
+  compilación de producción TS→JS.
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
