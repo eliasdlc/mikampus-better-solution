@@ -1,5 +1,5 @@
 import { enrollFromCart, finishPreparedEnrollment, prepareEnrollment } from './peoplesoft/enroll.js';
-import { hasLiveCredentials, withPage } from './session.js';
+import { hasLiveCredentials, hasUnattendedCredential, withPage, resetSession } from './session.js';
 import { LOCAL_USER_ID } from './users.js';
 import { notifyFromEvent } from './notify.js';
 import { db, logAction } from './db.js';
@@ -7,10 +7,9 @@ import { syncCatalogCourse } from './peoplesoft/catalog.js';
 import { readTerms } from './terms.js';
 import { reportOperatorFailure, reportOperatorSuccess } from './operatorNotify.js';
 
-// El scheduler por usuario (Fase 2): cada estudiante tiene SU disparo a hora
-// fija y SU watcher, persistidos en DB (tablas schedules/watchers) — si el
-// server se reinicia a las 5:59am, el disparo de las 6:00 sobrevive. En
-// memoria viven solo los setTimeout, que restoreTimers() rearma al arrancar.
+// El scheduler del único operador persiste el disparo y el watcher para que
+// sobrevivan un reinicio. user_id sigue en las tablas por compatibilidad con
+// datos locales antiguos, pero el runtime solo autentica la identidad local.
 
 const listeners = new Set();
 export function onEvent(fn) {
@@ -38,8 +37,8 @@ function emit(event) {
 // operaciones en vivo (leer el horario, refrescar cupos) también publican acá.
 export const emitEvent = emit;
 
-// userId → { schedule: { atISO, timer } | null }. Los watchers no tienen timer
-// propio: desde L4 hay un solo loop de la cuenta de servicio para todos.
+// userId → { schedule: { atISO, timer } | null }. Solo existe la entrada del
+// operador; la forma mantiene migraciones locales compatibles.
 const perUser = new Map();
 
 function stateFor(userId) {
@@ -166,6 +165,12 @@ export function prewarmAtFor(userId, atISO, now = Date.now()) {
 
 async function prewarmSchedule(userId, schedule) {
   if (schedule.prewarmed || Date.now() >= new Date(schedule.atISO).getTime()) return;
+  if (!hasUnattendedCredential(userId)) {
+    cancelSchedule(userId);
+    await resetSession(userId);
+    emit({ type: 'notice', userId, level: 'error', title: 'Disparo detenido: venció la autorización', body: 'Iniciá sesión y autorizalo de nuevo antes de programar una inscripción.', key: 'schedule-credentials-required' });
+    return;
+  }
   emit({ type: 'log', userId, message: 'Preparando sesión y asistente de inscripción…' });
   try {
     const result = await withPage(userId, (page) => prepareEnrollment(page), { retry: true });
@@ -417,18 +422,32 @@ async function handleCourseScan(target) {
   const before = seatState(target.courseCode, target.term);
   const hadBaseline = [...before.values()].some((section) => section.status != null);
   const owners = watchersForCourse(target.courseCode);
+  for (const owner of owners) {
+    if (!hasUnattendedCredential(owner.user_id)) {
+      stopWatcher(owner.user_id);
+      emit({ type: 'notice', userId: owner.user_id, level: 'error', title: 'Watcher detenido: venció la autorización', body: 'Iniciá sesión y autorizalo de nuevo para volver a consultar el portal.', key: 'watcher-credentials-required' });
+    }
+  }
+  const credentialedOwners = watchersForCourse(target.courseCode);
+  if (!credentialedOwners.length) return;
 
   try {
     await scanWatchedCourse(target);
     reportOperatorSuccess(`watcher:${target.courseCode}`);
   } catch (err) {
-    for (const owner of owners) {
+    for (const owner of credentialedOwners) {
+      if (err?.needsCredentials || err?.credentialRejected) {
+        // Un rechazo de password, MFA o CAPTCHA no se reintenta en bucle. Se
+        // corta el watcher y se elimina la excepción persistida; la persona
+        // deberá iniciar sesión y consentir de nuevo desde la UI.
+        stopWatcher(owner.user_id);
+      }
       emit({
         type: 'notice',
         userId: owner.user_id,
         level: 'error',
-        title: `El watcher no pudo consultar ${target.courseCode}`,
-        body: err.message,
+        title: err?.needsCredentials ? 'Watcher detenido: se requiere iniciar sesión' : `El watcher no pudo consultar ${target.courseCode}`,
+        body: err?.needsCredentials ? 'El portal rechazó, pidió un paso adicional o venció la credencial. No se harán más intentos automáticos.' : err.message,
         key: `watcher-course-error:${target.courseCode}`,
       });
     }

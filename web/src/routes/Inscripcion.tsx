@@ -92,14 +92,15 @@ export function Inscripcion() {
   const watch = useMutation({
     mutationFn: (input: { enabled: boolean; autoEnroll?: boolean }) => {
       const expiresAt = windows.data?.windows[0]?.endsAt ?? 'el cierre de inscripción';
-      if (input.autoEnroll && !window.confirm(`Auto-inscripción puede modificar tu matrícula sin que estés frente a la app. Se guardará tu credencial cifrada hasta ${expiresAt}. ¿Aceptás?`)) {
+      const purpose = input.autoEnroll ? 'Auto-inscripción puede modificar tu matrícula' : 'El watcher consulta el portal aunque la pestaña esté cerrada';
+      if (!window.confirm(`${purpose}. Se guardará tu credencial cifrada hasta ${expiresAt}. ¿Aceptás?`)) {
         return Promise.reject(new Error('No autorizaste la auto-inscripción.'));
       }
       return setWatcher({
         ...input,
         term: nextTerm,
         appointmentAt: scheduledAt ?? null,
-        consent: input.autoEnroll === true,
+        consent: true,
       });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),

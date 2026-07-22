@@ -17,9 +17,7 @@ async function fillVerified(page, selector, value, attempts = 3) {
   throw new Error(`No se pudo llenar ${selector} de forma estable en el signon`);
 }
 
-// Loguea unas credenciales concretas en un context NUEVO del browser dado. Es
-// la pieza que usa el pool multi-usuario (session.js): un Chromium compartido,
-// un context por estudiante — cookies y sesión del portal aisladas entre sí.
+// Loguea las credenciales del único operador en un context NUEVO del browser.
 // Si el login falla, el context se cierra acá mismo: no quedan contexts
 // huérfanos a medio loguear.
 export async function loginContext(browser, { username, password }) {

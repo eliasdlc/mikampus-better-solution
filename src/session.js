@@ -1,38 +1,35 @@
 import { chromium } from 'playwright';
 import { loginContext } from './login.js';
-import { getCredential as vaultCredential, storeCredential } from './credentialVault.js';
+import { getCredential as vaultCredential, storeCredential, deleteCredential } from './credentialVault.js';
 
 // Una sola sesión del portal para el único operador. La cola evita que dos
 // acciones de Playwright se solapen sobre el mismo context.
 
-// ~80–150MB por context activo: se cierran solos tras un rato ociosos y hay un
-// techo global. El techo es blando — antes de abrir un context nuevo se cierra
-// el ocioso más viejo, pero nunca uno a mitad de una operación.
+// El único context se cierra tras un rato ocioso; nunca se cierra a mitad de
+// una operación encolada.
 const IDLE_CLOSE_MS = Number(process.env.CONTEXT_IDLE_MS ?? 15 * 60_000);
-const MAX_CONTEXTS = Number(process.env.MAX_BROWSER_CONTEXTS ?? 12);
-
 let browser = null;
-const pool = new Map(); // userId → { context, page, queue, lastUsedAt, running, idleTimer }
+let operator = { userId: null, context: null, page: null, queue: Promise.resolve(), lastUsedAt: 0, running: false, idleTimer: null };
 
 // ── Credenciales en RAM (§5 regla 1) ───────────────────────────────────────
-// La contraseña del uso interactivo vive acá, atada al ciclo de vida del pool:
+// La contraseña del uso interactivo vive acá, atada al ciclo de vida de la sesión:
 // entra al loguearse en mikampus, se descarta al cerrar sesión o al reiniciar
 // el proceso. Nunca toca disco — lo persistido es solo el almacén cifrado.
-const ramCredentials = new Map();
+let ramCredential = null;
 
 export function setRamCredential(userId, { username, password }) {
-  ramCredentials.set(userId, { username, password });
+  ramCredential = { userId, username, password };
 }
 
 export function clearRamCredential(userId) {
-  ramCredentials.delete(userId);
+  if (ramCredential?.userId === userId) ramCredential = null;
 }
 
 // La contraseña nunca sale de este módulo. Cuando el usuario acepta una
 // feature desatendida, copiamos la credencial que ya vive en RAM al vault
 // cifrado; el endpoint no recibe ni reenvía una contraseña por segunda vez.
 export function persistRamCredential(userId, options) {
-  const credentials = ramCredentials.get(userId);
+  const credentials = ramCredential?.userId === userId ? ramCredential : null;
   if (!credentials) {
     const err = new Error('Volvé a iniciar sesión para autorizar una función desatendida');
     err.needsCredentials = true;
@@ -50,11 +47,19 @@ export function hasLiveCredentials(userId) {
   }
 }
 
+// Las tareas que siguen sin la persona presente no pueden apoyarse solo en la
+// contraseña RAM de una sesión interactiva: requieren que la autorización
+// persistida siga vigente. Así el vencimiento corta watcher/schedules aunque
+// el browser todavía conserve un context autenticado.
+export function hasUnattendedCredential(userId) {
+  return Boolean(vaultCredential(userId));
+}
+
 // ¿Con qué re-loguear? RAM → almacén cifrado. Sin nada de eso,
 // el error lleva needsCredentials: la UI lo traduce al prompt de re-tipeo
 // (la costura sesión/credencial de §5.1), no a un error genérico.
 function credentialsFor(userId) {
-  const ram = ramCredentials.get(userId);
+  const ram = ramCredential?.userId === userId ? ramCredential : null;
   if (ram) return ram;
   const vaulted = vaultCredential(userId);
   if (vaulted) return vaulted;
@@ -63,39 +68,32 @@ function credentialsFor(userId) {
   throw err;
 }
 
-// ── El pool ────────────────────────────────────────────────────────────────
+// ── La sesión única ────────────────────────────────────────────────────────
 
 async function ensureBrowser() {
   if (browser?.isConnected()) return browser;
   const launched = await chromium.launch({ headless: true });
   browser = launched;
-  // Un crash del Chromium compartido tumba TODOS los contexts a la vez (§1):
-  // se invalida el pool entero y el próximo withPage relanza desde cero.
+  // Un crash invalida el único context y la próxima operación relanza desde
+  // cero con una credencial todavía vigente.
   launched.on('disconnected', () => {
     if (browser === launched) browser = null;
-    for (const entry of pool.values()) {
-      entry.context = null;
-      entry.page = null;
-    }
+    operator.context = null;
+    operator.page = null;
   });
   return browser;
 }
 
 function entryFor(userId) {
   if (!Number.isInteger(userId)) throw new Error('withPage necesita un userId');
-  let entry = pool.get(userId);
-  if (!entry) {
-    entry = { userId, context: null, page: null, queue: Promise.resolve(), lastUsedAt: 0, running: false, idleTimer: null };
-    pool.set(userId, entry);
+  if (operator.userId != null && operator.userId !== userId) {
+    throw new Error('Esta instalación solo admite la identidad local del operador');
   }
-  return entry;
+  operator.userId = userId;
+  return operator;
 }
 
-function liveEntries() {
-  return [...pool.values()].filter((e) => e.page && !e.page.isClosed());
-}
-
-async function teardownEntry(entry) {
+async function teardownEntry(entry = operator) {
   clearTimeout(entry.idleTimer);
   try {
     await entry.context?.close();
@@ -106,22 +104,22 @@ async function teardownEntry(entry) {
   entry.page = null;
 }
 
-// Hace lugar antes de abrir un context nuevo: cierra el ocioso más viejo.
-async function evictIfNeeded() {
-  const live = liveEntries();
-  if (live.length < MAX_CONTEXTS) return;
-  const idle = live.filter((e) => !e.running).sort((a, b) => a.lastUsedAt - b.lastUsedAt)[0];
-  if (idle) await teardownEntry(idle);
-}
-
 async function ensureSession(entry) {
   if (entry.page && !entry.page.isClosed() && !entry.page.url().includes('cmd=login')) return;
   await teardownEntry(entry);
-  await evictIfNeeded();
   const creds = credentialsFor(entry.userId);
-  const { context, page } = await loginContext(await ensureBrowser(), creds);
-  entry.context = context;
-  entry.page = page;
+  try {
+    const { context, page } = await loginContext(await ensureBrowser(), creds);
+    entry.context = context;
+    entry.page = page;
+  } catch (err) {
+    if (err?.credentialRejected) {
+      clearRamCredential(entry.userId);
+      deleteCredential(entry.userId);
+      err.needsCredentials = true;
+    }
+    throw err;
+  }
 }
 
 function scheduleIdleClose(entry) {
@@ -229,9 +227,9 @@ export function resetSession(userId) {
 }
 
 export async function shutdown() {
-  for (const entry of pool.values()) clearTimeout(entry.idleTimer);
-  pool.clear();
-  ramCredentials.clear();
+  clearTimeout(operator.idleTimer);
+  operator = { userId: null, context: null, page: null, queue: Promise.resolve(), lastUsedAt: 0, running: false, idleTimer: null };
+  ramCredential = null;
   try {
     await browser?.close();
   } catch {

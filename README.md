@@ -1,8 +1,8 @@
 # mikampus
 
 > Estado: migración en curso a una herramienta open source, local y single-user.
-> La Fase 1 está retirando el prototipo hosted heredado. mikampus no ofrece ni
-> soporta despliegues multiusuario.
+> Fase 1 completada: mikampus no ofrece ni soporta despliegues hosted o
+> multiusuario.
 
 mikampus busca convertirse en una herramienta que cada estudiante ejecuta en
 su propio hardware con su propia cuenta. No está afiliada, autorizada ni
@@ -20,7 +20,11 @@ Hoy funciona:
 2. **Carrito e inscripción** — carrito en vivo, hora fija de pre-matrícula, watcher de cupos e inscripción manual.
 3. **Actividad en vivo** — cada operación Playwright reporta su progreso por SSE.
 
-Todo corre sobre una única sesión de Playwright (headless) que el backend mantiene y re-loguea sola si expira. Los datos estables (catálogo) viven en SQLite y se sirven desde disco; solo lo volátil (cupos, carrito) va en vivo.
+Todo corre sobre una única sesión de Playwright (headless) del operador. Si la
+sesión expira puede re-login solo mientras exista una autorización de
+credencial vigente; ante password rechazado, MFA o CAPTCHA se detiene y pide
+intervención, sin martillar el portal. Los datos estables (catálogo) viven en
+SQLite y se sirven desde disco; solo lo volátil (cupos, carrito) va en vivo.
 
 ## Desarrollo (no es instalación de usuario final)
 
@@ -73,7 +77,7 @@ node scripts/make-fixture.mjs screenshots/recon-schedule-list.html  # revisar y 
 ## Cómo funciona por dentro
 
 - `src/login.js` — login contra el signon real de PUCMM.
-- `src/session.js` — una sola sesión compartida, en fila (nunca dos acciones de Playwright en paralelo), con reintento de login si expira.
+- `src/session.js` — la única sesión del operador, en fila (nunca dos acciones de Playwright en paralelo), con re-login solo si la credencial autorizada sigue vigente.
 - `src/peoplesoft/cart.js` — lee el carrito y el estado (Open/Closed/Wait List) de cada materia.
 - `src/peoplesoft/enroll.js` — corre el asistente de inscripción (Step 1→2→3) sobre todo el carrito y reporta éxito/error por materia.
 - `src/peoplesoft/classSearch.js` — busca clases por término/carrera/código y las agrega al carrito, incluyendo los pasos intermedios que PeopleSoft pida (sección relacionada, preferencias de inscripción).
@@ -123,7 +127,7 @@ node scripts/sync-catalog.mjs ICC MAT       # títulos + secciones de un subject
 
 ## Riesgos a tener en cuenta
 
-- **Credenciales**: quedan solo en tu `.env` local (gitignored). Nunca las compartas ni las subas a un repo — así fue como le robaron los cupos a un estudiante de Stevens Institute en 2019 al compartir su script con las credenciales adentro.
+- **Credenciales**: se ingresan en la UI. La sesión interactiva queda en RAM; las funciones desatendidas requieren consentimiento y usan el almacén seguro del OS o el vault cifrado de Home Server. Nunca las compartas ni las subas a un repo.
 - **Política institucional**: varias universidades consideran estos bots una forma de saltarse el proceso de inscripción frente a otros estudiantes y han introducido límites de intentos de login o monitoreo tras detectarlos. Vale la pena revisar el reglamento de PUCMM antes de dejarlo corriendo en producción.
 - **No sumar carga en el pico**: el intervalo de polling del watcher no debe bajar de los ~30-45s durante la ventana de alta demanda.
 - **Selección de sección relacionada**: si una materia tiene varias secciones de práctico disponibles, `addClassToCart` elige la primera que encuentra — no hay todavía forma de elegir manualmente cuál.

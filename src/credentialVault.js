@@ -12,9 +12,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Server usa el vault cifrado separado, con su secreto fuera del volumen.
 //
 // Las tres decisiones que lo definen:
-//   1. Archivo APARTE de mikampus.db. Litestream replica la DB principal a un
-//      bucket; este archivo no se respalda a ningún lado — si se pierde, los
-//      usuarios re-arman sus disparos. Eso es una molestia, no una fuga.
+//   1. Archivo APARTE de mikampus.db. Los backups del usuario no deben copiar
+//      este archivo ni su secret; si se pierde, se reautoriza el trabajo
+//      desatendido. Eso es una molestia, no una fuga.
 //   2. AES-256-GCM con la clave SOLO en el .env del server (MIKAMPUS_CRED_KEY).
 //      Sin la clave, el archivo es ruido; sin el archivo, la clave no abre nada.
 //   3. Toda credencial entra con fecha de vencimiento (el cierre de la ventana

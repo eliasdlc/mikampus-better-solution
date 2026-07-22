@@ -42,8 +42,7 @@ const app = express();
 app.use(express.json());
 app.use(express.static(DIST_DIR));
 
-// No toca PeopleSoft ni devuelve datos personales: permite que Docker detecte
-// un proceso vivo antes de que Caddy le entregue tráfico.
+// No toca PeopleSoft ni devuelve datos personales: health local del agente.
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
@@ -68,6 +67,12 @@ function unattendedExpiry(userId, term) {
 function authorizeUnattendedCredential(userId, { consent, term, reason }) {
   if (consent !== true) throw new Error('Confirmá el consentimiento para guardar la credencial cifrada hasta el cierre de inscripción');
   persistRamCredential(userId, { expiresAt: unattendedExpiry(userId, term), reason });
+}
+
+function revokeUnattendedCredentialIfUnused(userId) {
+  const scheduled = db.prepare('SELECT 1 FROM schedules WHERE user_id = ?').get(userId);
+  const watching = db.prepare('SELECT 1 FROM watchers WHERE user_id = ?').get(userId);
+  if (!scheduled && !watching) deleteCredential(userId);
 }
 
 const REFRESH_POLICY = [
@@ -940,6 +945,7 @@ app.post('/api/schedule', (req, res) => {
 
 app.delete('/api/schedule', (req, res) => {
   scheduler.cancelSchedule(req.userId);
+  revokeUnattendedCredentialIfUnused(req.userId);
   res.json({ ok: true });
 });
 
@@ -947,13 +953,11 @@ app.post('/api/watch', (req, res) => {
   try {
     const { enabled, autoEnroll = false, appointmentAt = null, term, consent = false } = req.body ?? {};
     if (enabled) {
-      if (autoEnroll) {
-        authorizeUnattendedCredential(req.userId, {
-          consent,
-          term,
-          reason: 'watcher con auto-inscripción',
-        });
-      }
+      authorizeUnattendedCredential(req.userId, {
+        consent,
+        term,
+        reason: autoEnroll ? 'watcher con auto-inscripción' : 'watcher de cupos (solo notificar)',
+      });
       const parsedAppointment = appointmentAt ? new Date(appointmentAt) : null;
       if (appointmentAt && Number.isNaN(parsedAppointment.getTime())) throw new Error('La hora de inscripción no es válida');
       scheduler.startWatcher(req.userId, {
@@ -962,6 +966,7 @@ app.post('/api/watch', (req, res) => {
       });
     } else {
       scheduler.stopWatcher(req.userId);
+      revokeUnattendedCredentialIfUnused(req.userId);
     }
     res.json({ ok: true });
   } catch (err) {

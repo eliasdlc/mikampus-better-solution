@@ -13,24 +13,6 @@ export function getUser(id) {
     .get(id) ?? null;
 }
 
-export function getUserByUsername(portalUsername) {
-  return db
-    .prepare('SELECT id, portal_username AS portalUsername FROM users WHERE portal_username = ? COLLATE NOCASE')
-    .get(portalUsername) ?? null;
-}
-
-// El usuario de un username del portal, creándolo si es su primer login. El
-// usuario 1 sin username reclama el primero que llegue SOLO en modo local
-// (adoptLocalUsername); acá un username desconocido siempre es un usuario nuevo.
-export function ensureUser(portalUsername) {
-  const username = String(portalUsername ?? '').trim();
-  if (!username) throw new Error('ensureUser necesita el username del portal');
-  const existing = getUserByUsername(username);
-  if (existing) return existing;
-  const { lastInsertRowid } = db.prepare('INSERT INTO users (portal_username) VALUES (?)').run(username);
-  return getUser(Number(lastInsertRowid));
-}
-
 export function touchLastLogin(userId) {
   db.prepare(`UPDATE users SET last_login_at = datetime('now') WHERE id = ?`).run(userId);
 }
@@ -41,7 +23,5 @@ export function touchLastLogin(userId) {
 export function adoptLocalUsername(portalUsername) {
   const username = String(portalUsername ?? '').trim();
   if (!username) return;
-  const owner = getUserByUsername(username);
-  if (owner && owner.id !== LOCAL_USER_ID) return;
   db.prepare('UPDATE users SET portal_username = ? WHERE id = ?').run(username, LOCAL_USER_ID);
 }

@@ -679,7 +679,8 @@ export const appStateSchema = z.object({
 export type AppState = z.infer<typeof appStateSchema>;
 
 // La cuenta vigente, para la pantalla de Ajustes. La contraseña nunca sale del
-// backend: acá solo el usuario y de dónde salió (account.json o el .env).
+// backend: acá solo el usuario y el origen histórico del registro; el runtime
+// local ya no lee account.json ni credenciales desde .env.
 export const accountInfoSchema = z.object({
   username: z.string().nullable().default(null),
   source: z.enum(['account.json', '.env']),

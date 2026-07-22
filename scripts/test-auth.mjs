@@ -124,6 +124,15 @@ assert.equal(
   403,
   'un origen web ajeno no puede mutar localhost'
 );
+assert.equal(
+  guard({ method: 'POST', headers: { host: 'localhost:4173' } }).res.statusCode,
+  403,
+  'una mutación sin Origin tampoco puede usar localhost como puente'
+);
+assert.ok(
+  guard({ method: 'POST', headers: { host: 'localhost:4173', origin: 'http://localhost:4173' } }).passed,
+  'la SPA local conserva acceso'
+);
 
 await rm(dir, { recursive: true, force: true });
 console.log('✓ auth: sesiones con hash + expiración, cookie SameSite, CSRF obligatorio en mutaciones, rate-limit de login');

@@ -13,7 +13,7 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
   `feat/open-source-ready` queda preservada tras el merge de Fase 0.
-- **Fase en curso:** Fase 1 — Single-user seguro.
+- **Fase en curso:** Fase 2 — Runtime durable: Desktop + Home Server.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -29,14 +29,17 @@
   propósito registrado y límite de tamaño en `fixtures/manifest.json`. `npm test`,
   `npm run typecheck`, `npm run lint`, `npm run audit:public` y `npm run audit:history`
   pasan. P2 permanece como blocker explícito del primer package o release.
-- **Fase 1 (avance):** P1 fue resuelta: el runtime y la documentación hosted se retiraron
-  de `HEAD`; las ramas e historia se preservan. Desktop persiste secretos en el almacén
-  seguro del OS; Home Server conserva el vault cifrado separado.
+- **Cierre de Fase 1:** `HEAD` conserva un único operador, una sola sesión/cola de
+  Playwright y bind fijo a loopback. El runtime hosted/multiusuario, sus deploys y sus
+  validadores se retiraron sin reescribir historia ni borrar ramas. Desktop usa el
+  almacén seguro del OS; Home Server conserva el vault cifrado separado. Las mutaciones
+  exigen Origin local, sesión, cookie HttpOnly/SameSite y CSRF; watcher y schedule exigen
+  consentimiento, propósito y vencimiento, y un rechazo de credenciales detiene el loop.
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
 | 0 | Contrato local, privacidad y desbloqueo open source | ✅ Hecho |
-| 1 | Single-user seguro (auth local, credenciales, retiro hosted) | 🟨 En curso |
+| 1 | Single-user seguro (auth local, credenciales, retiro hosted) | ✅ Hecho |
 | 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ⬜ Pendiente |
 | 3 | Spike de empaquetado y build de producción | ⬜ Pendiente |
 | 4 | Onboarding, notificaciones y ciclo de vida de datos | ⬜ Pendiente |

@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
-import { db } from './db.js';
+import { db, deleteAllUserData } from './db.js';
 import { LOCAL_USER_ID, adoptLocalUsername, getUser, touchLastLogin } from './users.js';
 import { verifyPortalCredentials, adoptSession, resetSession } from './session.js';
+import { deleteCredential } from './credentialVault.js';
 
 // El login de mikampus ES el login del portal (§5): no hay cuenta paralela.
 // El estudiante entra con sus credenciales de micampus, mikampus las verifica
@@ -134,6 +135,21 @@ export async function loginWithPortal({ username, password }) {
   // Esta distribución solo tiene un operador. Reutilizar siempre la identidad
   // local evita que una segunda cuenta del portal cree un segundo espacio de
   // datos en la misma instalación.
+  const previous = getUser(LOCAL_USER_ID);
+  // Una instalación representa a una sola persona. Cambiar de cuenta no crea
+  // un segundo espacio ni deja una autorización desatendida de la anterior.
+  // El context nuevo todavía no se adoptó, así que cortar el anterior acá no
+  // interrumpe la verificación que acabamos de completar.
+  if (previous?.portalUsername && previous.portalUsername.toLowerCase() !== user.toLowerCase()) {
+    deleteCredential(LOCAL_USER_ID);
+    revokeAllSessions(LOCAL_USER_ID);
+    await resetSession(LOCAL_USER_ID);
+    // Los datos académicos pertenecen a la cuenta anterior. Antes de adoptar
+    // la nueva identidad se purgan completos; recreamos únicamente el registro
+    // local fijo que representa esta instalación.
+    deleteAllUserData(LOCAL_USER_ID);
+    db.prepare('INSERT OR IGNORE INTO users (id) VALUES (?)').run(LOCAL_USER_ID);
+  }
   adoptLocalUsername(user);
   const account = getUser(LOCAL_USER_ID);
   touchLastLogin(account.id);
@@ -163,7 +179,10 @@ export function localRequestGuard(req, res, next) {
   }
   if (!SAFE_METHODS.has(req.method)) {
     const origin = req.headers.origin;
-    if (origin && origin !== `http://${host}`) {
+    // Las mutaciones de la SPA siempre llevan Origin. Exigirlo evita que un
+    // form/navegación cross-site use localhost como puente, incluso en rutas
+    // públicas como el login que todavía no tienen token CSRF.
+    if (origin !== `http://${host}`) {
       return res.status(403).json({ error: 'El origen de esta operación no está autorizado' });
     }
   }

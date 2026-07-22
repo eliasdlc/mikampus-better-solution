@@ -38,11 +38,28 @@ release, no una afirmación sobre el código heredado.
 | Amenaza | Límite y mitigación requerida |
 | --- | --- |
 | Proceso local malicioso | Puede leer datos accesibles al usuario. Credential store y permisos reducen exposición, no protegen un host comprometido. |
-| Página web contra localhost | Cookie HttpOnly/SameSite=Strict, CSRF y validación estricta de Origin/Host. El token emitido por launcher se incorpora con el runtime durable. |
-| Otro equipo de la LAN | Desktop se limita a loopback. Home Server usa loopback + SSH por defecto; LAN requiere HTTPS, pairing y auth. Nunca port forwarding directo. |
+| Página web contra localhost | Cookie HttpOnly/SameSite=Strict, CSRF y validación estricta de Origin/Host; las mutaciones sin Origin válido se rechazan. El token emitido por launcher se incorpora con el runtime durable. |
+| Otro equipo de la LAN | El core de esta fase se limita a loopback. Home Server se accede por túnel SSH; una futura exposición LAN requerirá HTTPS, pairing, sesiones y CSRF mediante reverse proxy explícito. Nunca port forwarding directo. |
+
 | Robo de backups | Backups se cifran/protegen como datos académicos; una copia en el mismo disco no cubre robo o daño físico. |
 | Dependencia comprometida | Lockfile, revisión de licencias/notices, CI con scan y fijación por integridad antes de releases. |
 | Home Server expuesto por error | Bind loopback por defecto, health local, documentación de túnel SSH y ninguna guía para exponerlo a Internet. |
+
+## Credenciales y trabajo desatendido
+
+La contraseña interactiva vive solo en RAM. Para crear un disparo programado o
+un watcher —incluso el que solo notifica— la UI pide consentimiento explícito,
+propósito y el vencimiento basado en la ventana de inscripción. Desktop la
+guarda en Credential Manager, Keychain o Secret Service; Home Server usa un
+vault AES-256-GCM separado de la base principal y una clave fuera del volumen.
+Desactivar la última función desatendida, cambiar cuenta, expirar el permiso o
+borrar datos revoca el secreto y las sesiones correspondientes. Un rechazo de
+password, MFA, CAPTCHA o keychain inaccesible detiene la automatización: no se
+realizan reintentos de login en bucle.
+
+El cifrado protege copias y archivos extraviados; no protege un host local ya
+comprometido, donde un proceso malicioso podría usar un secreto mientras el
+agente tiene acceso.
 
 ## Fixtures y auditoría pública
 

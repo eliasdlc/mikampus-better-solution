@@ -6,13 +6,17 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-shared-watcher-'));
 process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
+process.env.MIKAMPUS_CRED_DB = path.join(dir, 'credentials.db');
+process.env.MIKAMPUS_CRED_KEY = crypto.randomBytes(32).toString('hex');
 process.env.MIKAMPUS_SILENT = '1';
 process.env.SYNC_TERM = '1930';
 
 const { db } = await import('../src/db.js');
+const { storeCredential } = await import('../src/credentialVault.js');
 const { saveSection } = await import('../src/peoplesoft/catalog.js');
 const { scrapedSectionSchema } = await import('../src/shared/schemas.ts');
 const scheduler = await import('../src/scheduler.js');
@@ -56,6 +60,10 @@ try {
   db.exec(`
     INSERT INTO watchers (user_id, interval_ms) VALUES (1, 45000), (2, 45000), (3, 45000);
   `);
+  const expiresAt = new Date(Date.now() + 3600_000).toISOString();
+  for (const userId of [1, 2, 3]) {
+    storeCredential(userId, { username: `operator-${userId}`, password: 'test-only' }, { expiresAt, reason: 'watcher test' });
+  }
 
   const scanned = [];
   const restoreScanner = scheduler.setSharedWatcherScanner(async (target) => {
