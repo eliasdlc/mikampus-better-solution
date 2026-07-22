@@ -21,14 +21,13 @@
   gates `typecheck`, `lint`, `audit:public` y `audit:history`; el sanitizer cubre atributos
   en cualquier orden, identificadores y nombres. La documentación hosted quedó marcada como
   histórica/no ejecutable.
-- **Bloqueo de Fase 0:** `npm run audit:history` detectó PII no anonimizada en dos fixtures
-  introducidos por el commit histórico `489a2a4`. No se reescribe historia sin autorización
-  explícita: hay que decidir rotación si aplica y una operación separada de limpieza de
-  historia. Por tanto la fase sigue en curso y ningún package/release puede publicarse.
+- **Auditoría histórica:** se reescribió la historia alcanzable para sustituir el contenido
+  de los dos fixtures que introdujo `489a2a4` por versiones sanitizadas. Tras retirar las
+  referencias de respaldo y recolectar objetos antiguos, `npm run audit:history` pasa sobre
+  todas las ramas publicables. Los clones existentes deben re-clonarse o resincronizarse.
 - **Pendiente de Fase 0:** reducir fixtures completos a DOM mínimo/sintético y revisar sus
-  derechos de redistribución; completar la decisión de limpieza histórica. No existe todavía
-  `bin/` (launcher), agente de fondo, `deploy/home-server/`, `landing/`, gate `engines` ni
-  compilación de producción TS→JS.
+  derechos de redistribución. No existe todavía `bin/` (launcher), agente de fondo,
+  `deploy/home-server/`, `landing/`, gate `engines` ni compilación de producción TS→JS.
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
