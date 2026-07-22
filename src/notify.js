@@ -16,11 +16,19 @@ export function notify(title, body, { urgency = 'normal' } = {}) {
   // Sin escritorio no hay popup que valga: los tests corren
   // con MIKAMPUS_SILENT=1 y la política sigue siendo verificable en seco.
   if (process.env.MIKAMPUS_SILENT) return;
-  const child = spawn('notify-send', ['-u', urgency, '-a', 'mikampus', title, body], {
+  // Home Server no intenta convertir su host en un proveedor push: el feed SSE
+  // local es el transporte base. Desktop elige el adaptador nativo disponible.
+  if (process.env.MIKAMPUS_RUNTIME_MODE === 'home-server') return;
+  const command = process.platform === 'darwin'
+    ? ['osascript', ['-e', `display notification ${JSON.stringify(body)} with title ${JSON.stringify(title)}`]]
+    : process.platform === 'win32'
+      ? ['powershell.exe', ['-NoProfile', '-Command', `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('mikampus').Show([Windows.UI.Notifications.ToastNotification]::new(([Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier()).GetTemplateContent(0)))`]]
+      : ['notify-send', ['-u', urgency, '-a', 'mikampus', title, body]];
+  const child = spawn(command[0], command[1], {
     stdio: 'ignore',
   });
   child.on('error', () => {
-    console.warn('[notify] notify-send no disponible, se omite notificación de escritorio');
+    console.warn('[notify] transporte de notificación nativo no disponible, el evento sigue en el feed local');
   });
 }
 

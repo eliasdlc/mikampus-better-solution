@@ -4,6 +4,7 @@ import { LOCAL_USER_ID } from './users.js';
 import { notifyFromEvent } from './notify.js';
 import { db, logAction } from './db.js';
 import { syncCatalogCourse } from './peoplesoft/catalog.js';
+import { syncSchedule } from './peoplesoft/mySchedule.js';
 import { readTerms } from './terms.js';
 import { reportOperatorFailure, reportOperatorSuccess } from './operatorNotify.js';
 
@@ -53,7 +54,7 @@ function stateFor(userId) {
 export function getState(userId) {
   const s = stateFor(userId);
   const watcher = db
-    .prepare('SELECT last_check_at, auto_enroll, activation_order, appointment_at FROM watchers WHERE user_id = ?')
+    .prepare('SELECT last_check_at, auto_enroll, activation_order, appointment_at, status, next_check_at, consecutive_failures, pause_reason, last_state FROM watchers WHERE user_id = ?')
     .get(userId);
   return {
     schedule: s.schedule ? { atISO: s.schedule.atISO, prewarmAtISO: s.schedule.prewarmAtISO, prewarmed: s.schedule.prewarmed } : null,
@@ -67,6 +68,11 @@ export function getState(userId) {
           autoEnroll: watcher.auto_enroll === 1,
           activationOrder: watcher.activation_order,
           appointmentAt: watcher.appointment_at ?? null,
+          status: watcher.status,
+          nextCheckAt: watcher.next_check_at ?? null,
+          consecutiveFailures: watcher.consecutive_failures ?? 0,
+          pauseReason: watcher.pause_reason ?? null,
+          lastState: watcher.last_state ?? null,
           queue: queuePositionsForUser(userId),
         }
       : null,
@@ -189,7 +195,9 @@ async function prewarmSchedule(userId, schedule) {
 }
 
 async function fireSchedule(userId, schedule) {
-  db.prepare('DELETE FROM schedules WHERE user_id = ?').run(userId);
+  // La fila no se borra antes de conocer la respuesta. Un crash/timeout entre
+  // submit y respuesta es "uncertain", nunca permiso para enviar de nuevo.
+  db.prepare("UPDATE schedules SET state = 'submitting', updated_at = datetime('now'), last_error = NULL WHERE user_id = ?").run(userId);
   const s = stateFor(userId);
   if (s.schedule === schedule) s.schedule = null;
   clearTimeout(schedule.prewarmTimer);
@@ -198,10 +206,17 @@ async function fireSchedule(userId, schedule) {
     // Si no, el fallback completo es más lento pero todavía intenta inscribir.
     if (schedule.prewarmed) {
       const prepared = await withPage(userId, (page) => finishPreparedEnrollment(page), { retry: false });
-      if (prepared.ok) return await recordEnrollResult(userId, prepared, 'hora programada');
+      if (prepared.ok) {
+        const result = await recordEnrollResult(userId, prepared, 'hora programada');
+        db.prepare("UPDATE schedules SET state = 'succeeded', updated_at = datetime('now') WHERE user_id = ?").run(userId);
+        return result;
+      }
     }
-    return await runEnrollNow(userId, 'hora programada (sin pre-warm)');
+    const result = await runEnrollNow(userId, 'hora programada (sin pre-warm)');
+    db.prepare(`UPDATE schedules SET state = ?, updated_at = datetime('now'), last_error = ? WHERE user_id = ?`).run(result.ok ? 'succeeded' : 'failed', result.ok ? null : result.reason ?? 'El portal rechazó la inscripción', userId);
+    return result;
   } catch (err) {
+    db.prepare("UPDATE schedules SET state = 'uncertain', updated_at = datetime('now'), last_error = ? WHERE user_id = ?").run(err.message, userId);
     emit({ type: 'notice', userId, level: 'error', title: 'El disparo programado falló', body: err.message, key: 'schedule-fire-error' });
     reportOperatorFailure(`schedule:user:${userId}`, err.message).catch(() => {});
     throw err;
@@ -229,7 +244,7 @@ export function scheduleFixedTime(userId, atISO) {
 
   db.prepare(
     `INSERT INTO schedules (user_id, at_iso) VALUES (?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET at_iso = excluded.at_iso, created_at = datetime('now')`
+     ON CONFLICT(user_id) DO UPDATE SET at_iso = excluded.at_iso, state = 'pending', last_error = NULL, created_at = datetime('now'), updated_at = datetime('now')`
   ).run(userId, new Date(at).toISOString());
   armSchedule(userId, new Date(at).toISOString());
   emit({ type: 'schedule-set', userId, atISO });
@@ -308,7 +323,7 @@ function watchedCourses() {
        FROM watchers w
        JOIN cart_rows c ON c.user_id = w.user_id
        LEFT JOIN courses k ON k.code = c.course_code
-       WHERE c.course_code IS NOT NULL
+       WHERE c.course_code IS NOT NULL AND w.status = 'running'
        ORDER BY c.course_code, career`
     )
     .all(WATCHER_CAREER)
@@ -326,7 +341,7 @@ function watchersForCourse(courseCode) {
               w.auto_enroll AS auto_enroll, w.activation_order AS activation_order,
               w.appointment_at AS appointment_at
        FROM watchers w JOIN cart_rows c ON c.user_id = w.user_id
-       WHERE c.course_code = ?
+       WHERE c.course_code = ? AND w.status = 'running'
        ORDER BY w.activation_order, w.user_id`
     )
     .all(courseCode);
@@ -392,9 +407,19 @@ function seatState(courseCode, term) {
 }
 
 function publishWatcherState() {
-  for (const row of db.prepare('SELECT user_id FROM watchers').all()) {
-    emit({ type: 'watcher-set', userId: row.user_id, enabled: true, intervalMs: effectiveWatcherIntervalMs() });
+  for (const row of db.prepare('SELECT user_id, status, pause_reason FROM watchers').all()) {
+    emit({ type: 'watcher-set', userId: row.user_id, enabled: row.status === 'running', status: row.status, reason: row.pause_reason ?? null, intervalMs: effectiveWatcherIntervalMs() });
   }
+}
+
+function activeWatcherCount() {
+  return db.prepare("SELECT COUNT(*) AS n FROM watchers WHERE status = 'running'").get().n;
+}
+
+function pauseWatcher(userId, status, reason) {
+  db.prepare('UPDATE watchers SET status = ?, pause_reason = ?, next_check_at = NULL WHERE user_id = ?').run(status, reason, userId);
+  disarmSharedWatcherIfIdle();
+  emit({ type: 'watcher-set', userId, enabled: false, status, reason });
 }
 
 function nextWatchedCourses(courses) {
@@ -413,7 +438,8 @@ function nextWatchedCourses(courses) {
 function markChecked(courseCode, at) {
   const owners = watchersForCourse(courseCode);
   for (const owner of owners) {
-    db.prepare('UPDATE watchers SET last_check_at = ? WHERE user_id = ?').run(at, owner.user_id);
+    db.prepare("UPDATE watchers SET last_check_at = ?, next_check_at = ?, status = 'running', consecutive_failures = 0, pause_reason = NULL, last_state = 'checked' WHERE user_id = ?")
+      .run(at, new Date(new Date(at).getTime() + effectiveWatcherIntervalMs()).toISOString(), owner.user_id);
   }
   return owners;
 }
@@ -424,7 +450,7 @@ async function handleCourseScan(target) {
   const owners = watchersForCourse(target.courseCode);
   for (const owner of owners) {
     if (!hasUnattendedCredential(owner.user_id)) {
-      stopWatcher(owner.user_id);
+      pauseWatcher(owner.user_id, 'credentials-required', 'La autorización o la credencial ya no está disponible');
       emit({ type: 'notice', userId: owner.user_id, level: 'error', title: 'Watcher detenido: venció la autorización', body: 'Iniciá sesión y autorizalo de nuevo para volver a consultar el portal.', key: 'watcher-credentials-required' });
     }
   }
@@ -440,7 +466,10 @@ async function handleCourseScan(target) {
         // Un rechazo de password, MFA o CAPTCHA no se reintenta en bucle. Se
         // corta el watcher y se elimina la excepción persistida; la persona
         // deberá iniciar sesión y consentir de nuevo desde la UI.
-        stopWatcher(owner.user_id);
+        pauseWatcher(owner.user_id, 'credentials-required', 'PeopleSoft pidió volver a iniciar sesión o rechazó la credencial');
+      } else {
+        db.prepare("UPDATE watchers SET status = 'backing-off', consecutive_failures = consecutive_failures + 1, pause_reason = ?, next_check_at = ? WHERE user_id = ?")
+          .run(err.message, new Date(Date.now() + effectiveWatcherIntervalMs()).toISOString(), owner.user_id);
       }
       emit({
         type: 'notice',
@@ -542,13 +571,13 @@ export async function runSharedWatcherTick() {
 }
 
 function armSharedWatcher() {
-  if (sharedTimer || db.prepare('SELECT COUNT(*) AS n FROM watchers').get().n === 0) return;
+  if (sharedTimer || activeWatcherCount() === 0) return;
   runSharedWatcherTick().catch(() => {});
   sharedTimer = setInterval(() => runSharedWatcherTick().catch(() => {}), WATCHER_TICK_MS);
 }
 
 function disarmSharedWatcherIfIdle() {
-  if (db.prepare('SELECT COUNT(*) AS n FROM watchers').get().n > 0) return;
+  if (activeWatcherCount() > 0) return;
   clearInterval(sharedTimer);
   sharedTimer = null;
   lastCourseKey = null;
@@ -562,7 +591,8 @@ export function startWatcher(userId, { autoEnroll = false, appointmentAt = null 
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET interval_ms = excluded.interval_ms,
        auto_enroll = excluded.auto_enroll, activation_order = excluded.activation_order,
-       appointment_at = excluded.appointment_at, created_at = datetime('now')`
+       appointment_at = excluded.appointment_at, status = 'running', pause_reason = NULL,
+       consecutive_failures = 0, last_started_at = datetime('now'), created_at = datetime('now')`
   ).run(userId, WATCHER_TICK_MS, autoEnroll ? 1 : 0, activationOrder, appointmentAt);
   armSharedWatcher();
   publishWatcherState();
@@ -594,10 +624,10 @@ const LATE_FIRE_GRACE_MS = 30 * 60_000;
 export function restoreTimers(now = Date.now()) {
   const restored = { schedules: 0, watchers: 0, dropped: 0 };
 
-  for (const row of db.prepare('SELECT user_id, at_iso FROM schedules').all()) {
+  for (const row of db.prepare("SELECT user_id, at_iso FROM schedules WHERE state = 'pending'").all()) {
     const at = new Date(row.at_iso).getTime();
     if (at <= now - LATE_FIRE_GRACE_MS) {
-      db.prepare('DELETE FROM schedules WHERE user_id = ?').run(row.user_id);
+      db.prepare("UPDATE schedules SET state = 'missed', updated_at = datetime('now'), last_error = 'El agente estaba detenido fuera de la tolerancia' WHERE user_id = ?").run(row.user_id);
       emit({
         type: 'notice',
         userId: row.user_id,
@@ -613,8 +643,30 @@ export function restoreTimers(now = Date.now()) {
     restored.schedules++;
   }
 
-  const watcherCount = db.prepare('SELECT COUNT(*) AS n FROM watchers').get().n;
+  const watcherCount = activeWatcherCount();
   if (watcherCount) armSharedWatcher();
   restored.watchers = watcherCount;
   return restored;
+}
+
+// Un timeout durante submit no autoriza otro submit. Al iniciar, si la
+// autorización sigue disponible, refrescamos Mi Horario contra el portal y
+// dejamos evidencia de la reconciliación; la UI puede mostrar el resultado y
+// la persona decide cualquier acción posterior.
+export async function reconcileUncertainSchedules() {
+  const rows = db.prepare("SELECT user_id, at_iso FROM schedules WHERE state = 'uncertain'").all();
+  for (const row of rows) {
+    if (!hasUnattendedCredential(row.user_id)) {
+      emit({ type: 'notice', userId: row.user_id, level: 'error', title: 'Inscripción incierta requiere revisión', body: 'El agente se detuvo durante el submit y no hay credencial vigente para reconciliar. Revisá Mi Horario antes de reintentar.', key: `schedule-uncertain:${row.at_iso}` });
+      continue;
+    }
+    try {
+      await withPage(row.user_id, (page) => syncSchedule(page, { userId: row.user_id }), { retry: true });
+      db.prepare("UPDATE schedules SET state = 'reconciled', updated_at = datetime('now'), last_error = 'Mi Horario fue actualizado tras un submit incierto; verificá el resultado antes de volver a programar.' WHERE user_id = ?").run(row.user_id);
+      emit({ type: 'notice', userId: row.user_id, level: 'info', title: 'Inscripción reconciliada', body: 'Actualizamos Mi Horario tras un submit incierto. No se envió ningún segundo submit.', key: `schedule-reconciled:${row.at_iso}` });
+    } catch (error) {
+      emit({ type: 'notice', userId: row.user_id, level: 'error', title: 'No se pudo reconciliar la inscripción incierta', body: error.message, key: `schedule-reconcile-error:${row.at_iso}` });
+    }
+  }
+  return rows.length;
 }

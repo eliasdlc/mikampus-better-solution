@@ -672,6 +672,11 @@ export const appStateSchema = z.object({
       autoEnroll: z.boolean().default(false),
       activationOrder: z.number().int().nullable().default(null),
       appointmentAt: z.string().nullable().default(null),
+      status: z.enum(['running', 'paused', 'offline', 'credentials-required', 'backing-off', 'stopped', 'monitoring-gap']).default('running'),
+      nextCheckAt: z.string().nullable().default(null),
+      consecutiveFailures: z.number().int().default(0),
+      pauseReason: z.string().nullable().default(null),
+      lastState: z.string().nullable().default(null),
       queue: z.array(z.object({ courseCode: z.string(), position: z.number().int(), total: z.number().int() })).default([]),
     })
     .nullable(),

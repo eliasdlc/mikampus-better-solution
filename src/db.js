@@ -428,6 +428,34 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 `);
 
+// Las instalaciones locales se actualizan in-place. Estas columnas se agregan
+// de forma compatible a DBs creadas antes del runtime durable; SQLite no
+// admite ADD COLUMN IF NOT EXISTS.
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((entry) => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+ensureColumn('watchers', 'status', "TEXT NOT NULL DEFAULT 'running'");
+ensureColumn('watchers', 'next_check_at', 'TEXT');
+ensureColumn('watchers', 'consecutive_failures', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('watchers', 'pause_reason', 'TEXT');
+ensureColumn('watchers', 'last_state', 'TEXT');
+ensureColumn('watchers', 'last_started_at', 'TEXT');
+ensureColumn('schedules', 'state', "TEXT NOT NULL DEFAULT 'pending'");
+ensureColumn('schedules', 'last_error', 'TEXT');
+ensureColumn('schedules', 'updated_at', 'TEXT');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS runtime_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    detail TEXT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+
 // CREATE TABLE IF NOT EXISTS no reforma una tabla que ya existe: una columna
 // nueva llega a las bases recién creadas y no a la que el usuario ya tiene.
 // Esto agrega la columna solo si falta, que es todo lo que necesita una app

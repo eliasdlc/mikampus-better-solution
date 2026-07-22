@@ -35,6 +35,7 @@ import { dropClass } from './peoplesoft/dropClass.js';
 import { startBackupCron, stopBackupCron } from './backups.js';
 import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js';
 import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
+import { acquireAgentLock, agentHealthAuthorized, recordRuntimeStart, recordRuntimeStop, releaseAgentLock } from './runtime.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'public', 'dist');
@@ -44,7 +45,8 @@ app.use(express.static(DIST_DIR));
 
 // No toca PeopleSoft ni devuelve datos personales: health local del agente.
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true });
+  if (!agentHealthAuthorized(req)) return res.status(401).json({ error: 'healthcheck del agente no autorizado' });
+  res.json({ ok: true, pid: process.pid, url: `http://127.0.0.1:${PORT}` });
 });
 
 const SECURE_COOKIES = false;
@@ -1016,6 +1018,7 @@ const HOST = '127.0.0.1';
 // grades) al arrancar, para que el modelo de tiempo esté al día sin esperar a
 // una sync. Es barato: son pocas filas y upserts idempotentes.
 reconcileTerms();
+const runtimeStart = recordRuntimeStart();
 // Higiene al arrancar: sesiones vencidas fuera, credenciales vencidas fuera.
 auth.purgeExpiredSessions();
 purgeExpiredCredentials();
@@ -1025,6 +1028,16 @@ const timers = scheduler.restoreTimers();
 if (timers.schedules || timers.watchers) {
   console.log(`[scheduler] restaurado: ${timers.schedules} disparo(s), ${timers.watchers} watcher(s)`);
 }
+if (runtimeStart.hadGap) console.warn('[agent] se registró un intervalo no vigilado; el watcher hará una consulta fresca');
+// Nunca reintenta un submit incierto: solo refresca el estado real del portal.
+scheduler.reconcileUncertainSchedules().catch((error) => console.warn(`[scheduler] no se pudo reconciliar un submit incierto: ${error.message}`));
+
+try {
+  acquireAgentLock({ port: PORT });
+} catch (error) {
+  console.error(`[agent] ${error.message}`);
+  process.exit(1);
+}
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);
@@ -1032,12 +1045,21 @@ const server = app.listen(PORT, HOST, () => {
   startCatalogCron();
   startBackupCron();
 });
+server.on('error', (error) => {
+  releaseAgentLock();
+  console.error(`[agent] no se pudo abrir ${HOST}:${PORT}: ${error.message}`);
+  process.exit(1);
+});
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
     stopCatalogCron();
     stopBackupCron();
     await shutdown();
-    server.close(() => process.exit(0));
+    server.close(() => {
+      releaseAgentLock();
+      recordRuntimeStop();
+      process.exit(0);
+    });
   });
 }

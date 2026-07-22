@@ -1,0 +1,19 @@
+[Unit]
+Description=mikampus single-user home server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mikampus
+WorkingDirectory=/var/lib/mikampus
+Environment=MIKAMPUS_DB=/var/lib/mikampus/mikampus.db
+Environment=MIKAMPUS_RUNTIME_DIR=/var/lib/mikampus/runtime
+ExecStart=/usr/local/bin/mikampus start
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -334,17 +334,20 @@ function NextCycleCard({
   );
 }
 
-function WatcherCard({ watcher }: { watcher: { intervalMs: number; lastCheckAt: string | null } | null }) {
+function WatcherCard({ watcher }: { watcher: { intervalMs: number; lastCheckAt: string | null; status?: string; pauseReason?: string | null } | null }) {
+  const active = watcher?.status === 'running' || watcher?.status === 'monitoring-gap';
   return (
     <Card to="/inscripcion" title="Watcher de cupos">
       <div className="mt-1 flex items-center gap-2 text-lg font-medium">
-        <span className={`size-2.5 rounded-full ${watcher ? 'bg-open' : 'bg-muted'}`} />
-        {watcher ? 'Activo' : 'Apagado'}
+        <span className={`size-2.5 rounded-full ${active ? 'bg-open' : 'bg-muted'}`} />
+        {watcher ? watcher.status === 'monitoring-gap' ? 'Gap detectado' : watcher.status === 'backing-off' ? 'Reintentando' : watcher.status === 'running' ? 'Activo' : watcher.status : 'Apagado'}
       </div>
       <div className="text-muted mt-1 text-xs">
         {!watcher
           ? 'no está vigilando el carrito'
-          : watcher.lastCheckAt
+          : watcher.pauseReason
+            ? watcher.pauseReason
+            : watcher.lastCheckAt
             ? // "activo" y "activo y mirando" no son lo mismo: un watcher que
               // no chequea hace media hora está roto y hay que poder verlo.
               `cada ${Math.round(watcher.intervalMs / 1000)}s · último check ${ago(watcher.lastCheckAt)}`
