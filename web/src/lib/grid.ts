@@ -96,6 +96,28 @@ export type PlacedBlock = Block & {
 const overlaps = (a: Block, b: Block) =>
   toMinutes(a.start) < toMinutes(b.end) && toMinutes(b.start) < toMinutes(a.end);
 
+// ¿Hay algún choque en el conjunto? El detalle de contra-quién choca cada bloque
+// lo calcula layoutDay (y lo pinta el WeeklyGrid); esto responde solo el sí/no
+// global —agrupando por día e ignorando fantasmas— para quien necesita la señal
+// sin colocar carriles. conflictsWith solo existe en PlacedBlock, no en Block.
+export function hasCollisions(blocks: Block[]): boolean {
+  const byDay = new Map<DayCode, Block[]>();
+  for (const block of blocks) {
+    if (block.ghost) continue;
+    const dayBlocks = byDay.get(block.day) ?? [];
+    dayBlocks.push(block);
+    byDay.set(block.day, dayBlocks);
+  }
+  for (const dayBlocks of byDay.values()) {
+    for (let i = 0; i < dayBlocks.length; i++) {
+      for (let j = i + 1; j < dayBlocks.length; j++) {
+        if (overlaps(dayBlocks[i], dayBlocks[j])) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // Coloca los bloques de UN día en carriles. Dos clases a la misma hora no
 // pueden taparse: se reparten el ancho de la columna y quedan las dos visibles.
 // Greedy sobre bloques ordenados por hora: cada uno cae en el primer carril

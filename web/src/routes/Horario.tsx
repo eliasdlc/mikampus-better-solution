@@ -95,10 +95,10 @@ export function Horario() {
   // Mientras corre, la pantalla sigue mostrando lo cacheado: nunca se bloquea.
   // El sync descubre el término real (con su STRM) y salta a mostrarlo.
   const sync = useMutation({
-    // Refresca el ciclo que muestra el switcher, no el que el portal recuerde.
-    // Sin STRM (arranque del ciclo actual) va sin término y el server descubre
-    // el activo.
-    mutationFn: () => syncMySchedule(activeCode ?? undefined),
+    // Refresca el ciclo que muestra el switcher. View My Classes lista los ciclos
+    // por su etiqueta, así que el sync se pide por etiqueta (no por STRM). Sin
+    // etiqueta, el server toma el ciclo que el portal ponga primero (el actual).
+    mutationFn: () => syncMySchedule(activeOption?.label ?? undefined),
     onSuccess: (fresh) => {
       if (fresh.term) {
         queryClient.setQueryData(['my-schedule', fresh.term], fresh);
@@ -107,10 +107,15 @@ export function Horario() {
       queryClient.invalidateQueries({ queryKey: ['term-context'] });
     },
   });
+  // Dar de baja usa el flujo de inscripción, que necesita el STRM y solo opera
+  // sobre el ciclo abierto para inscribir. View My Classes es de solo lectura y
+  // no expone STRM del ciclo en curso, así que la baja solo se ofrece cuando el
+  // ciclo activo tiene STRM conocido (el inscribible).
+  const canDrop = activeCode != null;
   const drop = useMutation({
     mutationFn: (course: ScheduleCourse) =>
       dropScheduleCourse({
-        term: activeTerm!,
+        term: activeCode!,
         courseCode: course.code,
         classNbr: course.sections[0]?.classNbr ?? null,
         confirmCode,
@@ -245,7 +250,7 @@ export function Horario() {
         <Agenda data={data} />
       )}
 
-      {courses.some((course) => course.status === 'enrolled') && (
+      {canDrop && courses.some((course) => course.status === 'enrolled') && (
         <section className="border-line bg-surface rounded-[var(--radius)] border print:hidden">
           <header className="border-line border-b px-4 py-2.5">
             <h2 className="text-sm font-medium">Materias inscritas</h2>

@@ -40,7 +40,7 @@ export async function getPushState(): Promise<PushState> {
 
 // El applicationServerKey va como Uint8Array, no como el base64url que expone el
 // server: esta es la conversión estándar (padding + url-safe → binario).
-function urlBase64ToUint8Array(base64: string): Uint8Array {
+function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);
   const normalized = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(normalized);
