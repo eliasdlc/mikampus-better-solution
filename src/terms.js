@@ -83,7 +83,10 @@ export function readTerms(today = new Date()) {
     sortKey: t.sortKey,
     isCurrent: t.isCurrent,
     isNext: t.isNext,
-    hasSchedule: t.code != null && enrolled.has(t.code),
+    // El horario se keyea por STRM cuando se conoce, si no por la etiqueta (View
+    // My Classes no expone el STRM del ciclo en curso). Por eso hasSchedule mira
+    // ambos: `enrollments.term` puede ser el código o la etiqueta.
+    hasSchedule: (t.code != null && enrolled.has(t.code)) || (t.label != null && enrolled.has(t.label)),
     hasSections: t.code != null && withSections.has(t.code),
   }));
 

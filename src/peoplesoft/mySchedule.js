@@ -1,4 +1,4 @@
-import { SCHEDULE_URL } from './constants.js';
+import { MANAGE_CLASSES_START_URL, VIEW_MY_CLASSES_URL } from './constants.js';
 import { db, logSync, lastSync } from '../db.js';
 import { saveSection } from './catalog.js';
 import {
@@ -6,22 +6,33 @@ import {
   scrapedSectionSchema,
   normalizeEnrollStatus,
 } from '../shared/schemas.ts';
-import { parseMeetings, normalizeComponent, parseDateRange } from '../shared/meetings.ts';
+import { parseFluidMeeting, normalizeComponent, parseDateRange } from '../shared/meetings.ts';
 import { upsertTerm } from '../terms.js';
 
-// Horario inscrito. Recon en fixtures/recon-schedule-list.html (ver
-// src/recon-schedule.js). Lo que confirmó, y que manda en el diseño de acá:
+// Horario inscrito. Fuente: View My Classes (Fluid), volcado en
+// fixtures/recon-my-classes-view.html (ver src/recon-my-classes.js). Es la
+// pantalla del horario REAL: reemplazó a SSR_SSENRL_SCHD_W (el viejo, atado a la
+// ventana de inscripción, que solo veía el ciclo abierto para inscribir y por eso
+// era ciego al ciclo en curso). Lo que el recon confirmó y manda el diseño de acá:
 //
-//   1. La pantalla abre en "Weekly Calendar View" (una grilla ya pintada por
-//      PeopleSoft, incómoda de parsear). Hay que pedir "List View", que da las
-//      mismas clases como filas con class nbr, sección, días/horas y profesor.
-//   2. Cada materia inscrita es un contenedor ACE_STDNT_ENRL_SSV2$N con su
-//      título en un .PAGROUPDIVIDER ("ICC     ICC233 - Seg. en Tecnología
-//      Información") y adentro su grilla de componentes.
-//   3. A diferencia del class search, ACÁ SÍ vienen el título y los créditos.
-//      Por eso esta pantalla es la que llena el diccionario `courses`.
-//   4. El índice de las filas de componente es global a la página, no por
-//      materia → agrupar por contención, nunca por índice.
+//   1. Es Fluid: hay que crear el navigation collection lanzando el START del
+//      tile Manage Classes antes de abrir la hoja, o el portal tira
+//      `bIsCalledOutsideNavigationCollection` (MAPA §68-72).
+//   2. La hoja abre en un selector de ciclo tipo grilla ("Select a Value") que
+//      solo lista los ciclos ACTUAL y PRÓXIMO (no los pasados). Hay que clickear
+//      el link del ciclo (SSR_ENTRMCUR_VW_TERM_DESCR30$N) para ver su horario.
+//   3. Cada materia es un contenedor SSR_SBJCT_LVL1_row$N que agrupa por
+//      contención su título, estado, créditos y sus reuniones. El índice de las
+//      reuniones ($M) es global a la página → agrupar por contención, nunca por
+//      índice (misma regla que el resto de los scrapers del portal).
+//   4. Trae el ESTADO por materia (DRV_STAT: Enrolled/Dropped/Waiting). La
+//      pantalla muestra las dadas de baja mezcladas con las inscritas; el parser
+//      las descarta por ese estado (si no, una materia dada de baja aparecería en
+//      el horario).
+//   5. NO expone el STRM (solo la etiqueta "Abril de 2026") ni el profesor/sección
+//      en la vista principal. Por eso el horario se keyea por la etiqueta y el
+//      STRM queda opcional (se rellena por COALESCE si otra fuente ya lo conoce).
+//      Ver [[horario-real-source]] y constants.js.
 
 // ── Capa de escritura ──────────────────────────────────────────────────────
 
@@ -38,10 +49,33 @@ const upsertEnrollmentStmt = db.prepare(`
     updated_at = datetime('now')
 `);
 
+// El STRM que la tabla `terms` ya conozca para una etiqueta ("Abril de 2026" →
+// "1920"), o null. Es lo que permite keyear el horario por STRM cuando otra
+// fuente (notas, catálogo) ya lo aportó, y por la etiqueta cuando no. Así el
+// identificador del término coincide con el que readTerms calcula (code ?? label).
+export function codeForLabel(label) {
+  if (!label) return null;
+  return db.prepare('SELECT code FROM terms WHERE label = ? AND code IS NOT NULL').get(label)?.code ?? null;
+}
+
+// El class search da títulos completos vía Browse Catalog; View My Classes los da
+// TRUNCADOS ("Program. Paralela y Concurr"). Regla: no pisar un título real ya
+// conocido con el truncado. Si no hay título todavía, el truncado es mejor que el
+// código pelado. Devuelve el título a guardar (null = conservar el de la DB).
+function scheduleTitle(courseCode, scrapedTitle) {
+  const known = db.prepare('SELECT title FROM courses WHERE code = ?').get(courseCode);
+  if (known?.title && known.title !== courseCode) return null;
+  return scrapedTitle;
+}
+
 // Persiste el horario de un término. Borra las inscripciones previas de ese
 // término antes de reinsertar: si diste de baja una materia, un upsert solo la
 // dejaría para siempre en tu horario. Va en transacción para que el horario
 // nunca se lea a medio reemplazar.
+//
+// `term` es el identificador resuelto: el STRM si `terms` ya lo conocía para esta
+// etiqueta, si no la propia etiqueta. `termLabel` es la etiqueta en español y es
+// obligatoria (es la que nombra el ciclo y de la que sale el STRM opcional).
 export function saveSchedule(userId, { term, termLabel = null, courses }) {
   db.exec('BEGIN');
   try {
@@ -62,7 +96,8 @@ export function saveSchedule(userId, { term, termLabel = null, courses }) {
             courseCode: course.courseCode,
             subject: course.subject,
             catalogNbr: course.catalogNbr,
-            title: course.title,
+            // No pisar un título completo del catálogo con el truncado de acá.
+            title: scheduleTitle(course.courseCode, course.title),
             // Los créditos son de la materia; el class search no los da.
             credits: course.units,
             term,
@@ -90,9 +125,11 @@ export function saveSchedule(userId, { term, termLabel = null, courses }) {
       }
     }
     // El STRM, su etiqueta y su ventana en la misma fila: acá se cruzan los dos
-    // vocabularios de término. La etiqueta puede venir null (layout cambiado);
-    // upsertTerm la deriva de la fecha de inicio como respaldo.
-    upsertTerm({ code: term, label: termLabel, startDate: start, endDate: end });
+    // vocabularios de término. El código va solo cuando el identificador ES un
+    // STRM (distinto de la etiqueta); si se keyeó por etiqueta, code queda null y
+    // el COALESCE de upsertTerm no lo inventa.
+    const code = term && term !== termLabel ? term : null;
+    upsertTerm({ code, label: termLabel, startDate: start, endDate: end });
     db.exec('COMMIT');
     return saved;
   } catch (err) {
@@ -104,8 +141,8 @@ export function saveSchedule(userId, { term, termLabel = null, courses }) {
 // ── Capa de lectura (GET /api/schedule) ────────────────────────────────────
 
 // El término del horario que se sincronizó más recientemente. Sirve para que
-// /horario funcione sin configurar nada: PeopleSoft ya sabe cuál es tu término
-// activo, así que el primer sync lo descubre y desde ahí es el default.
+// /horario funcione sin configurar nada: el primer sync descubre el término
+// activo y desde ahí es el default.
 export function latestScheduledTerm(userId) {
   const row = db
     .prepare('SELECT term FROM enrollments WHERE user_id = ? ORDER BY updated_at DESC, term DESC LIMIT 1')
@@ -184,41 +221,39 @@ export function removeEnrollmentCourse(userId, term, courseCode) {
 // cambio corre contra el fixture sin tocar el portal (scripts/test-schedule-parser.mjs).
 export function extractSchedule() {
   const strip = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
-  const textOf = (root, selector) => strip(root.querySelector(selector));
 
-  // El código de término no se muestra en pantalla (la cabecera dice
-  // "Septiembre de 2026"), pero el portal lo deja en un objeto JS.
-  const term = (document.documentElement.innerHTML.match(/STRM:"(\d+)"/) ?? [])[1] ?? null;
-  // La etiqueta en español sí está en pantalla, en la cabecera del estudiante:
-  // "Septiembre de 2026 | Grado | Pont. Universidad…". Es la que cruza el STRM
-  // con el vocabulario de grades, así que la capturamos junto al código.
-  const termLabel =
-    (strip(document.querySelector('[id^="DERIVED_REGFRM1_SSR_STDNTKEY_DESCR$"]')).split('|')[0] || '').trim() || null;
+  // La etiqueta del ciclo ("Abril de 2026") vive en la cabecera de la pantalla.
+  // Es la identidad del término: View My Classes no expone el STRM.
+  const termLabel = strip(document.getElementById('TERM_VAL_TBL_DESCR')) || null;
 
   const courses = [];
-  for (const box of document.querySelectorAll('[id^="ACE_STDNT_ENRL_SSV2$"]')) {
-    // "ICC     ICC233 - Seg. en Tecnología Información". El subject se repite
-    // dentro del catalog_nbr, y lo dejamos fuera para que el código canónico
-    // sea "ICC-233" — el mismo que produce el catálogo.
-    const label = textOf(box, '.PAGROUPDIVIDER');
-    const m = label.match(/^([A-Z]{2,4})\s+\1?(\d{2,4}[A-Z]?)\s*-\s*(.*)$/);
+  // Cada materia es un contenedor que agrupa por CONTENCIÓN su título, estado,
+  // créditos y reuniones. El índice de reunión es global; por eso se lee todo
+  // dentro del contenedor y nunca cruzando índices.
+  for (const box of document.querySelectorAll('[id^="win0divSSR_SBJCT_LVL1_row$"]')) {
+    if (!/^win0divSSR_SBJCT_LVL1_row\$\d+$/.test(box.id)) continue;
+
+    // "ICC     ICC303   Program. Paralela y Concurr": subject, subject+catálogo y
+    // título (truncado). El subject se repite dentro del código; se descarta para
+    // que el canónico sea "ICC-303", el mismo que produce el catálogo.
+    const label = strip(box.querySelector('[id^="DERIVED_SSR_FL_SSR_SCRTAB_DTLS$"]'));
+    const m = label.match(/^([A-Z]{2,4})\s+\1?(\d{2,4}[A-Z]?)\s+(.*)$/);
     if (!m) continue;
 
     const sections = [];
-    const rows = [...box.querySelectorAll('[id^="DERIVED_CLS_DTL_CLASS_NBR$"]')].filter((el) =>
-      /^DERIVED_CLS_DTL_CLASS_NBR\$\d+$/.test(el.id)
+    const meetRows = [...box.querySelectorAll('[id^="DERIVED_SSR_FL_SSR_SBJ_CAT_NBR$355$$"]')].filter((el) =>
+      /\$355\$\$\d+$/.test(el.id)
     );
-    for (const row of rows) {
-      const i = row.id.split('$')[1];
+    for (const row of meetRows) {
+      const i = row.id.match(/\$(\d+)$/)[1];
       const byId = (prefix) => strip(document.getElementById(`${prefix}$${i}`));
       sections.push({
-        classNbr: strip(row),
-        section: byId('MTG_SECTION') || null,
-        component: byId('MTG_COMP') || null,
-        dayTime: byId('MTG_SCHED'),
-        room: byId('MTG_LOC'),
-        instructor: byId('DERIVED_CLS_DTL_SSR_INSTR_LONG') || null,
-        dates: byId('MTG_DATES'),
+        // "Lecture - 5822" → componente y class number.
+        componentClass: strip(row),
+        days: byId('DERIVED_SSR_FL_SSR_DAYS1'),
+        times: byId('DERIVED_SSR_FL_SSR_DAYSTIMES1'),
+        room: byId('DERIVED_SSR_FL_SSR_DRV_ROOM1'),
+        dates: byId('DERIVED_SSR_FL_SSR_ST_END_DT1'),
       });
     }
 
@@ -226,44 +261,77 @@ export function extractSchedule() {
       subject: m[1],
       catalogNbr: m[2],
       title: m[3].trim() || null,
-      status: textOf(box, '[id^="STATUS$"]') || null,
-      units: textOf(box, '[id^="DERIVED_REGFRM1_UNT_TAKEN$"]') || null,
-      grading: textOf(box, '[id^="GB_DESCR$"]') || null,
-      grade: textOf(box, '[id^="CRSE_GRADE_OFF$"]') || null,
+      // Enrolled / Dropped / Waiting — por materia.
+      status: strip(box.querySelector('[id^="DERIVED_SSR_FL_SSR_DRV_STAT$392$$"]')) || null,
+      units: strip(box.querySelector('[id^="STDNT_ENRL_SSV1_UNT_TAKEN$"]')) || null,
+      grading: strip(box.querySelector('[id^="DERIVED_SSR_FL_SSR_GRD_BASIS_ENRL$"]')) || null,
+      grade: strip(box.querySelector('[id^="STDNT_ENRL_SSV1_CRSE_GRADE_OFF$"]')) || null,
       sections,
     });
   }
 
-  return { term, termLabel, courses };
+  return { termLabel, courses };
 }
 
-// Convierte lo extraído en el contrato Zod del horario.
-function toSchedule(raw) {
-  return scrapedScheduleSchema.parse({
-    term: raw.term,
-    termLabel: raw.termLabel ?? null,
-    courses: raw.courses.map((c) => ({
+// "Lecture - 5822" → { component: "Lecture", classNbr: "5822" }.
+function splitComponentClass(raw) {
+  const m = (raw ?? '').match(/^(.*?)\s*-\s*(\d+)\s*$/);
+  if (m) return { component: m[1].trim() || null, classNbr: m[2] };
+  return { component: null, classNbr: (raw ?? '').trim() || null };
+}
+
+// Convierte lo extraído en el contrato Zod del horario. Descarta las materias
+// dadas de baja (siguen apareciendo en la pantalla) y agrupa las reuniones de un
+// mismo class number en una sola sección (una LEC que se reúne dos días). `term`
+// es el identificador ya resuelto (STRM conocido o etiqueta).
+export function toSchedule(raw, { term }) {
+  const courses = [];
+  for (const c of raw.courses) {
+    const status = normalizeEnrollStatus(c.status);
+    // Una materia dada de baja no es tu horario: no entra.
+    if (status === 'dropped') continue;
+
+    // Agrupar reuniones por class number: cada class number es una sección (LEC,
+    // PRA…) con sus reuniones; una sección puede reunirse varios días.
+    const bySection = new Map();
+    for (const s of c.sections) {
+      const { component, classNbr } = splitComponentClass(s.componentClass);
+      if (!classNbr) continue;
+      if (!bySection.has(classNbr)) {
+        const { start, end } = parseDateRange(s.dates);
+        bySection.set(classNbr, {
+          classNbr,
+          section: null, // View My Classes no expone el número de sección.
+          component: normalizeComponent(component),
+          instructor: null, // ni el profesor en la vista principal.
+          meetings: [],
+          startDate: start,
+          endDate: end,
+        });
+      }
+      bySection.get(classNbr).meetings.push(...parseFluidMeeting(s.days, s.times, s.room));
+    }
+
+    const sections = [...bySection.values()];
+    if (!sections.length) continue;
+
+    courses.push({
       courseCode: `${c.subject}-${c.catalogNbr}`,
       subject: c.subject,
       catalogNbr: c.catalogNbr,
       title: c.title,
-      status: normalizeEnrollStatus(c.status),
+      status,
       units: c.units ? Number(c.units) : null,
       grading: c.grading || null,
       grade: c.grade || null,
-      sections: c.sections.map((s) => {
-        const { start, end } = parseDateRange(s.dates);
-        return {
-          classNbr: s.classNbr,
-          section: s.section,
-          component: normalizeComponent(s.component),
-          instructor: s.instructor,
-          meetings: parseMeetings(s.dayTime, s.room),
-          startDate: start,
-          endDate: end,
-        };
-      }),
-    })),
+      sections,
+    });
+  }
+
+  return scrapedScheduleSchema.parse({
+    term,
+    termLabel: raw.termLabel ?? null,
+    courses,
   });
 }
 
@@ -282,95 +350,101 @@ async function findFrame(page, selector, { timeout = 8000 } = {}) {
   return null;
 }
 
-// Pura y testeable: elige, entre los radios que ofrece el selector de término,
-// el del ciclo pedido. Matchea por STRM (el `value` del radio) y, como respaldo,
-// por etiqueta (la fila dice "Septiembre de 2026 | Grado | …"). Sin término
-// pedido toma el primero, que es el default del portal. Si se pidió uno que no
-// está en la lista, es un error explícito: sincronizar otro ciclo en silencio
-// es justo el bug que este paso viene a cerrar.
-export function pickTermRadio(radios, targetTerm) {
-  if (!targetTerm) return radios[0] ?? null;
-  const hit = radios.find((r) => r.value === targetTerm || (r.label ?? '').includes(targetTerm));
-  if (!hit) throw new Error(`El ciclo ${targetTerm} no está disponible en Mi Horario`);
+// Pura y testeable: elige, entre las filas del selector de ciclo, la del ciclo
+// pedido. View My Classes lista los ciclos por su etiqueta ("Abril de 2026"), no
+// por STRM. Sin ciclo pedido toma el primero (el que el portal pone arriba, el
+// actual). Un ciclo pedido que no está en la lista es un error explícito: la
+// pantalla solo trae ciclos actuales/próximos, así que pedir uno ausente (ej. un
+// pasado) no debe caer en silencio en otro ciclo.
+export function pickTermRow(rows, targetLabel) {
+  if (!targetLabel) return rows[0] ?? null;
+  const hit = rows.find((r) => r.label === targetLabel || r.label.includes(targetLabel));
+  if (!hit) throw new Error(`El ciclo ${targetLabel} no está disponible en Mi Horario`);
   return hit;
 }
 
-// El horario vive detrás de un selector de término: cuando hay más de un ciclo
-// activo, PeopleSoft primero pide elegirlo (radios SSR_DUMMY + Continuar) y
-// recién ahí muestra la grilla. Con un solo ciclo va directo, y el selector no
-// aparece: en ese caso no hay nada que elegir y seguimos de largo.
-async function selectTerm(page, targetTerm, onStep) {
-  const selector = await findFrame(page, 'input[name^="SSR_DUMMY_RECV1$sels$"]', { timeout: 4000 });
-  if (!selector) return;
+// El horario abre en un selector de ciclo (grilla de links). Elegimos el pedido
+// por etiqueta, o el primero (el actual). Con un solo ciclo el selector igual
+// aparece; si por algún motivo no está, seguimos de largo (ya en un horario).
+async function selectTerm(page, targetLabel, onStep) {
+  const picker = await findFrame(page, 'a[id^="SSR_ENTRMCUR_VW_TERM_DESCR30$"]', { timeout: 5000 });
+  if (!picker) return;
 
-  const radios = await selector.evaluate(() =>
-    [...document.querySelectorAll('input[name^="SSR_DUMMY_RECV1$sels$"]')].map((radio) => {
-      const row = radio.closest('tr');
-      return { value: radio.value, id: radio.id, label: row ? row.textContent.replace(/\s+/g, ' ').trim() : null };
-    })
+  const rows = await picker.evaluate(() =>
+    [...document.querySelectorAll('a[id^="SSR_ENTRMCUR_VW_TERM_DESCR30$"]')]
+      .filter((a) => /^SSR_ENTRMCUR_VW_TERM_DESCR30\$\d+$/.test(a.id))
+      .map((a) => ({ id: a.id, label: a.textContent.replace(/\s+/g, ' ').trim() }))
   );
 
-  const target = pickTermRadio(radios, targetTerm);
+  const target = pickTermRow(rows, targetLabel);
   if (!target) return;
 
-  onStep('eligiendo el ciclo…');
-  await selector.locator(`[id="${target.id}"]`).check();
-  await page.waitForTimeout(1500);
+  onStep('abriendo el ciclo…');
+  await picker.locator(`a[id="${target.id}"]`).first().click();
+  await page.waitForTimeout(7000);
+}
 
-  // El botón cambia de idioma según el portal ("Continue"/"Continuar"); aceptamos
-  // ambos para no atarnos a la locale.
-  const cont = await findFrame(page, 'input[value="Continue"], input[value="Continuar"]', { timeout: 5000 });
-  if (cont) {
-    await cont.locator('input[value="Continue"], input[value="Continuar"]').first().click();
-    await page.waitForTimeout(8000);
+// La pantalla abre en vista de lista por defecto (SSR_VW_CLSCHD_OPT=L), que es la
+// que parseamos. La forzamos igual por si el portal recuerda la de calendario.
+async function ensureListView(page, onStep) {
+  const frame = await findFrame(page, '[id="DERIVED_SSR_FL_SSR_VW_CLSCHD_OPT"]', { timeout: 4000 });
+  if (!frame) return;
+  const radio = frame.locator('[id="DERIVED_SSR_FL_SSR_VW_CLSCHD_OPT"]').first();
+  try {
+    if ((await radio.count()) && !(await radio.isChecked())) {
+      onStep('cambiando a vista de lista…');
+      await radio.check();
+      await page.waitForTimeout(6000);
+    }
+  } catch {
+    // control ausente o no chequeable en este layout; la lista es el default.
   }
 }
 
 // Lee el horario inscrito del portal y lo persiste. Devuelve lo guardado.
-// targetTerm (STRM) fija qué ciclo sincronizar; sin él, el que el portal dé por
-// defecto (el arranque, cuando todavía no conocemos el STRM del ciclo actual).
+// targetTerm es la ETIQUETA del ciclo a sincronizar ("Abril de 2026"); sin ella,
+// el ciclo que el portal ponga primero (el actual).
 export async function syncSchedule(page, { userId, onStep = () => {}, targetTerm = null }) {
   try {
     onStep('abriendo Mi Horario…');
-    await page.goto(SCHEDULE_URL, { waitUntil: 'commit' });
+    // Crear el navigation collection Fluid antes de la hoja, o el portal la
+    // rechaza con bIsCalledOutsideNavigationCollection.
+    await page.goto(MANAGE_CLASSES_START_URL, { waitUntil: 'commit' });
+    await page.waitForTimeout(6000);
+    await page.goto(VIEW_MY_CLASSES_URL, { waitUntil: 'commit' });
     await page.waitForTimeout(6000);
 
-    // Si el portal ofrece elegir ciclo, elegimos el pedido antes de leer nada.
+    // Elegir el ciclo pedido (por etiqueta) antes de leer nada.
     await selectTerm(page, targetTerm, onStep);
-
-    // La pantalla abre en vista de calendario; List View es la que parseamos.
-    const listRadio = await findFrame(page, '[id="DERIVED_REGFRM1_SSR_SCHED_FORMAT$258$"]');
-    if (listRadio) {
-      const radio = listRadio.locator('[id="DERIVED_REGFRM1_SSR_SCHED_FORMAT$258$"]');
-      if (!(await radio.isChecked())) {
-        onStep('cambiando a vista de lista…');
-        await radio.check();
-        await page.waitForTimeout(7000);
-      }
-    }
+    await ensureListView(page, onStep);
 
     const frame = await findFrame(page, '[id="ICStateNum"]');
     if (!frame) throw new Error('No se encontró el contenido del horario');
 
     onStep('leyendo materias inscritas…');
-    const schedule = toSchedule(await frame.evaluate(extractSchedule));
+    const raw = await frame.evaluate(extractSchedule);
+    if (!raw.termLabel) {
+      throw new Error('No se pudo leer el ciclo del horario (¿cambió el layout de View My Classes?)');
+    }
 
-    // Verificación: si pedimos un ciclo y el portal devolvió otro, no lo
-    // guardamos. Pasaba cuando el portal recuerda un ciclo previo y aterriza en
-    // su grilla sin ofrecer el selector: guardar eso metía Septiembre donde se
-    // pedía Abril. Mejor fallar fuerte que ensuciar el horario con otro término.
-    if (targetTerm && schedule.term && schedule.term !== targetTerm) {
+    // Verificación: si pedimos un ciclo y el portal mostró otro, no guardamos.
+    // Mejor fallar fuerte que meter un ciclo donde se pidió otro.
+    if (targetTerm && !raw.termLabel.includes(targetTerm) && raw.termLabel !== targetTerm) {
       throw new Error(
-        `Se pidió el horario del ciclo ${targetTerm} pero PeopleSoft mostró ${schedule.term}. ` +
-          'El portal no ofreció cambiar de ciclo; no se guardó nada.'
+        `Se pidió el horario de ${targetTerm} pero View My Classes mostró ${raw.termLabel}; no se guardó nada.`
       );
     }
+
+    // La clave del término: el STRM si `terms` ya lo conoce para esta etiqueta,
+    // si no la etiqueta. Así coincide con el identificador que readTerms calcula.
+    const term = codeForLabel(raw.termLabel) ?? raw.termLabel;
+    const schedule = toSchedule(raw, { term });
 
     const saved = saveSchedule(userId, schedule);
     logSync({
       userId,
       kind: 'mySchedule',
-      term: schedule.term,
+      term,
       status: 'ok',
       detail: `${schedule.courses.length} materia(s)`,
       rows: saved,

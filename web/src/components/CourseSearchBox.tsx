@@ -21,6 +21,7 @@ export function CourseSearchBox({
   suggestions?: CatalogCourse[];
 }) {
   const [q, setQ] = useState('');
+  const [focused, setFocused] = useState(false);
   const [detail, setDetail] = useState<CatalogCourse | null>(null);
   const index = useMemo(() => buildIndex(courses), [courses]);
   const byId = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
@@ -39,11 +40,16 @@ export function CourseSearchBox({
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
+        onFocus={() => setFocused(true)}
+        // onBlur cierra el popover; los ítems usan onMouseDown, que dispara
+        // antes del blur, así que el click se registra antes de desmontarlo.
+        onBlur={() => setFocused(false)}
+        onKeyDown={(e) => e.key === 'Escape' && (e.currentTarget.blur(), setFocused(false))}
         placeholder={placeholder}
         className="border-line bg-surface focus:border-accent w-full rounded-[var(--radius)] border px-3 py-2 text-sm outline-none"
       />
-      {results.length > 0 && (
-        <ul className="border-line bg-surface absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-[var(--radius)] border shadow-none">
+      {focused && results.length > 0 && (
+        <ul className="border-line bg-surface absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-[var(--radius)] border shadow-lg">
           {!q.trim() && <li className="text-muted border-line border-b px-3 py-2 text-xs">Lo que te toca cursar este ciclo</li>}
           {results.map((course) => (
             <li key={course.id} className="flex items-stretch">
