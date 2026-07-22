@@ -8,6 +8,7 @@
 // cambia IDs entre parches) y lo que hace que los tests corran sin portal.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // Campos de PeopleSoft que llevan estado de sesión. No son secretos de larga
 // vida (mueren con la sesión), pero un token de sesión no se commitea igual.
@@ -15,14 +16,18 @@ const SENSITIVE_FIELDS = ['ICSID', 'ICStateNum', 'ICNAVTYPEDROPDOWN'];
 
 // Los nombres de profesores NO se tocan: son públicos, están en el catálogo y
 // los tests los usan. Lo que se va es lo que identifica al estudiante.
-function scrub(html) {
+export function scrub(html) {
   let out = html;
-  for (const field of SENSITIVE_FIELDS) {
-    out = out.replaceAll(
-      new RegExp(`(id="${field}"[^>]*value=")[^"]*(")`, 'g'),
-      `$1SCRUBBED_FOR_FIXTURE$2`
+  // PeopleSoft changes the attribute order between pages. Sanitizing each input
+  // tag means `value` is removed whether it appears before or after `id`/`name`.
+  out = out.replace(/<input\b[^>]*>/gi, (tag) => {
+    const isSensitive = SENSITIVE_FIELDS.some((field) =>
+      new RegExp(`\\b(?:id|name)\\s*=\\s*(["'])${field}\\1`, 'i').test(tag)
     );
-  }
+    return isSensitive
+      ? tag.replace(/(\bvalue\s*=\s*)(["'])[^"']*\2/i, '$1$2SCRUBBED_FOR_FIXTURE$2')
+      : tag;
+  });
   // Red de seguridad: cualquier otro hidden con pinta de token (base64 largo).
   out = out.replace(
     /(<input[^>]*type="hidden"[^>]*value=")([A-Za-z0-9+/]{24,}={0,2})(")/g,
@@ -70,18 +75,20 @@ function scrub(html) {
   return out;
 }
 
-const [input] = process.argv.slice(2);
-if (!input) {
-  console.error('Uso: node scripts/make-fixture.mjs <volcado.html>');
-  process.exit(1);
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const [input] = process.argv.slice(2);
+  if (!input) {
+    console.error('Uso: node scripts/make-fixture.mjs <volcado.html>');
+    process.exit(1);
+  }
+
+  const html = await readFile(input, 'utf8');
+  const cleaned = scrub(html);
+
+  await mkdir('fixtures', { recursive: true });
+  const output = path.join('fixtures', path.basename(input));
+  await writeFile(output, cleaned);
+
+  const scrubbed = (cleaned.match(/SCRUBBED_FOR_FIXTURE/g) ?? []).length;
+  console.log(`${input} → ${output} (${scrubbed} valor(es) de sesión removidos)`);
 }
-
-const html = await readFile(input, 'utf8');
-const cleaned = scrub(html);
-
-await mkdir('fixtures', { recursive: true });
-const output = path.join('fixtures', path.basename(input));
-await writeFile(output, cleaned);
-
-const scrubbed = (cleaned.match(/SCRUBBED_FOR_FIXTURE/g) ?? []).length;
-console.log(`${input} → ${output} (${scrubbed} valor(es) de sesión removidos)`);

@@ -389,9 +389,9 @@ app.get('/api/my-schedule', (req, res) => {
 // emitiendo pasos por el SSE existente para que el LiveOpBanner los muestre.
 app.post('/api/my-schedule/sync', async (req, res) => {
   try {
-    // El término lo elige el switcher de /horario (el STRM del ciclo activo).
-    // Sin él, el sync toma el que el portal dé por defecto: es el arranque,
-    // cuando todavía no se conoce el STRM del ciclo actual.
+    // El término lo elige el switcher de /horario: la ETIQUETA del ciclo activo
+    // ("Abril de 2026"), porque View My Classes lista los ciclos por etiqueta, no
+    // por STRM. Sin él, el sync toma el ciclo que el portal ponga primero (el actual).
     const targetTerm = req.body?.term ? String(req.body.term) : null;
     const schedule = await withPage(req.userId, (page) =>
       syncSchedule(page, {

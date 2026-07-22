@@ -2,7 +2,7 @@
 // se repartan la columna en vez de taparse, que los choques se detecten, y que
 // un choque temprano no adelgace un bloque de la tarde.
 import assert from 'node:assert/strict';
-import { layoutDay, toBlocks, toGridLine } from '../web/src/lib/grid.ts';
+import { layoutDay, toBlocks, toGridLine, hasCollisions } from '../web/src/lib/grid.ts';
 
 const block = (id, start, end, title = id) => ({
   id,
@@ -127,4 +127,32 @@ const block = (id, start, end, title = id) => ({
   assert.equal(toGridLine('22:00', 7, 15), 62, '22:00 es la línea de cierre');
 }
 
-console.log('✓ Layout del WeeklyGrid OK (carriles, choques, bordes, TBA).');
+// hasCollisions: la señal sí/no que usa /inscripcion, sobre Block[] sin colocar.
+// El carrito arma bloques con sectionToBlocks (Block, no PlacedBlock), así que
+// esta señal no puede depender de conflictsWith —el bug que dejaba /inscripcion
+// en blanco al leer .length de undefined.
+{
+  assert.equal(hasCollisions([]), false, 'carrito vacío no choca');
+  assert.equal(
+    hasCollisions([block('a', '07:00', '09:00'), block('b', '10:00', '12:00')]),
+    false,
+    'mismo día sin solaparse no choca'
+  );
+  assert.equal(
+    hasCollisions([block('a', '10:00', '13:00'), block('b', '12:00', '14:00')]),
+    true,
+    'mismo día solapados sí chocan'
+  );
+  assert.equal(
+    hasCollisions([{ ...block('a', '10:00', '12:00'), day: 'Mo' }, { ...block('b', '10:00', '12:00'), day: 'Tu' }]),
+    false,
+    'misma hora en días distintos no choca'
+  );
+  assert.equal(
+    hasCollisions([block('a', '10:00', '13:00'), { ...block('g', '12:00', '14:00'), ghost: true }]),
+    false,
+    'un fantasma (preview) no cuenta como choque'
+  );
+}
+
+console.log('✓ Layout del WeeklyGrid OK (carriles, choques, bordes, TBA, hasCollisions).');

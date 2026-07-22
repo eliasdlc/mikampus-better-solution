@@ -53,6 +53,52 @@ export function parseDays(raw: string): DayCode[] {
   return days;
 }
 
+// View My Classes (Fluid) escribe los días con el nombre completo en inglés y
+// separados por espacio ("Monday", "Tuesday Thursday"), no concatenados como el
+// class search. Este mapeo los lleva al mismo código de dos letras del portal.
+const FULL_DAY_CODES: Record<string, DayCode> = {
+  monday: 'Mo',
+  tuesday: 'Tu',
+  wednesday: 'We',
+  thursday: 'Th',
+  friday: 'Fr',
+  saturday: 'Sa',
+  sunday: 'Su',
+};
+
+// "Days: Tuesday Thursday" → ["Tu", "Th"]. Tolera el prefijo "Days:" y los
+// nombres en cualquier caja; ignora lo que no sea un día conocido.
+export function parseFullDays(raw: string | null | undefined): DayCode[] {
+  const days: DayCode[] = [];
+  for (const word of (raw ?? '').replace(/^\s*Days:\s*/i, '').trim().split(/\s+/)) {
+    const code = FULL_DAY_CODES[word.toLowerCase()];
+    if (code) days.push(code);
+  }
+  return days;
+}
+
+// Construye las reuniones de View My Classes a partir de sus campos separados:
+// días ("Days: Monday"), horas ("Times: 10:00AM to 1:00PM") y aula. El aula
+// "To be Announced"/"TBA" se guarda como null (igual que parseMeetings). Devuelve
+// [] si el bloque no tiene día u hora parseable (ej. una sección sin horario).
+export function parseFluidMeeting(
+  daysRaw: string,
+  timesRaw: string,
+  room: string | null = null
+): Meeting[] {
+  const days = parseFullDays(daysRaw);
+  const t = (timesRaw ?? '')
+    .replace(/^\s*Times:\s*/i, '')
+    .trim()
+    .match(/^(\d{1,2}:\d{2}\s*[AP]M)\s*to\s*(\d{1,2}:\d{2}\s*[AP]M)$/i);
+  if (!days.length || !t) return [];
+  const start = parseTime(t[1]);
+  const end = parseTime(t[2]);
+  if (!start || !end) return [];
+  const cleanRoom = room && !/^(TBA|To be Announced)$/i.test(room.trim()) ? room.trim() : null;
+  return [{ days, start, end, room: cleanRoom }];
+}
+
 // Parsea una celda "Days & Times" completa. El portal puede meter varios
 // patrones en una misma celda separados por salto de línea (una sección que se
 // reúne en horarios distintos según el día).

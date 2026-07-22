@@ -26,6 +26,24 @@ export const SCHEDULE_URL =
 export const VIEW_SCHEDULE_URL =
   'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SS_LAM_STD_GR_LST.GBL?PORTALPARAM_PTCNAV=HC_SS_LAM_STD_GR_LST_GBL1&EOPP.SCNode=SA&EOPP.SCPortal=EMPLOYEE&EOPP.SCName=HCCC_ENROLLMENT&EOPP.SCLabel=Inscripciones&EOPP.SCPTfname=HCCC_ENROLLMENT&FolderPath=PORTAL_ROOT_OBJECT.CO_EMPLOYEE_SELF_SERVICE.HCCC_ENROLLMENT.HC_SS_LAM_STD_GR_LST_GBL1&IsFolder=false';
 
+// View My Classes (Fluid). El horario REAL de cualquier ciclo inscrito —actual
+// o pasado— con día/hora/aula/profesor. A diferencia de SCHEDULE_URL
+// (SSR_SSENRL_SCHD_W, atado a la ventana de inscripción y por eso ciego al ciclo
+// en curso) y de VIEW_SCHEDULE_URL (SS_LAM_STD_GR_LST, el gradebook, que lista
+// materias por ciclo pero SIN reuniones), esta hoja Fluid trae la grilla real y
+// un selector de todos los ciclos inscritos. Ver MAPA-MICAMPUS.md → Manage
+// Classes → "View My Classes".
+//
+// Es Fluid: abrir la hoja directa en una sesión fresca puede tirar
+// `bIsCalledOutsideNavigationCollection` (MAPA §68-72). La ruta robusta es
+// lanzar primero el START del tile Manage Classes para crear el navigation
+// collection, y recién ahí abrir la hoja. Por eso van las dos URLs.
+export const MANAGE_CLASSES_START_URL =
+  'https://micampus.pucmm.edu.do/psc/cs92pro_newwin/EMPLOYEE/SA/c/SSR_STUDENT_FL.SSR_START_PAGE_FL.GBL?GMenu=SSR_STUDENT_FL&GComp=SSR_START_PAGE_FL&GPage=SSR_START_PAGE_FL&scname=CS_SSR_MANAGE_CLASSES_NAV';
+
+export const VIEW_MY_CLASSES_URL =
+  'https://micampus.pucmm.edu.do/psc/cs92pro/EMPLOYEE/SA/c/SSR_STUDENT_FL.SSR_COMPONENT_FL.GBL?Page=SSR_VW_CLASS_FL&pslnkid=CS_S201605040129258749603935';
+
 // Dar de baja una materia (plan §5.5). Mismo patrón de URL clásica que el
 // carrito y Mi Horario, en la misma carpeta de Enrollment del portal.
 // Recon cerrado en Fase 8.5: el flujo vive en dropClass.js con fixtures de

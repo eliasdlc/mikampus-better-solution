@@ -134,11 +134,14 @@ export async function fetchMySchedule(term?: string): Promise<ScheduleResponse> 
 }
 
 // Refresh en vivo contra PeopleSoft: tarda segundos y publica su progreso en
-// el feed SSE. La UI no se bloquea esperándolo. `term` (STRM) fija qué ciclo
-// sincronizar — el que muestra el switcher; sin él, el server toma el default
-// del portal (el arranque, cuando aún no se conoce el STRM del ciclo actual).
-export async function syncMySchedule(term?: string): Promise<ScheduleResponse> {
-  return scheduleResponseSchema.parse(await send('/api/my-schedule/sync', 'POST', term ? { term } : undefined));
+// el feed SSE. La UI no se bloquea esperándolo. `termLabel` es la ETIQUETA del
+// ciclo a sincronizar ("Abril de 2026") — View My Classes lista los ciclos por
+// etiqueta, no por STRM. Sin ella, el server toma el ciclo que el portal ponga
+// primero (el actual).
+export async function syncMySchedule(termLabel?: string): Promise<ScheduleResponse> {
+  return scheduleResponseSchema.parse(
+    await send('/api/my-schedule/sync', 'POST', termLabel ? { term: termLabel } : undefined)
+  );
 }
 
 export async function dropScheduleCourse(input: {

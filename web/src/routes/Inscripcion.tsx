@@ -17,7 +17,7 @@ import {
 } from '../lib/api.ts';
 import type { CartRow, CatalogCourse } from '../../../src/shared/schemas.ts';
 import { AlertTriangle, CheckCircle2, CircleDot, Clock3, Radio, Zap } from 'lucide-react';
-import { sectionToBlocks, type Block } from '../lib/grid.ts';
+import { sectionToBlocks, hasCollisions, type Block } from '../lib/grid.ts';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { SeatBadge } from '../components/SeatBadge.tsx';
@@ -112,7 +112,7 @@ export function Inscripcion() {
   const blocks = useMemo(() => cartBlocks(rows), [rows]);
   const enrollmentWindow = windows.data?.windows[0] ?? null;
   const hasClosedSection = rows.some((row) => row.status === 'closed');
-  const hasCollision = blocks.some((block) => block.conflictsWith.length > 0);
+  const hasCollision = hasCollisions(blocks);
   const isLive = enroll.isPending || validation.isPending || refresh.isPending || refreshWindow.isPending;
   const stage = enroll.isSuccess
     ? 'result'
