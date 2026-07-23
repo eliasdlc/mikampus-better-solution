@@ -13,8 +13,9 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
   `feat/open-source-ready` queda preservada tras el merge de Fase 0.
-- **Fase en curso:** Fase 6 — implementación local terminada; publicación y validación
-  de tag pendientes de credenciales/entorno protegidos.
+- **Fase en curso:** Fase 7 — pulido de utilidad aprobado y pendiente de ejecución. La
+  implementación local de Fase 6 está terminada, pero publicación y validación de tag quedan
+  bloqueadas hasta cerrar P0–P6 de [`PLAN-PULIDO-UTILIDAD.md`](./PLAN-PULIDO-UTILIDAD.md).
 - **Cierre de implementación de Fase 5:** se genera un tarball standalone Linux x64 con
   runtime Node, installer/uninstaller, SHA-256, SBOM, procedencia y notices; el
   flujo de smoke definido cubre first-run, stop/start, upgrade y preservación de
@@ -34,6 +35,12 @@
   README y guías públicas cubren modos, límites, seguridad, Home Server, fixtures,
   plataformas, contribución y releases. Falta configurar el environment protegido y
   ejecutar un tag real: no se publicaron npm, release ni Vercel desde este trabajo.
+- **Gate de utilidad previo al release:** el diagnóstico de producto encontró fallos de
+  identidad de ciclos, sincronización, agenda, inscripción, horario y proyecciones que
+  pueden hacer que datos existentes parezcan ausentes o que una cifra correcta resulte
+  imposible de auditar. El plan P0–P6 corrige la base de datos primero y luego consolida
+  Inscripción, reconstruye Inicio alrededor del día académico, enriquece Mi horario y hace
+  trazables el GPA, la gráfica y las señales. Ningún tag público se crea antes de su cierre.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -94,6 +101,7 @@
 | 4 | Onboarding, notificaciones y ciclo de vida de datos | ✅ Hecho |
 | 5 | Distribución (instaladores/binarios + npm) | 🟨 En curso |
 | 6 | CI de releases, documentación y landing | 🟨 En curso |
+| 7 | Pulido de utilidad para lanzamiento (P0–P6) | 🟨 En curso |
 
 Leyenda: ⬜ pendiente · 🟨 en curso · ✅ hecho.
 
@@ -541,13 +549,34 @@ distribución en un backend de datos.
 checksums y release notes; landing ofrece el manifest correcto; un tercero puede elegir modo,
 instalar, entender límites, recuperar datos y desinstalar usando solo documentación pública.
 
+### Fase 7 — Pulido de utilidad para lanzamiento
+
+**Meta:** asegurar que el primer release no sea solamente instalable y seguro, sino útil y
+confiable para la jornada académica real del estudiante.
+
+La especificación ejecutable vive en
+[`PLAN-PULIDO-UTILIDAD.md`](./PLAN-PULIDO-UTILIDAD.md). Sus fases obligatorias son:
+
+1. P0 — identidad canónica de ciclos, migración y recuperación de horarios existentes;
+2. P1 — sincronización universal, periódica y observable;
+3. P2 — fusión de Planear dentro del workspace de Inscripción;
+4. P3 — Inicio centrado en clases y próximas fechas oficiales de PUCMM;
+5. P4 — horario con mejor jerarquía, aula y enriquecimiento seguro de profesor;
+6. P5 — proyecciones de GPA auditables, trayectoria interactiva y señales priorizadas;
+7. P6 — pruebas integradas, responsive, accesibilidad y gate final de utilidad.
+
+**Aceptación:** P0–P6 están marcadas ✅ con su evidencia; cada uno de los nueve problemas
+del diagnóstico tiene prueba automática y check manual; suite, typecheck y lint pasan; no
+hay datos académicos reales en fixtures o documentación. Solo después se permite ejecutar
+el primer tag público definido por Fases 5–6.
+
 ---
 
 ## Procesos y convenciones
 
-- **Ramas:** `main` → `dev` → `feat/open-source-ready`. Todo el trabajo del giro en esa
-  rama de tarea. Las ramas `phase/*` existentes se **preservan** (registro histórico); no
-  se borran.
+- **Ramas:** `main` → `dev` → `feat/single-user-secure`. El trabajo restante del giro y
+  el gate de utilidad viven en esa rama de tarea. `feat/open-source-ready` y las ramas
+  `phase/*` existentes se **preservan** como registro histórico; no se borran.
 - **Commits:** Conventional Commits, atómicos, sin trailers de atribución de IA.
 - **Verificación (obligatoria antes de cerrar fase o commitear):** `npm test`, `npm run
   typecheck`, `npm run lint` y los smokes de la fase. Todos verdes = candidato a "hecho";
