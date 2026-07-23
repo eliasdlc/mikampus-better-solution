@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isStrmCode, cycleKey } from './shared/terms.ts';
 
 // Versionado de esquema (Fase 4 §6). Hasta acá el esquema se recreaba con
 // `CREATE TABLE IF NOT EXISTS` en cada arranque: alcanza para agregar tablas,
@@ -79,7 +80,113 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 3,
+    name: 'term-identity',
+    // Solo sanea datos existentes; no cambia el esquema. Una app v1/v2 sigue
+    // leyendo la base sin problema, así que el rollback de esquema es seguro.
+    minCompatibleVersion: 1,
+    up: repairTermIdentity,
+  },
 ];
+
+// Las columnas que guardan el IDENTIFICADOR resuelto de un ciclo (STRM si se
+// conoce, si no la etiqueta). Al fusionar dos filas del mismo ciclo, sus hijos
+// se reapuntan al identificador canónico.
+const RESOLVED_TERM_ID_COLUMNS = [
+  ['enrollments', 'term'],
+  ['sections', 'term'],
+  ['plans', 'term'],
+  ['goals', 'deadline_term'],
+  ['enrollment_windows', 'term_code'],
+  ['sync_log', 'term'],
+];
+
+// Columnas que SIEMPRE guardan la etiqueta (histórico), nunca un STRM. Al
+// fusionar, se reapuntan a la etiqueta canónica, no al código.
+const LABEL_ONLY_TERM_COLUMNS = [
+  ['grades', 'term'],
+  ['pensum', 'taken_term'],
+  ['progress_items', 'term'],
+];
+
+function reassign(db, table, column, from, to) {
+  if (from == null || from === to) return;
+  db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`).run(to, from);
+}
+
+// Migración de identidad de ciclo (§P0.3). Repara la corrupción que el viejo
+// reconcileTerms podía dejar —una etiqueta escrita en la columna `code`— y
+// fusiona filas duplicadas del mismo ciclo. Corre dentro de la transacción de la
+// migración: cualquier `throw` (colisión ambigua, choque de UNIQUE) hace ROLLBACK
+// y conserva la copia pre-upgrade. Idempotente: una segunda corrida no encuentra
+// nada que arreglar.
+function tableExists(db, name) {
+  return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) != null;
+}
+
+export function repairTermIdentity(db) {
+  // El baseline (tablas) lo crea db.js antes de migrar, no una migración. Si la
+  // tabla `terms` no existe (una base mínima que solo prueba el framework, o una
+  // instalación sin datos de ciclo), no hay identidad que reparar.
+  if (!tableExists(db, 'terms')) return;
+
+  // 1. Sanear label-as-code: un `code` que no es un STRM es una etiqueta que se
+  //    coló por el bug. El STRM real es desconocido, así que la columna vuelve a
+  //    NULL. La etiqueta (PK) sigue nombrando el ciclo.
+  for (const row of db.prepare('SELECT code, label FROM terms WHERE code IS NOT NULL').all()) {
+    if (!isStrmCode(row.code)) {
+      db.prepare("UPDATE terms SET code = NULL, updated_at = datetime('now') WHERE label = ?").run(row.label);
+    }
+  }
+
+  // 2. Fusionar filas del mismo ciclo (misma cycleKey) que quedaron separadas.
+  const rows = db.prepare('SELECT code, label, start_date AS startDate, end_date AS endDate FROM terms').all();
+  const groups = new Map();
+  for (const row of rows) {
+    const key = cycleKey(row);
+    if (!key) continue; // un término que no se puede ubicar no se fusiona con nadie
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+
+  for (const [key, group] of groups) {
+    if (group.length < 2) continue;
+
+    // Abortar ante ambigüedad: dos STRM distintos para el mismo ciclo no se pueden
+    // reconciliar sin decidir cuál es real. Mejor parar y conservar el backup que
+    // mezclar datos de dos identidades. (§P0 aceptación: conflicto imposible no
+    // mezcla y deja diagnóstico.)
+    const codes = [...new Set(group.map((r) => r.code).filter(Boolean))];
+    if (codes.length > 1) {
+      throw new Error(
+        `Ciclo ${key}: dos STRM en conflicto (${codes.join(', ')}). No se puede fusionar sin perder datos; ` +
+          'la base quedó sin tocar. Revisá y unificá manualmente, o restaurá la copia pre-upgrade.'
+      );
+    }
+
+    const canonical = group.find((r) => r.code) ?? group.find((r) => r.startDate) ?? group[0];
+    const code = codes[0] ?? null;
+    const canonicalId = code ?? canonical.label;
+    const startDate = group.map((r) => r.startDate).filter(Boolean).sort()[0] ?? null; // el más temprano
+    const endDate = group.map((r) => r.endDate).filter(Boolean).sort().at(-1) ?? null; // el más tardío
+
+    for (const row of group) {
+      if (row.label === canonical.label) continue;
+      // Reapuntar los hijos de la etiqueta descartada. Un UNIQUE que choque
+      // (misma sección bajo dos identidades) lanza y aborta la migración entera.
+      for (const [table, column] of RESOLVED_TERM_ID_COLUMNS) reassign(db, table, column, row.label, canonicalId);
+      for (const [table, column] of LABEL_ONLY_TERM_COLUMNS) reassign(db, table, column, row.label, canonical.label);
+      db.prepare('DELETE FROM terms WHERE label = ?').run(row.label);
+    }
+
+    // Enriquecer la canónica con los mejores valores del grupo.
+    db.prepare(
+      "UPDATE terms SET code = COALESCE(?, code), start_date = COALESCE(?, start_date), " +
+        "end_date = COALESCE(?, end_date), updated_at = datetime('now') WHERE label = ?"
+    ).run(code, startDate, endDate, canonical.label);
+  }
+}
 
 export const SCHEMA_VERSION = MIGRATIONS.at(-1).version;
 

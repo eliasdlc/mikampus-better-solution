@@ -33,13 +33,14 @@ export function Dashboard() {
   const current = terms.data?.current ?? null;
   const next = terms.data?.next ?? null;
 
-  // El horario del ciclo actual. Si el ciclo actual todavía no tiene STRM
-  // conocido (solo vive en grades), no hay horario que pedir: el hero lo dice
-  // en vez de mostrar el de otro término.
+  // El horario del ciclo actual, pedido por su IDENTIFICADOR (STRM si se conoce,
+  // si no la etiqueta) — no gateado por el STRM. Un ciclo que solo vive por
+  // etiqueta igual tiene horario que mostrar; su estado de "sincronizado" lo dice
+  // el syncedAt de la respuesta, no la presencia del código (§P0.5).
   const schedule = useQuery({
-    queryKey: ['my-schedule', current?.code],
-    queryFn: () => fetchMySchedule(current!.code!),
-    enabled: !!current?.code,
+    queryKey: ['my-schedule', current?.term],
+    queryFn: () => fetchMySchedule(current!.term),
+    enabled: !!current?.term,
   });
   // El del próximo ciclo, para la card (materias ya inscritas).
   const nextSchedule = useQuery({
@@ -96,6 +97,8 @@ export function Dashboard() {
             now={now}
             current={current}
             tieneHorario={blocks.length > 0}
+            synced={schedule.data?.syncedAt != null}
+            loading={!!current?.term && schedule.isPending}
             planes={plans.data?.length ?? 0}
           />
 
@@ -132,37 +135,47 @@ function Hero({
   now,
   current,
   tieneHorario,
+  synced,
+  loading,
   planes,
 }: {
   proxima: NextClass<Block> | null;
   now: Date;
   current: TermInfo | null;
   tieneHorario: boolean;
+  synced: boolean;
+  loading: boolean;
   planes: number;
 }) {
   if (!proxima) {
     // El hero es del ciclo actual. Sin próxima clase, el mensaje depende de por
-    // qué: entre ciclos, un ciclo que aún no sincronizaste, o uno sin horario.
-    const titulo = !current
-      ? 'Estás entre ciclos'
-      : current.code == null
-        ? `Todavía no sincronizaste ${current.label ?? 'el ciclo actual'}`
-        : tieneHorario
-          ? 'Ninguna de tus materias tiene horario asignado'
-          : `Todavía no tenés horario inscrito en ${current.label ?? 'este ciclo'}`;
+    // qué: entre ciclos, un ciclo que todavía no sincronizaste, o uno sincronizado
+    // pero sin horario. "Sincronizado" sale del REGISTRO de sync (§P0.5), no de si
+    // se conoce el STRM: un ciclo que solo vive por etiqueta pero ya se sincronizó
+    // tiene horario, y decir "no sincronizaste" sería mentir.
+    const titulo = loading
+      ? 'Cargando tu horario…'
+      : !current
+        ? 'Estás entre ciclos'
+        : !synced
+          ? `Todavía no sincronizaste ${current.label ?? 'el ciclo actual'}`
+          : tieneHorario
+            ? 'Ninguna de tus materias tiene horario asignado'
+            : `Todavía no tenés horario inscrito en ${current.label ?? 'este ciclo'}`;
 
-    const puedeSincronizar = current != null;
     return (
       <section className="border-line rounded-[var(--radius)] border border-dashed p-6">
         <p className="font-display text-xl font-semibold tracking-tight text-balance">{titulo}</p>
         <p className="text-muted mt-1 text-sm">
-          {!current
-            ? 'No hay un ciclo corriendo ahora mismo. Mirá el próximo en la card de la derecha.'
-            : puedeSincronizar && current.code == null
-              ? 'El portal todavía no nos dio el horario de este ciclo. Traelo desde Mi horario.'
-              : planes > 0
-                ? `Tenés ${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}: elegí grupos y mandalos al carrito.`
-                : 'Armá tu ciclo en el planner y mandá las materias al carrito antes de la hora de inscripción.'}
+          {loading
+            ? 'Un momento.'
+            : !current
+              ? 'No hay un ciclo corriendo ahora mismo. Mirá el próximo en la card de la derecha.'
+              : !synced
+                ? 'Todavía no trajimos el horario de este ciclo. Traelo desde Mi horario.'
+                : planes > 0
+                  ? `Tenés ${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}: elegí grupos y mandalos al carrito.`
+                  : 'Armá tu ciclo en el planner y mandá las materias al carrito antes de la hora de inscripción.'}
         </p>
         <Link
           to={current != null ? '/horario' : '/planear'}

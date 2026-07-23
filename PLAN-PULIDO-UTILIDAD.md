@@ -11,7 +11,7 @@
 
 - **Fecha del diagnóstico:** 2026-07-22.
 - **Rama designada:** `feat/single-user-secure`, preservada como rama histórica de la fase.
-- **Estado:** plan aprobado; implementación pendiente.
+- **Estado:** P0 cerrada (identidad de ciclos e integridad); P1–P6 pendientes.
 - **Dependencia de release:** las fases de distribución y CI pueden seguir validándose en
   source, pero no se publica npm, GitHub Release, tag estable ni landing de descarga hasta
   cerrar P0–P6.
@@ -451,7 +451,7 @@ Al terminar cada fase:
 
 | Fase | Estado | Evidencia de cierre |
 |---|---|---|
-| P0 — Ciclos e integridad | ⬜ Pendiente | — |
+| P0 — Ciclos e integridad | ✅ Hecho | `cycleLabel` deriva por mes de inicio (abril→Abril); `reconcileTerms` respeta la frontera STRM/etiqueta (`isStrmCode`) + telemetría a diagnostics; migración v3 `term-identity` (saneo label-as-code, fusión de duplicados, aborto ante STRM en conflicto, backup+transacción); convergencia de identificador al aparecer el STRM; Dashboard y `readSchedule` derivan "sincronizado" del registro de sync, no de `rows.length`. Tests: `test-terms`, `test-term-identity`, `test-schedule-identity` + suite completa, typecheck y lint en verde. |
 | P1 — Sync universal | ⬜ Pendiente | — |
 | P2 — Inscripción unificada | ⬜ Pendiente | — |
 | P3 — Inicio y calendario | ⬜ Pendiente | — |

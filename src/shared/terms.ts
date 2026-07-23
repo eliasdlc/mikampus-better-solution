@@ -43,13 +43,36 @@ function isoToDayNumber(iso: string): number | null {
   return dayNumber(Number(m[1]), Number(m[2]), Number(m[3]));
 }
 
-// Cualquier mes del año → la etiqueta del ciclo al que pertenece. Sirve para
-// derivar la etiqueta de un STRM cuando solo tenemos su fecha de inicio: una
+// El mes de INICIO de un término → la etiqueta del ciclo al que pertenece. Sirve
+// para derivar la etiqueta de un STRM cuando solo tenemos su fecha de inicio: una
 // inscripción que arranca el 1 de septiembre es del ciclo "Septiembre".
+//
+// La llave es el mes en que el ciclo EMPIEZA, no la mitad de su ventana: los tres
+// ciclos de PUCMM arrancan en enero, a finales de abril y en septiembre. Por eso
+// un inicio en abril es el ciclo "Abril" —no "Enero"—, aunque el ciclo de Enero
+// se extienda hasta abril con sus exámenes. El ciclo de Enero nunca EMPIEZA en
+// abril, así que una fecha de inicio en abril solo puede ser el ciclo de Abril.
 export function cycleLabel(month: number, year: number): string {
-  if (month <= 4) return `Enero de ${year}`;
+  if (month <= 3) return `Enero de ${year}`;
   if (month <= 8) return `Abril de ${year}`;
   return `Septiembre de ${year}`;
+}
+
+// Un identificador de término de PeopleSoft es un STRM: un código numérico corto
+// ("1930"). Una etiqueta ("Abril de 2026") nunca lo es. Este predicado es la
+// frontera entre los dos vocabularios: sin él, reconcileTerms trataba una
+// etiqueta guardada en enrollments.term como si fuera un STRM y la escribía en la
+// columna `code`, corrompiendo la identidad del ciclo.
+export function isStrmCode(value: string | null | undefined): boolean {
+  return value != null && /^\d{3,6}$/.test(value);
+}
+
+// La llave canónica de un ciclo ("YYYY-MM" del mes de su nombre), o null si el
+// término no se puede ubicar. Dos filas con la misma cycleKey son el MISMO ciclo
+// aunque difieran en STRM o en la forma exacta de la etiqueta: es la base para
+// detectar y fusionar duplicados en la migración de identidad.
+export function cycleKey(term: Term): string | null {
+  return sortKeyFor(term);
 }
 
 // La ventana aproximada de un ciclo a partir de su sortKey ("YYYY-MM"). El mes

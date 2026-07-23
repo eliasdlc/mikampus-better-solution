@@ -1,5 +1,6 @@
 import { db } from './db.js';
-import { resolveTerms, labelFor } from './shared/terms.ts';
+import { resolveTerms, labelFor, isStrmCode } from './shared/terms.ts';
+import { writeDiagnostic, diagnosticsEnabled } from './diagnostics.js';
 
 // La capa de disco del modelo de tiempo. shared/terms.ts hace la resolución
 // pura (cuál ciclo corre hoy); esto llena y lee la tabla `terms`, el único
@@ -37,28 +38,86 @@ export function upsertTerm({ code = null, label = null, startDate = null, endDat
 // terminan en la misma fila en vez de contarse dos veces.
 //
 // Idempotente: son upserts con COALESCE. Se corre al arrancar el server y
-// después de sincronizar horario o notas.
-export function reconcileTerms() {
+// después de sincronizar horario o notas. Devuelve la telemetría de lo que
+// reconcilió (aliases unidos) para diagnostics.
+export function reconcileTerms({ now = new Date() } = {}) {
+  const telemetry = { converged: [], conflicts: [] };
   db.exec('BEGIN');
   try {
-    // STRM inscritos, con sus fechas. La etiqueta se deriva del ciclo.
+    // Términos inscritos, con sus fechas. `enrollments.term` es el IDENTIFICADOR
+    // resuelto del ciclo: un STRM cuando `terms` ya lo conocía para la etiqueta, o
+    // la propia etiqueta cuando no (View My Classes no expone el STRM). Por eso NO
+    // todo `enrollments.term` es un STRM — tratarlo siempre como código era el bug
+    // que escribía "Abril de 2026" en la columna `code`. isStrmCode decide de qué
+    // vocabulario es cada valor y lo manda a la columna correcta.
     for (const row of db
       .prepare(
-        `SELECT term AS code, MIN(start_date) AS start_date, MAX(end_date) AS end_date
+        `SELECT term AS id, MIN(start_date) AS start_date, MAX(end_date) AS end_date
          FROM enrollments GROUP BY term`
       )
       .all()) {
-      upsertTerm({ code: row.code, startDate: row.start_date, endDate: row.end_date });
+      if (isStrmCode(row.id)) {
+        upsertTerm({ code: row.id, startDate: row.start_date, endDate: row.end_date });
+      } else {
+        upsertTerm({ label: row.id, startDate: row.start_date, endDate: row.end_date });
+      }
     }
     // Etiquetas del histórico de notas. Si ya existen (porque un STRM las derivó),
     // el COALESCE deja intactos su código y fechas.
     for (const row of db.prepare('SELECT DISTINCT term AS label FROM grades WHERE term IS NOT NULL').all()) {
       upsertTerm({ label: row.label });
     }
+    // Convergencia de identificador (§P0.2): cuando una etiqueta ya conoce su STRM,
+    // el horario que se guardó por etiqueta se re-keyea al STRM para que no queden
+    // dos horarios del mismo ciclo bajo identificadores distintos. Sin esto, en
+    // cuanto aparece el STRM el ciclo se "enriquece" en `terms` pero el horario
+    // viejo queda huérfano bajo la etiqueta (duplicación silenciosa).
+    convergeEnrollmentIdentifiers(telemetry);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
+  }
+  recordReconciliation(telemetry, now);
+  return telemetry;
+}
+
+// Re-keyea las inscripciones guardadas bajo la etiqueta de un ciclo hacia su STRM
+// una vez que se conoce. readSchedule filtra enrollments por identificador, así
+// que sin esto un ciclo que se sincronizó sin STRM y después lo obtuvo mostraría
+// horario vacío bajo el nuevo identificador. No toca `sections` (readSchedule las
+// une por section_id, no por term) para no chocar con el UNIQUE(term, class_nbr)
+// del catálogo.
+function convergeEnrollmentIdentifiers(telemetry) {
+  const linked = db.prepare('SELECT code, label FROM terms WHERE code IS NOT NULL AND label IS NOT NULL').all();
+  for (const { code, label } of linked) {
+    if (code === label) continue; // fila corrupta (label-as-code): la sanea la migración
+    const users = db.prepare('SELECT DISTINCT user_id FROM enrollments WHERE term = ?').all(label);
+    for (const { user_id: userId } of users) {
+      const hasCode = db.prepare('SELECT 1 FROM enrollments WHERE term = ? AND user_id = ? LIMIT 1').get(code, userId);
+      if (hasCode) {
+        // Un sync más nuevo ya escribió bajo el STRM: lo de la etiqueta es un
+        // horario viejo del mismo ciclo. Se descarta el duplicado, no el reciente.
+        const del = db.prepare('DELETE FROM enrollments WHERE term = ? AND user_id = ?').run(label, userId);
+        if (del.changes) telemetry.converged.push({ from: label, to: code, userId, action: 'dropped-stale', rows: del.changes });
+      } else {
+        const upd = db.prepare('UPDATE enrollments SET term = ? WHERE term = ? AND user_id = ?').run(code, label, userId);
+        if (upd.changes) telemetry.converged.push({ from: label, to: code, userId, action: 'rekeyed', rows: upd.changes });
+      }
+    }
+  }
+}
+
+// Deja rastro de una reconciliación que movió datos (aliases unidos o conflictos),
+// redactado, en la carpeta de diagnostics. Best-effort: no romper un sync porque
+// no se pudo escribir el log. Una reconciliación que no movió nada no ensucia.
+function recordReconciliation(telemetry, now) {
+  if (!telemetry.converged.length && !telemetry.conflicts.length) return;
+  if (!diagnosticsEnabled()) return;
+  try {
+    writeDiagnostic('term-reconciliation', JSON.stringify({ at: now.toISOString(), ...telemetry }, null, 2), { now });
+  } catch {
+    /* diagnostics es best-effort */
   }
 }
 
@@ -95,6 +154,19 @@ export function readTerms(today = new Date()) {
     current: enriched.find((t) => t.isCurrent) ?? null,
     next: enriched.find((t) => t.isNext) ?? null,
   };
+}
+
+// Los identificadores equivalentes de un ciclo: el que se pasa más su STRM y su
+// etiqueta si `terms` los conoce. Sirve para que una consulta hecha por un alias
+// (p.ej. el STRM recién aparecido) encuentre datos guardados bajo el otro (la
+// etiqueta con que se sincronizó antes de conocer el STRM), sin duplicar.
+export function termAliases(term) {
+  if (!term) return [];
+  const row = db.prepare('SELECT code, label FROM terms WHERE code = ? OR label = ?').get(term, term);
+  const aliases = new Set([term]);
+  if (row?.code) aliases.add(row.code);
+  if (row?.label) aliases.add(row.label);
+  return [...aliases];
 }
 
 // El STRM del ciclo actual, para que un GET sin término pedido no caiga en uno
