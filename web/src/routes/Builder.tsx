@@ -26,6 +26,7 @@ import { CourseChip } from '../components/CourseChip.tsx';
 import { CourseSearchBox } from '../components/CourseSearchBox.tsx';
 import { SeatBadge } from '../components/SeatBadge.tsx';
 import { LiveOpBanner } from '../components/LiveOpBanner.tsx';
+import { MoreSectionsButton } from '../components/MoreSectionsButton.tsx';
 
 // El builder trabaja en memoria: candidatas + una selección por materia +
 // candados. Nada se persiste hasta "Guardar en plan" o "Enviar al carrito" —
@@ -49,10 +50,19 @@ export function Builder({
   activePlanId,
   onActivePlanChange,
   embedded = false,
+  termId = null,
+  termCode = null,
 }: {
   activePlanId?: number | null;
   onActivePlanChange?: (planId: number | null) => void;
   embedded?: boolean;
+  // El identificador del ciclo elegido arriba (STRM si lo hay, si no la
+  // etiqueta). Acota qué secciones se muestran: un plan pertenece a un ciclo, y
+  // ofrecer el grupo de otro término es ofrecer algo que no se puede inscribir.
+  termId?: string | null;
+  // El STRM. Es lo único que PeopleSoft acepta para consultar en vivo, así que
+  // sin él "Ver más grupos" no se ofrece.
+  termCode?: string | null;
 }) {
   const qc = useQueryClient();
   const catalogQ = useQuery({ queryKey: ['catalog'], queryFn: () => fetchCatalog() });
@@ -66,10 +76,17 @@ export function Builder({
   const [weights, setWeights] = useState<Weights>(DEFAULT_WEIGHTS);
   const [suggesting, setSuggesting] = useState(false);
 
-  const byId = useMemo(
-    () => new Map((catalogQ.data?.courses ?? []).map((c) => [c.id, c])),
-    [catalogQ.data]
-  );
+  // Las secciones se acotan al ciclo elegido antes de tocar nada más. Sin esto
+  // el builder listaba los grupos de TODOS los términos que el catálogo tuviera
+  // guardados, mezclados y sin distintivo: se podía armar un horario perfecto
+  // con la sección de un ciclo que ya pasó.
+  const byId = useMemo(() => {
+    const entries = (catalogQ.data?.courses ?? []).map((c) => [
+      c.id,
+      termId ? { ...c, sections: c.sections.filter((s) => s.term === termId) } : c,
+    ] as const);
+    return new Map<number, CatalogCourse>(entries);
+  }, [catalogQ.data, termId]);
   const candidates = candidateIds
     .map((id) => byId.get(id))
     .filter((c): c is CatalogCourse => !!c);
@@ -272,6 +289,7 @@ export function Builder({
                 <CandidateCard
                   key={course.id}
                   course={course}
+                  termCode={termCode}
                   selectedId={selections.get(course.id)}
                   locked={locks.has(course.id)}
                   onSelect={(sectionId) => select(course.id, sectionId)}
@@ -347,6 +365,7 @@ export function Builder({
 
 function CandidateCard({
   course,
+  termCode,
   selectedId,
   locked,
   onSelect,
@@ -355,6 +374,7 @@ function CandidateCard({
   onRemove,
 }: {
   course: CatalogCourse;
+  termCode: string | null;
   selectedId: number | undefined;
   locked: boolean;
   onSelect: (sectionId: number) => void;
@@ -369,6 +389,11 @@ function CandidateCard({
       <div className="flex items-center justify-between gap-2 px-3 py-2.5">
         <button onClick={() => setOpen(!open)} className="min-w-0 text-left">
           <CourseChip code={course.code} title={course.title} size="sm" />
+          <span className="text-muted mt-0.5 block text-xs">
+            {course.sections.length === 0
+              ? 'sin grupos guardados de este ciclo'
+              : `${course.sections.length} grupo(s)`}
+          </span>
         </button>
         <div className="flex items-center gap-1.5">
           {selectedId != null && (
@@ -394,6 +419,11 @@ function CandidateCard({
 
       {open && (
         <div className="border-line divide-line divide-y border-t" onMouseLeave={() => onHover(null)}>
+          {course.sections.length === 0 && (
+            <p className="text-muted px-3 py-2 text-xs">
+              El catálogo local no tiene grupos de esta materia para este ciclo. Traelos del portal.
+            </p>
+          )}
           {course.sections.map((section) => {
             const chosen = section.id === selectedId;
             return (
@@ -422,6 +452,12 @@ function CandidateCard({
               </button>
             );
           })}
+          {/* Traer más grupos vive PEGADO a la lista de grupos, no en una barra
+              de acciones arriba: es la respuesta a "¿esto es todo lo que hay?",
+              y esa pregunta se hace mirando la lista. */}
+          <div className="px-3 py-2">
+            <MoreSectionsButton course={course} term={termCode} known={course.sections.length} />
+          </div>
         </div>
       )}
     </li>

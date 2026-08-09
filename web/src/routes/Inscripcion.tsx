@@ -2,7 +2,16 @@ import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, LayoutGrid, ShoppingCart, Zap, type LucideIcon } from 'lucide-react';
-import { fetchCart, syncCart, enrollNow, fetchTermContext, fetchCatalog, fetchPensum, fetchSeatTrends } from '../lib/api.ts';
+import {
+  fetchCart,
+  syncCart,
+  enrollNow,
+  fetchTermContext,
+  fetchCatalog,
+  fetchPensum,
+  fetchSeatTrends,
+  fetchMySchedule,
+} from '../lib/api.ts';
 import type { CartRow, CatalogCourse, TermInfo } from '../../../src/shared/schemas.ts';
 import { sectionToBlocks, hasCollisions, type Block } from '../lib/grid.ts';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
@@ -13,6 +22,7 @@ import { StalenessTag } from '../components/StalenessTag.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
 import { CourseSearchBox } from '../components/CourseSearchBox.tsx';
 import { EnrollmentContext, useTermDiscovery } from '../components/EnrollmentContext.tsx';
+import { DropCoursePanel } from '../components/DropCoursePanel.tsx';
 import { Planner } from './Planner.tsx';
 import { Builder } from './Builder.tsx';
 
@@ -79,6 +89,16 @@ export function Inscripcion() {
   const pensum = useQuery({
     queryKey: ['pensum', termId],
     queryFn: () => fetchPensum(termId),
+    enabled: Boolean(termId),
+  });
+
+  // Lo que YA tenés inscrito en este mismo ciclo. Inscribirse y darse de baja
+  // son la misma decisión mirada desde los dos lados —se suelta un cupo para
+  // tomar otro, casi siempre en la misma sesión— y tener la baja en otra
+  // pantalla obligaba a abandonar el recorrido en el peor momento.
+  const enrolled = useQuery({
+    queryKey: ['my-schedule', termId],
+    queryFn: () => fetchMySchedule(termId!),
     enabled: Boolean(termId),
   });
 
@@ -233,7 +253,13 @@ export function Inscripcion() {
           )}
 
           {stage === 'grupos' && (
-            <Builder activePlanId={activePlanId} onActivePlanChange={(id) => patchParams({ plan: id ? String(id) : null })} embedded />
+            <Builder
+              activePlanId={activePlanId}
+              onActivePlanChange={(id) => patchParams({ plan: id ? String(id) : null })}
+              embedded
+              termId={termId ?? null}
+              termCode={selectedTerm?.code ?? null}
+            />
           )}
 
           {stage === 'carrito' && (
@@ -337,6 +363,16 @@ export function Inscripcion() {
                   )}
                 </section>
               )}
+
+              {/* La baja va DESPUÉS del carrito, no antes: primero lo que
+                  estás por sumar, después lo que ya tenés y podés soltar. */}
+              <DropCoursePanel
+                courses={enrolled.data?.courses ?? []}
+                termCode={selectedTerm?.code ?? null}
+                heading={`Ya inscrito en ${selectedTerm?.label ?? 'este ciclo'}`}
+                hint="Soltar un cupo es irreversible: si se ocupa, no vuelve."
+                onDropped={() => qc.invalidateQueries({ queryKey: ['cart'] })}
+              />
 
               {blocks.length > 0 && <WeeklyGrid blocks={blocks} />}
 
