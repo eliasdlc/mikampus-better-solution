@@ -755,14 +755,26 @@ function goalsResponse(userId) {
   // lo que inflaba el mejor caso. Y si el acumulado reconstruido no reconcilia
   // con el que publica PeopleSoft, `horizons` vuelve sin números — la UI no
   // tiene que acordarse de esconderlos.
-  const current = readTerms().current;
+  // Entre ciclos no hay "este ciclo", pero sí puede haber materias inscritas
+  // del que viene: el horizonte corto se ancla al ciclo que REALMENTE tiene los
+  // créditos en curso. Sin esto la pantalla decía "EN CURSO 4 créditos" arriba y
+  // "no tenés materias en curso en este ciclo" abajo, sobre los mismos datos.
+  const terms = readTerms();
   const courses = readGrades(userId);
+  const shortHorizonTerm =
+    [terms.current?.label, terms.next?.label]
+      .filter(Boolean)
+      .find((label) => creditsInProgressFor(courses, label) > 0) ??
+    terms.current?.label ??
+    terms.next?.label ??
+    null;
+
   const horizons = buildProjection({
     official: readOfficialTotals(userId),
     reconstructed: ctx.summary,
-    currentTermCredits: creditsInProgressFor(courses, current?.label ?? null),
+    currentTermCredits: creditsInProgressFor(courses, shortHorizonTerm),
     remainingCredits: ctx.remainingCredits,
-    currentTermLabel: current?.label ?? null,
+    currentTermLabel: shortHorizonTerm,
   });
 
   return {

@@ -128,3 +128,52 @@ const kinds = varias.map((s) => s.kind);
 assert.ok(kinds.includes('rolling-trend') && kinds.includes('area-performance') && kinds.includes('repeated-courses'));
 
 console.log('✓ señales: tendencia/área/carga/repetidas/retiradas, cada una respeta su umbral de datos');
+
+// ── Orden por prioridad (P5 §7) ────────────────────────────────────────────
+// El criterio del plan: lo accionable y reciente va antes que el contexto. El
+// caso que importa es una CAÍDA del último ciclo — no puede quedar sepultada
+// bajo un patrón histórico ni bajo una tendencia de tres ciclos que promedia
+// hacia arriba.
+{
+  const cayendo = [
+    term('a', '2025-01', 2.0, 15),
+    term('b', '2025-04', 3.5, 15),
+    term('c', '2025-09', 3.8, 15),
+    term('d', '2026-01', 2.9, 15), // el último ciclo cae casi un punto
+  ];
+  const cursos = [
+    { code: 'IIS-223', subject: 'IIS', term: 'Enero de 2025', grade: 'F', units: 3, status: 'taken' },
+    { code: 'IIS-223', subject: 'IIS', term: 'Abril de 2025', grade: 'D', units: 3, status: 'taken' },
+    { code: 'MAT-119', subject: 'MAT', term: 'Enero de 2025', grade: 'R', units: 4, status: 'taken' },
+    { code: 'ICC-201', subject: 'ICC', term: 'Abril de 2025', grade: 'A', units: 4, status: 'taken' },
+    { code: 'ICC-311', subject: 'ICC', term: 'Septiembre de 2025', grade: 'A', units: 4, status: 'taken' },
+  ];
+
+  const ordenadas = computeInsights(cayendo, cursos);
+  assert.equal(ordenadas[0].kind, 'recent-change', 'una caída reciente encabeza la lista');
+  assert.equal(ordenadas[0].direction, 'down');
+  assert.equal(ordenadas[0].severity, 'risk', 'una caída material se gana el color de alarma');
+  assert.equal(ordenadas[0].actionability, 'act');
+
+  // La tendencia de tres ciclos dice otra cosa y convive sin taparla.
+  const tendencia = ordenadas.find((s) => s.kind === 'rolling-trend');
+  assert.ok(tendencia, 'la tendencia sigue estando');
+  assert.ok(
+    ordenadas.indexOf(tendencia) > 0,
+    'pero no puede desplazar a la caída del último ciclo, que es lo que la persona siente'
+  );
+
+  // Nada marcado como contexto puede colarse delante de algo accionable.
+  const primerContexto = ordenadas.findIndex((s) => s.actionability === 'context');
+  const ultimoAccionable = ordenadas.map((s) => s.actionability).lastIndexOf('act');
+  assert.ok(ultimoAccionable < primerContexto, 'lo accionable va antes que el contexto');
+
+  // Sin deterioro, nada se pinta de alarma.
+  const subiendoTodo = computeInsights(
+    [term('a', '2025-01', 3.0, 15), term('b', '2025-04', 3.2, 15), term('c', '2025-09', 3.6, 15)],
+    cursos.filter((c) => c.grade === 'A')
+  );
+  assert.ok(subiendoTodo.every((s) => s.severity !== 'risk'), 'el rojo se gana, no se reparte');
+}
+
+console.log('✓ señales: una caída del último ciclo encabeza y la tendencia no la tapa');
