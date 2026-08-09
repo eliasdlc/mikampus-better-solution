@@ -8,12 +8,14 @@ import {
   runSync,
   scheduleAt,
   setWatcher,
+  setWatcherInterval,
   syncEnrollmentWindows,
   validateCart,
   type WatcherScope,
 } from '../lib/api.ts';
 import type { TermInfo } from '../../../src/shared/schemas.ts';
 import { Countdown } from './Countdown.tsx';
+import { WatcherLive } from './WatcherLive.tsx';
 import { ago } from '../lib/time.ts';
 
 // La columna contextual de Inscripción (P2 §5). Antes mezclaba tres cosas que
@@ -23,6 +25,19 @@ import { ago } from '../lib/time.ts';
 // las 00:00" pierde el cupo a las 7am.
 //
 // Acá van separadas, cada una con su fuente, y ninguna se infiere de la otra.
+
+// Cada cuánto sale el watcher a mirar. Los valores no son una escala bonita:
+// son los tres modos reales de usar esto. 30s es para la mañana de tu
+// inscripción, cuando un minuto de diferencia es el cupo; 5 min es para los
+// días previos, cuando querés enterarte pero no castigar al portal; media hora
+// es dejarlo puesto una semana sin pensarlo.
+const INTERVAL_OPTIONS: { ms: number; label: string; detail: string }[] = [
+  { ms: 30_000, label: '30s', detail: 'el día de tu inscripción' },
+  { ms: 60_000, label: '1 min', detail: 'agresivo pero sostenible' },
+  { ms: 300_000, label: '5 min', detail: 'los días previos' },
+  { ms: 900_000, label: '15 min', detail: 'vigilancia de fondo' },
+  { ms: 1_800_000, label: '30 min', detail: 'dejarlo puesto y olvidarlo' },
+];
 
 const SCOPE_OPTIONS: { id: WatcherScope; title: string; detail: string }[] = [
   {
@@ -97,6 +112,23 @@ export function EnrollmentContext({
   const [pendingScope, setPendingScope] = useState<WatcherScope>('both');
   const scope: WatcherScope = watcherOn ? activeScope : pendingScope;
 
+  // El ritmo configurado vive fuera del watcher: se lee y se cambia esté
+  // encendido o no. `effectiveMs` es lo que de verdad le toca a cada materia
+  // cuando hay varias rotando, que no es lo mismo y confundirlo cuesta caro.
+  const tickMs = state.data?.watcherSettings.tickMs ?? 45_000;
+  const watchedCourses = state.data?.watcherSettings.watchedCourses ?? 0;
+  const effectiveMs = state.data?.watcherSettings.effectiveIntervalMs ?? tickMs;
+
+  // El despliegue puede fijar un default que no esté entre los presets (la
+  // variable WATCHER_INTERVAL_MS acepta cualquier valor). Sin esto, el ritmo
+  // vigente no aparecía en ninguna parte y los cinco chips salían apagados: la
+  // pantalla se leía como rota justo donde tiene que dar confianza.
+  const intervalChoices = INTERVAL_OPTIONS.some((option) => option.ms === tickMs)
+    ? INTERVAL_OPTIONS
+    : [...INTERVAL_OPTIONS, { ms: tickMs, label: `${Math.round(tickMs / 1000)}s`, detail: 'el valor configurado ahora' }].sort(
+        (a, b) => a.ms - b.ms
+      );
+
   // La hora personal solo existe si el portal la publicó con hora. Un rango con
   // precisión de día NO autoriza a suponer una hora — ni medianoche ni ninguna.
   const portalAppointment = enrollmentWindow?.precision === 'datetime' ? enrollmentWindow.startsAt : null;
@@ -112,6 +144,13 @@ export function EnrollmentContext({
       return scheduleAt({ atISO: new Date(chosen).toISOString(), term: termId, consent: true });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
+  });
+
+  // El ritmo se puede cambiar con el watcher apagado y queda guardado: no es
+  // parte de encenderlo, es una preferencia sobre cómo vigila cuando vigila.
+  const interval = useMutation({
+    mutationFn: setWatcherInterval,
+    onSuccess: (fresh) => qc.setQueryData(['state'], fresh),
   });
 
   const watch = useMutation({
@@ -301,11 +340,9 @@ export function EnrollmentContext({
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-3">
               <span className="text-muted text-xs">
-                {watcherOn
-                  ? `Ciclo efectivo: cada ${Math.round((state.data?.watcher?.intervalMs ?? 45_000) / 1000)}s.`
-                  : 'Apagado. Solo consulta cuando vos lo encendés.'}
+                {watcherOn ? 'Consultando el portal por tu cuenta.' : 'Apagado. Solo consulta cuando vos lo encendés.'}
               </span>
               <button
                 role="switch"
@@ -317,6 +354,45 @@ export function EnrollmentContext({
                 <span className={`block size-5 rounded-full bg-white transition-transform duration-100 ${watcherOn ? 'translate-x-4' : ''}`} />
               </button>
             </div>
+
+            {/* El estado en vivo solo tiene sentido con el watcher corriendo:
+                encendido es lo único que produce ciclos que mirar. */}
+            {watcherOn && state.data && <WatcherLive state={state.data} />}
+
+            <fieldset className="space-y-1.5">
+              <legend className="text-xs font-medium">Cada cuánto consultar</legend>
+              <div className="flex flex-wrap gap-1">
+                {intervalChoices.map((option) => (
+                  <button
+                    key={option.ms}
+                    type="button"
+                    aria-pressed={tickMs === option.ms}
+                    disabled={interval.isPending}
+                    title={option.detail}
+                    onClick={() => interval.mutate(option.ms)}
+                    className={`tabular min-h-8 rounded-full px-2.5 py-1 font-mono text-xs transition-colors duration-100 disabled:opacity-50 ${
+                      tickMs === option.ms
+                        ? 'bg-accent text-accent-fg font-medium'
+                        : 'border-line text-muted hover:text-fg border'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {/* Con varias materias en el carrito, el ritmo elegido NO es cada
+                  cuánto se revisa TU materia: el watcher rota para no pedirle
+                  todo al portal de una vez. Decirlo evita la conclusión falsa
+                  de que poner 30s revisa todo cada 30 segundos. */}
+              <p className="text-muted text-xs">
+                {watchedCourses === 0
+                  ? 'Ahora mismo no hay ninguna materia en rotación: el ritmo aplica cuando el watcher esté vigilando.'
+                  : watchedCourses === 1
+                    ? 'Con una sola materia vigilada, es exactamente cada cuánto se la consulta.'
+                    : `Con ${watchedCourses} materias en rotación, a cada una le toca cada ${Math.round(effectiveMs / 1000)}s.`}
+              </p>
+            </fieldset>
+            {interval.error && <p className="text-closed text-xs">{(interval.error as Error).message}</p>}
 
             <fieldset className="space-y-1.5">
               <legend className="text-xs font-medium">Qué vigilar</legend>

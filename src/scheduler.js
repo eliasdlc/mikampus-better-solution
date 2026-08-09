@@ -3,6 +3,7 @@ import { hasLiveCredentials, hasUnattendedCredential, withPage, resetSession } f
 import { LOCAL_USER_ID } from './users.js';
 import { notifyFromEvent } from './notify.js';
 import { db, logAction } from './db.js';
+import { readMeta, writeMeta } from './appMeta.js';
 import { syncCatalogCourse } from './peoplesoft/catalog.js';
 import { syncSchedule } from './peoplesoft/mySchedule.js';
 import { readTerms } from './terms.js';
@@ -87,9 +88,20 @@ export function getState(userId) {
     // Es el ciclo efectivo, no una promesa de que el siguiente tick global le
     // toque a ESTA materia. Con N materias y presupuesto B, una materia se
     // revisa como máximo cada ceil(N / B) ticks.
+    // El ritmo configurado se sirve SIEMPRE, haya watcher o no: la pantalla
+    // tiene que poder mostrarlo y dejarlo cambiar antes de encenderlo, no
+    // solamente mientras corre.
+    watcherSettings: {
+      tickMs: watcherTickMs(),
+      minTickMs: MIN_WATCHER_TICK_MS,
+      maxTickMs: MAX_WATCHER_TICK_MS,
+      watchedCourses: watchedCourses().length,
+      effectiveIntervalMs: effectiveWatcherIntervalMs(),
+    },
     watcher: watcher
       ? {
           intervalMs: effectiveWatcherIntervalMs(),
+          tickMs: watcherTickMs(),
           lastCheckAt: watcher.last_check_at ?? null,
           autoEnroll: watcher.auto_enroll === 1,
           scope: watcher.scope ?? DEFAULT_WATCHER_SCOPE,
@@ -348,9 +360,70 @@ function positiveEnv(name, fallback, minimum = 1) {
   return Number.isFinite(value) && value >= minimum ? Math.floor(value) : fallback;
 }
 
-const WATCHER_TICK_MS = positiveEnv('WATCHER_INTERVAL_MS', 45_000, 30_000);
+// El ritmo del watcher es una decisión de quien lo enciende, no del despliegue.
+// Antes solo se podía cambiar con WATCHER_INTERVAL_MS antes de arrancar el
+// agente: para vigilar más agresivamente durante tu hora de inscripción había
+// que reiniciar todo. Ahora la variable de entorno solo fija el DEFAULT y la
+// preferencia vive en app_meta, donde backup/restore/erase ya la cubren.
+//
+// El piso de 30s no es negociable desde la UI: por debajo de eso se le pega al
+// portal más rápido de lo que una página de PeopleSoft termina de cargar, y lo
+// único que se consigue es que la cuenta llame la atención. El techo de una
+// hora es donde "vigilar" deja de significar algo durante una inscripción.
+const WATCHER_TICK_DEFAULT_MS = positiveEnv('WATCHER_INTERVAL_MS', 45_000, 30_000);
+export const MIN_WATCHER_TICK_MS = 30_000;
+export const MAX_WATCHER_TICK_MS = 60 * 60_000;
+const WATCHER_TICK_KEY = 'watcher.tickMs';
+
 const WATCHER_SCRAPE_BUDGET = positiveEnv('WATCHER_SCRAPE_BUDGET', 1);
 const WATCHER_CAREER = process.env.SYNC_CAREER || 'GRDO';
+
+export function watcherTickMs() {
+  // El valor ausente se compara contra null y no se pasa por Number():
+  // Number(null) es 0, que es finito, y sin este cuidado "nunca lo configuré"
+  // se leía como "cero milisegundos" y terminaba pegado al piso de 30s.
+  const raw = readMeta(WATCHER_TICK_KEY);
+  if (raw == null || raw === '') return WATCHER_TICK_DEFAULT_MS;
+  const stored = Number(raw);
+  if (!Number.isFinite(stored)) return WATCHER_TICK_DEFAULT_MS;
+  return Math.min(Math.max(Math.floor(stored), MIN_WATCHER_TICK_MS), MAX_WATCHER_TICK_MS);
+}
+
+/**
+ * Cambia el ritmo y lo aplica ya: si el watcher está corriendo, el timer se
+ * rearma con el valor nuevo en vez de esperar a que alguien lo apague y lo
+ * vuelva a encender. `next_check_at` se recalcula sobre el último check real
+ * para que la cuenta regresiva de la UI no quede mintiendo.
+ */
+export function setWatcherTickMs(ms) {
+  const value = Number(ms);
+  if (!Number.isFinite(value) || value < MIN_WATCHER_TICK_MS || value > MAX_WATCHER_TICK_MS) {
+    throw new Error(
+      `El intervalo tiene que estar entre ${MIN_WATCHER_TICK_MS / 1000}s y ${MAX_WATCHER_TICK_MS / 60_000} min`
+    );
+  }
+  writeMeta(WATCHER_TICK_KEY, String(Math.floor(value)));
+  const tick = watcherTickMs();
+  db.prepare('UPDATE watchers SET interval_ms = ?').run(tick);
+  if (sharedTimer) {
+    clearInterval(sharedTimer);
+    sharedTimer = setInterval(() => runSharedWatcherTick().catch(() => {}), tick);
+  }
+  // La próxima consulta se recalcula en JS y no con datetime() de SQLite: la
+  // columna guarda ISO-8601 con zona, y dejar que SQLite escriba su propio
+  // formato produciría dos formatos distintos en la misma columna.
+  const step = effectiveWatcherIntervalMs();
+  for (const row of db.prepare("SELECT user_id, last_check_at AS lastCheckAt FROM watchers WHERE status = 'running'").all()) {
+    const base = row.lastCheckAt ? new Date(row.lastCheckAt).getTime() : Date.now();
+    db.prepare('UPDATE watchers SET next_check_at = ? WHERE user_id = ?').run(
+      new Date(base + step).toISOString(),
+      row.user_id
+    );
+  }
+  publishWatcherState();
+  emit({ type: 'log', message: `Ritmo del watcher: cada ${Math.round(tick / 1000)}s` });
+  return tick;
+}
 
 let sharedTimer = null;
 let sharedRunning = false;
@@ -404,7 +477,7 @@ function watchedCourses() {
 }
 
 function effectiveWatcherIntervalMs() {
-  return Math.ceil(Math.max(watchedCourses().length, 1) / WATCHER_SCRAPE_BUDGET) * WATCHER_TICK_MS;
+  return Math.ceil(Math.max(watchedCourses().length, 1) / WATCHER_SCRAPE_BUDGET) * watcherTickMs();
 }
 
 function watchersForCourse(courseCode) {
@@ -517,7 +590,7 @@ function markChecked(courseCode, at) {
   return owners;
 }
 
-async function handleCourseScan(target) {
+async function handleCourseScan(target, progress = {}) {
   const before = seatState(target.courseCode, target.term);
   const hadBaseline = [...before.values()].some((section) => section.status != null);
   const owners = watchersForCourse(target.courseCode);
@@ -530,10 +603,30 @@ async function handleCourseScan(target) {
   const credentialedOwners = watchersForCourse(target.courseCode);
   if (!credentialedOwners.length) return;
 
+  // El watcher tarda segundos por materia y hasta ahora era una caja negra: la
+  // UI solo veía el resultado. Estos eventos existen para que la pantalla pueda
+  // mostrar QUÉ se está consultando mientras pasa, no solo qué pasó.
+  emit({
+    type: 'watcher-tick',
+    phase: 'course',
+    courseCode: target.courseCode,
+    term: target.term,
+    index: progress.index ?? 0,
+    total: progress.total ?? 1,
+  });
+
   try {
     await scanWatchedCourse(target);
     reportOperatorSuccess(`watcher:${target.courseCode}`);
   } catch (err) {
+    emit({
+      type: 'watcher-tick',
+      phase: 'course-error',
+      courseCode: target.courseCode,
+      index: progress.index ?? 0,
+      total: progress.total ?? 1,
+      error: err.message,
+    });
     for (const owner of credentialedOwners) {
       if (err?.needsCredentials || err?.credentialRejected) {
         // Un rechazo de password, MFA o CAPTCHA no se reintenta en bucle. Se
@@ -560,6 +653,24 @@ async function handleCourseScan(target) {
   const checkedAt = new Date().toISOString();
   const activeOwners = markChecked(target.courseCode, checkedAt);
   const after = seatState(target.courseCode, target.term);
+
+  // El resultado de ESTA materia, con números: cuántas secciones se miraron y
+  // cuántas quedaron abiertas. Es lo que hace que la pantalla pueda decir "3 de
+  // 7 secciones abiertas" en vez de un spinner sin contenido.
+  const sections = [...after.values()];
+  emit({
+    type: 'watcher-tick',
+    phase: 'course-done',
+    courseCode: target.courseCode,
+    index: progress.index ?? 0,
+    total: progress.total ?? 1,
+    at: checkedAt,
+    sections: sections.length,
+    open: sections.filter((section) => section.status === 'open').length,
+    // Un cambio de estado respecto del snapshot anterior es lo único que
+    // justifica que alguien mire la pantalla: el resto es rutina.
+    changed: sections.filter((section) => before.get(section.class_nbr)?.status !== section.status).length,
+  });
 
   // Una primera observación llena el baseline, no anuncia como "nuevo" todo
   // el catálogo que todavía no estaba cacheado. A partir de ahí, cada NRC que
@@ -636,11 +747,32 @@ export async function runSharedWatcherTick() {
   if (!courses.length || !term) return false;
 
   sharedRunning = true;
+  const startedAt = new Date().toISOString();
+  const batch = nextWatchedCourses(courses);
   try {
-    for (const course of nextWatchedCourses(courses)) {
-      await handleCourseScan({ ...course, term });
+    emit({
+      type: 'watcher-tick',
+      phase: 'start',
+      at: startedAt,
+      total: batch.length,
+      // El universo completo, no solo el lote: el watcher rota entre materias
+      // para no pedirle todo al portal de una vez, y esconder eso hacía parecer
+      // que solo vigilaba una.
+      watching: courses.map((course) => course.courseCode),
+      courses: batch.map((course) => course.courseCode),
+    });
+    for (const [index, course] of batch.entries()) {
+      await handleCourseScan({ ...course, term }, { index, total: batch.length });
     }
     publishWatcherState();
+    emit({
+      type: 'watcher-tick',
+      phase: 'done',
+      at: new Date().toISOString(),
+      total: batch.length,
+      elapsedMs: Date.now() - new Date(startedAt).getTime(),
+      nextCheckAt: new Date(Date.now() + effectiveWatcherIntervalMs()).toISOString(),
+    });
     return true;
   } finally {
     sharedRunning = false;
@@ -650,7 +782,7 @@ export async function runSharedWatcherTick() {
 function armSharedWatcher() {
   if (sharedTimer || activeWatcherCount() === 0) return;
   runSharedWatcherTick().catch(() => {});
-  sharedTimer = setInterval(() => runSharedWatcherTick().catch(() => {}), WATCHER_TICK_MS);
+  sharedTimer = setInterval(() => runSharedWatcherTick().catch(() => {}), watcherTickMs());
 }
 
 function disarmSharedWatcherIfIdle() {
@@ -678,7 +810,7 @@ export function startWatcher(userId, { autoEnroll = false, appointmentAt = null,
        auto_enroll = excluded.auto_enroll, activation_order = excluded.activation_order,
        appointment_at = excluded.appointment_at, scope = excluded.scope, status = 'running', pause_reason = NULL,
        consecutive_failures = 0, last_started_at = datetime('now'), created_at = datetime('now')`
-  ).run(userId, WATCHER_TICK_MS, autoEnroll ? 1 : 0, activationOrder, appointmentAt, scope);
+  ).run(userId, watcherTickMs(), autoEnroll ? 1 : 0, activationOrder, appointmentAt, scope);
   armSharedWatcher();
   publishWatcherState();
   emit({

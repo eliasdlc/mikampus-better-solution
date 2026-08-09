@@ -8,7 +8,10 @@ import { ago } from '../lib/time.ts';
 // agente vivo. Un watcher que se muestra activo con el agente caído es una
 // promesa falsa que cuesta un cupo.
 
-const WATCHER_LABEL: Record<string, string> = {
+// Exportado: el estado del watcher se nombra igual en la barra superior y en la
+// tarjeta de /inscripcion. Dos mapas separados terminan siempre en que una
+// pantalla dice "en pausa" y la otra "credentials-required" sobre el mismo dato.
+export const WATCHER_LABEL: Record<string, string> = {
   running: 'vigilando',
   paused: 'en pausa',
   offline: 'sin conexión',

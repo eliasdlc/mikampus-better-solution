@@ -776,11 +776,25 @@ export type HoldsResponse = z.infer<typeof holdsResponseSchema>;
 // Estado del scheduler + watcher (GET /api/state).
 export const appStateSchema = z.object({
   schedule: z.object({ atISO: z.string(), prewarmAtISO: z.string(), prewarmed: z.boolean() }).nullable(),
+  // El ritmo configurado existe con el watcher apagado: se puede elegir cada
+  // cuánto vigilar ANTES de encenderlo. `tickMs` es lo que se configura;
+  // `effectiveIntervalMs` es lo que de verdad le toca a cada materia cuando hay
+  // varias rotando en el mismo loop.
+  watcherSettings: z
+    .object({
+      tickMs: z.number(),
+      minTickMs: z.number(),
+      maxTickMs: z.number(),
+      watchedCourses: z.number().int(),
+      effectiveIntervalMs: z.number(),
+    })
+    .default({ tickMs: 45_000, minTickMs: 30_000, maxTickMs: 3_600_000, watchedCourses: 0, effectiveIntervalMs: 45_000 }),
   // intervalMs es el ciclo efectivo de la materia en el loop compartido;
   // lastCheckAt null = activo pero todavía sin consultar su materia.
   watcher: z
     .object({
       intervalMs: z.number(),
+      tickMs: z.number().default(45_000),
       lastCheckAt: z.string().nullable().default(null),
       autoEnroll: z.boolean().default(false),
       // Qué hechos del portal interrumpen a esta persona. El default 'both' es
