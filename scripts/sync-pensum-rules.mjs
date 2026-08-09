@@ -163,6 +163,15 @@ async function main() {
   const payload = {
     $comment:
       'GENERADO por scripts/sync-pensum-rules.mjs desde el plan académico oficial. No editar a mano, salvo "aliases".',
+    // La nota va acá y no en el archivo generado: si viviera solo en el JSON,
+    // cada regeneración la borraría y el porqué de cada alias —que no está en
+    // ningún documento— se perdería en la primera actualización del pénsum.
+    $aliasesComment: [
+      'aliases: código del plan → códigos que la universidad usó para LA MISMA materia en otras versiones.',
+      'No sale del PDF: ningún documento declara las recodificaciones. Se edita a mano y sobrevive a regenerar.',
+      'MAT-110 ≡ ESG-105: mismo nombre (Razonamiento Lógico-Matemático) y mismas 4-0-4 unidades. El diagrama de malla v4 (sep-2021) la llama ESG-105; el reporte del Registro (dic-2024), MAT-110.',
+      'CN-112 ≡ ESG-112 y su laboratorio: misma materia ambiental, recodificada de CN a ESG después de dic-2024.',
+    ],
     source: { url: sourceUrl, fetchedAt: new Date().toISOString().slice(0, 10) },
     aliases,
     ...plan,

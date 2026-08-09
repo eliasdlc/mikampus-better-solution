@@ -2,12 +2,12 @@
   "$comment": "GENERADO por scripts/sync-pensum-rules.mjs desde el plan académico oficial. No editar a mano, salvo \"aliases\".",
   "$aliasesComment": [
     "aliases: código del plan → códigos que la universidad usó para LA MISMA materia en otras versiones.",
-    "No sale del PDF: ningún documento declara las recodificaciones. Se mantiene a mano y sobrevive a regenerar.",
+    "No sale del PDF: ningún documento declara las recodificaciones. Se edita a mano y sobrevive a regenerar.",
     "MAT-110 ≡ ESG-105: mismo nombre (Razonamiento Lógico-Matemático) y mismas 4-0-4 unidades. El diagrama de malla v4 (sep-2021) la llama ESG-105; el reporte del Registro (dic-2024), MAT-110.",
-    "CN-112 ≡ ESG-112 y su laboratorio: misma materia ambiental, recodificada de CN a ESG despues de dic-2024."
+    "CN-112 ≡ ESG-112 y su laboratorio: misma materia ambiental, recodificada de CN a ESG después de dic-2024."
   ],
   "source": {
-    "url": "file:///tmp/claude-1000/-home-decruce-mikampus-better-solution/338829ae-151f-4856-80fe-64577f69a883/scratchpad/sp2.pdf",
+    "url": "https://pucmmedudo-my.sharepoint.com/personal/ccamacho_pucmm_edu_do/_layouts/15/download.aspx?share=EQXSwJt_6ihDupuwFhdqzJ0BBj0PaK0TRvoXv5YxbSxXhw",
     "fetchedAt": "2026-08-09"
   },
   "aliases": {
