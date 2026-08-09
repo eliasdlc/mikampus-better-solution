@@ -175,6 +175,40 @@ export function parseGradeStats({ termLabel, rows }) {
   return { termLabel: termLabel ?? null, term, cumulative };
 }
 
+// El acumulado que publica el portal se guarda, no solo se compara: es el
+// baseline de toda proyección (P5 §1). Nuestro cálculo por materias queda como
+// auditoría — si los dos discrepan, la app lo dice y deja de proyectar.
+export function saveOfficialTotals(userId, cumulative, termLabel = null) {
+  if (!cumulative) return null;
+  db.prepare(
+    `INSERT INTO gpa_official (user_id, gpa, units_toward_gpa, grade_points, units_passed, term_label, captured_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET
+       gpa = excluded.gpa, units_toward_gpa = excluded.units_toward_gpa,
+       grade_points = excluded.grade_points, units_passed = excluded.units_passed,
+       term_label = excluded.term_label, captured_at = datetime('now')`
+  ).run(
+    userId,
+    cumulative.gpa ?? null,
+    cumulative.unitsTowardGpa ?? null,
+    cumulative.gradePoints ?? null,
+    cumulative.unitsPassed ?? null,
+    termLabel
+  );
+  return cumulative;
+}
+
+export function readOfficialTotals(userId) {
+  const row = db
+    .prepare(
+      `SELECT gpa, units_toward_gpa AS unitsTowardGpa, grade_points AS gradePoints,
+              units_passed AS unitsPassed, term_label AS termLabel, captured_at AS capturedAt
+       FROM gpa_official WHERE user_id = ?`
+    )
+    .get(userId);
+  return row ?? null;
+}
+
 // El índice de mikampus se calcula; el del portal se lee. Si no coinciden, la
 // universidad cambió una regla (la escala, qué nota cuenta, cómo trata una
 // repetida) y todo lo que dependa del cálculo —el what-if incluido— está
@@ -265,6 +299,7 @@ export async function fetchGrades(page, { userId }) {
   const portal = parseGradeStats(await frame.evaluate(extractGradeStats));
 
   const mismatches = checkAgainstPortal(summary, portal.cumulative);
+  saveOfficialTotals(userId, portal.cumulative, portal.termLabel);
   logSync({
     userId,
     kind: 'grades',

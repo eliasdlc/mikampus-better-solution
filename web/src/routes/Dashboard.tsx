@@ -21,6 +21,7 @@ import { ago } from '../lib/time.ts';
 import { Countdown } from '../components/Countdown.tsx';
 import { TermBadge } from '../components/TermBadge.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
+import { UpcomingDates } from '../components/UpcomingDates.tsx';
 
 // Dashboard (plan §5.1 + §11): el estado del día en una pantalla. Regla que
 // ordena todo: el hero y la agenda son SOLO del ciclo actual; lo del ciclo que
@@ -80,14 +81,14 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* El título es el día, no la marca: la marca ya está en el shell (barra
+          superior en teléfono, sidebar en desktop) y repetirla gastaba la línea
+          más visible de la pantalla en decir algo que ya se sabe. */}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <h1 className="font-display text-3xl font-semibold tracking-tight">mikampus</h1>
-          <TermBadge label={current?.label} />
-        </div>
-        <p className="text-muted text-sm">
+        <h1 className="font-display text-2xl font-semibold tracking-tight first-letter:uppercase sm:text-3xl">
           {now.toLocaleDateString('es-DO', { weekday: 'long', day: 'numeric', month: 'long' })}
-        </p>
+        </h1>
+        <TermBadge label={current?.label} />
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -106,6 +107,10 @@ export function Dashboard() {
             <h2 className="text-muted mb-2 text-xs font-medium tracking-wide uppercase">Hoy</h2>
             <Timeline blocks={hoy} now={now} />
           </section>
+
+          {/* Las fechas institucionales cierran la línea académica: después de
+              hoy viene lo que la universidad ya tiene calendarizado. */}
+          <UpcomingDates limit={4} />
         </div>
 
         <aside className="space-y-3">
@@ -118,7 +123,12 @@ export function Dashboard() {
             enrollmentWindow={enrollmentWindows.data?.windows[0] ?? null}
           />
           <WatcherCard watcher={state.data?.watcher ?? null} />
-          <HoldsCard holds={holds.data?.holds ?? []} syncedAt={holds.data?.syncedAt ?? null} loading={holds.isPending} />
+          {/* Holds solo cuando hay algo que hacer: o hay holds, o nunca se
+              consultaron. "Cero holds confirmados" no es una tarea, y ocupar
+              espacio con eso empuja hacia abajo lo que sí lo es (P3 §1). */}
+          {(holds.isPending || !holds.data?.syncedAt || (holds.data?.holds.length ?? 0) > 0) && (
+            <HoldsCard holds={holds.data?.holds ?? []} syncedAt={holds.data?.syncedAt ?? null} loading={holds.isPending} />
+          )}
         </aside>
       </div>
 
@@ -170,7 +180,7 @@ function Hero({
           {loading
             ? 'Un momento.'
             : !current
-              ? 'No hay un ciclo corriendo ahora mismo. Mirá el próximo en la card de la derecha.'
+              ? 'No hay un ciclo corriendo ahora mismo. Abajo está lo que viene y cómo prepararlo.'
               : !synced
                 ? 'Todavía no trajimos el horario de este ciclo. Traelo desde Mi horario.'
                 : planes > 0
@@ -178,10 +188,10 @@ function Hero({
                   : 'Armá tu ciclo en el planner y mandá las materias al carrito antes de la hora de inscripción.'}
         </p>
         <Link
-          to={current != null ? '/horario' : '/planear'}
+          to={current != null ? '/horario' : '/inscripcion'}
           className="bg-accent text-accent-fg mt-4 inline-block rounded-[var(--radius)] px-3 py-2 text-sm font-medium"
         >
-          {current != null ? 'Ir a mi horario' : planes > 0 ? 'Ir a planear' : 'Planear mi ciclo'}
+          {current != null ? 'Ir a mi horario' : planes > 0 ? 'Seguir mi plan' : 'Planear mi ciclo'}
         </Link>
       </section>
     );
@@ -208,9 +218,17 @@ function Hero({
           <h2 className="font-display mt-1 line-clamp-2 text-3xl font-semibold tracking-tight text-balance">
             {block.title}
           </h2>
-          <p className="text-muted tabular mt-1 font-mono text-sm">
-            {block.code} · {block.start}–{block.end} · {block.room ?? 'Aula por definir'}
-            {block.instructor ? ` · ${block.instructor}` : ''}
+          {/* Materia → hora → aula → profesor → código. El aula sube de línea:
+              es lo que se busca corriendo entre dos clases, y estaba enterrada
+              al final de una tirada monoespaciada junto al NRC. */}
+          <p className="tabular mt-1.5 flex flex-wrap items-baseline gap-x-2 font-mono text-sm">
+            <span>{block.start}–{block.end}</span>
+            <span className="text-muted" aria-hidden>·</span>
+            <span className="font-sans text-base font-medium">{block.room ?? 'Aula por definir'}</span>
+          </p>
+          <p className="text-muted mt-1 text-sm">
+            {block.instructor ?? 'Profesor no publicado'}
+            <span className="tabular ml-2 font-mono text-xs">{block.code}</span>
           </p>
         </div>
         <div className="text-right">
@@ -253,8 +271,9 @@ function Timeline({ blocks, now }: { blocks: Block[]; now: Date }) {
             />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{block.title}</div>
-              <div className="text-muted tabular font-mono text-xs">
-                {block.code} · {block.room ?? 'Aula por definir'}
+              <div className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                <span className="font-medium">{block.room ?? 'Aula por definir'}</span>
+                <span className="text-muted tabular font-mono">{block.code}</span>
               </div>
             </div>
             {enCurso && <span className="text-open text-xs font-medium whitespace-nowrap">en curso</span>}
@@ -309,7 +328,7 @@ function NextCycleCard({
   const ofrecerRecomendacion = term != null && planes === 0;
 
   return (
-    <Card to={ofrecerRecomendacion ? '/planear?recomendado=1' : '/inscripcion'} title="Próximo ciclo">
+    <Card to={ofrecerRecomendacion ? '/inscripcion?recomendado=1' : '/inscripcion'} title="Próximo ciclo">
       <div className="mt-1 flex items-center justify-between gap-2">
         <TermBadge label={term?.label ?? null} />
       </div>

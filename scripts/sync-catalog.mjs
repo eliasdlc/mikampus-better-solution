@@ -1,4 +1,6 @@
 import 'dotenv/config';
+// Antes que cualquier módulo que lea rutas: fija la base y el browser de la app.
+import '../src/bootstrapPaths.js';
 import { loginToPeopleSoft } from '../src/login.js';
 import { fetchSubjects, syncSubjectTitles, knownSubjects } from '../src/peoplesoft/browseCatalog.js';
 import { syncCatalogSubject } from '../src/peoplesoft/catalog.js';
@@ -44,7 +46,18 @@ if (!soloTitulos && !onlySubjects && !TERM) {
   throw new Error('No se conoce el próximo ciclo. Sincronizá términos o indicá SYNC_TERM explícitamente.');
 }
 
-const { browser, page } = await loginToPeopleSoft({ headless: true });
+// loginToPeopleSoft no lee el entorno por diseño: la credencial se entrega
+// explícita para que no haya un camino implícito desde un archivo en claro.
+// Este script corre sin UI y sin sesión de agente, así que el .env del server es
+// su única fuente posible; se valida acá para fallar diciendo qué falta y no con
+// un "No hay cuenta configurada" a mitad del login.
+const USERNAME = process.env.PUCMM_USERNAME;
+const PASSWORD = process.env.PUCMM_PASSWORD;
+if (!USERNAME || !PASSWORD) {
+  throw new Error('Faltan PUCMM_USERNAME y PUCMM_PASSWORD en el .env para sincronizar el catálogo');
+}
+
+const { browser, page } = await loginToPeopleSoft({ headless: true, username: USERNAME, password: PASSWORD });
 try {
   // La lista de subjects se refresca si la piden o si nunca se cargó.
   if (onlySubjects || knownSubjects().length === 0) {

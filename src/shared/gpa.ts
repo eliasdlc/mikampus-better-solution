@@ -25,6 +25,26 @@ export function isPassing(grade: string | null | undefined): boolean {
   return countsTowardGpa(grade) && grade!.toUpperCase() !== 'F';
 }
 
+// Notas que aprueban la materia sin entrar al índice: S (satisfactorio, la nota
+// de los laboratorios) y EXO (exonerada por transferencia).
+const APPROVING_OUTSIDE_GPA = new Set(['S', 'EXO']);
+
+// "¿Tengo esta materia aprobada?" es una pregunta DISTINTA de "¿cuenta para mi
+// índice?", y confundirlas rompe los prerrequisitos en las dos direcciones:
+//
+//   · Un laboratorio con S no cuenta para el índice pero SÍ está aprobado, y es
+//     prerrequisito de la física del año siguiente.
+//   · Una materia con R (retirada) o F no está aprobada, aunque el histórico la
+//     liste como cursada. Tratarlas como aprobadas es lo que hacía que el
+//     recomendador propusiera Física II a quien todavía debe Física I.
+//
+// Sin nota todavía (null) no es aprobada: es una materia en curso.
+export function isApproved(grade: string | null | undefined): boolean {
+  if (typeof grade !== 'string') return false;
+  const value = grade.trim().toUpperCase();
+  return isPassing(value) || APPROVING_OUTSIDE_GPA.has(value);
+}
+
 export type GradedCourse = {
   grade: string | null;
   units: number | null;

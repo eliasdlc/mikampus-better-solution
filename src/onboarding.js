@@ -50,7 +50,21 @@ export function runtimeMode() {
 export function chooseMode(mode) {
   if (!MODES[mode]) throw new Error(`Modo desconocido: ${mode}`);
   writeMeta(MODE_KEY, mode);
+  // notify.js decide por entorno y no por la base: es un módulo que los tests
+  // importan puro, y hacerlo leer app_meta arrastraría SQLite hasta ahí. Elegir
+  // el modo lo publica en el entorno del proceso vivo para que la decisión
+  // valga de inmediato, sin esperar un reinicio del agente.
+  process.env.MIKAMPUS_RUNTIME_MODE = mode;
   return MODES[mode];
+}
+
+// Un agente que arranca con el modo ya elegido tiene que publicarlo antes de
+// servir nada: sin esto, un Home Server reiniciado vuelve a intentar
+// notificaciones nativas hasta que alguien vuelva a tocar el onboarding.
+export function publishRuntimeMode() {
+  const mode = runtimeMode();
+  if (mode) process.env.MIKAMPUS_RUNTIME_MODE = mode;
+  return mode;
 }
 
 function writable(directory) {

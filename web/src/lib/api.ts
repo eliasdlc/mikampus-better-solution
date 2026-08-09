@@ -2,10 +2,11 @@ import {
   appStateSchema,
   cartResponseSchema,
   catalogResponseSchema,
+  catalogCourseSchema,
   planDetailSchema,
   planSummarySchema,
   planToCartResultSchema,
-  recommendationResponseSchema,
+  recommendationOptionsResponseSchema,
   scheduleResponseSchema,
   termInfoSchema,
   termContextSchema,
@@ -34,7 +35,8 @@ import {
   type PlanDetail,
   type PlanSummary,
   type PlanToCartResult,
-  type RecommendationResponse,
+  type RecommendationOptionsResponse,
+  type RecommendationStrategy,
   type ScheduleResponse,
   type TermInfo,
   type TermContext,
@@ -126,6 +128,31 @@ export async function fetchCatalog(): Promise<CatalogResponse> {
   return catalogResponseSchema.parse(await getJSON('/api/catalog'));
 }
 
+// "Ver más grupos": relee UNA materia del portal y persiste sus secciones en el
+// catálogo local. Tarda segundos (es Playwright) y devuelve la materia ya
+// reconstruida desde disco, con todos sus grupos.
+const courseSyncResultSchema = z.object({
+  term: z.string(),
+  courseCode: z.string(),
+  saved: z.number(),
+  course: catalogCourseSchema.nullable(),
+});
+export type CourseSyncResult = z.infer<typeof courseSyncResultSchema>;
+
+export async function syncCourseSections(input: {
+  term: string;
+  courseCode: string;
+  career?: string | null;
+}): Promise<CourseSyncResult> {
+  return courseSyncResultSchema.parse(
+    await send('/api/catalog/course/sync', 'POST', {
+      term: input.term,
+      courseCode: input.courseCode,
+      career: input.career ?? 'GRDO',
+    })
+  );
+}
+
 // Mi Horario, desde cache. Ojo: /api/schedule es el scheduler de inscripción,
 // otra cosa; el horario inscrito vive en /api/my-schedule.
 export async function fetchMySchedule(term?: string): Promise<ScheduleResponse> {
@@ -159,7 +186,19 @@ export function scheduleAt(input: { atISO: string; term?: string; consent?: bool
 export function cancelSchedule() {
   return send('/api/schedule', 'DELETE');
 }
-export function setWatcher(input: { enabled: boolean; autoEnroll?: boolean; appointmentAt?: string | null; term?: string; consent?: boolean }) {
+// Qué mira el watcher: el cupo de TU sección, los grupos nuevos que abra la
+// universidad, o las dos cosas. Ver src/scheduler.js para por qué "groups" no
+// puede auto-inscribir.
+export type WatcherScope = 'seats' | 'groups' | 'both';
+
+export function setWatcher(input: {
+  enabled: boolean;
+  autoEnroll?: boolean;
+  appointmentAt?: string | null;
+  term?: string;
+  consent?: boolean;
+  scope?: WatcherScope;
+}) {
   return send('/api/watch', 'POST', input);
 }
 export function enrollNow() {
@@ -267,18 +306,45 @@ export async function fetchInsights(): Promise<InsightsResponse> {
   return insightsResponseSchema.parse(await getJSON('/api/insights'));
 }
 
-// ── Recomendador (/planner, Fase 9) ─────────────────────────────────────────
-export async function fetchRecommendation(term: string, maxCredits: number): Promise<RecommendationResponse> {
-  const qs = new URLSearchParams({ term, maxCredits: String(maxCredits) });
-  return recommendationResponseSchema.parse(await getJSON(`/api/recommendation?${qs}`));
+// ── Recomendador de ciclo ───────────────────────────────────────────────────
+// Devuelve las DOS propuestas (ponerse al día / avanzar) del mismo ciclo: cuál
+// conviene depende de si pesa más no arrastrar deudas o no atrasar la
+// graduación, y eso no lo decide el algoritmo.
+export type RecommendationControls = {
+  maxCredits: number;
+  include?: string[];
+  exclude?: string[];
+};
+
+function controlsToQuery(controls: RecommendationControls): Record<string, string> {
+  return {
+    maxCredits: String(controls.maxCredits),
+    ...(controls.include?.length ? { include: controls.include.join(',') } : {}),
+    ...(controls.exclude?.length ? { exclude: controls.exclude.join(',') } : {}),
+  };
 }
 
-export async function createRecommendedPlan(input: {
-  term: string;
-  maxCredits: number;
-  name?: string;
-}): Promise<PlanDetail> {
-  return planDetailSchema.parse(await send('/api/recommendation/plan', 'POST', input));
+export async function fetchRecommendation(
+  term: string,
+  controls: RecommendationControls
+): Promise<RecommendationOptionsResponse> {
+  const qs = new URLSearchParams({ term, ...controlsToQuery(controls) });
+  return recommendationOptionsResponseSchema.parse(await getJSON(`/api/recommendation?${qs}`));
+}
+
+export async function createRecommendedPlan(
+  input: { term: string; name?: string; strategy: RecommendationStrategy } & RecommendationControls
+): Promise<PlanDetail> {
+  return planDetailSchema.parse(
+    await send('/api/recommendation/plan', 'POST', {
+      term: input.term,
+      name: input.name,
+      strategy: input.strategy,
+      maxCredits: input.maxCredits,
+      include: input.include?.join(',') ?? '',
+      exclude: input.exclude?.join(',') ?? '',
+    })
+  );
 }
 
 // ── Notas, pénsum y holds ───────────────────────────────────────────────────
@@ -466,6 +532,7 @@ const statusSchema = z.object({
       pauseReason: z.string().nullable(),
       autoEnroll: z.boolean(),
       appointmentAt: z.string().nullable(),
+      scope: z.enum(['seats', 'groups', 'both']),
     })
     .nullable(),
   schedule: z.object({ atISO: z.string(), state: z.string(), lastError: z.string().nullable() }).nullable(),
@@ -617,12 +684,136 @@ export async function fetchErasePreview(): Promise<ErasePreview> {
   return erasePreviewSchema.parse(await getJSON('/api/account/erase-preview'));
 }
 
-export async function refreshExpiredData() {
-  return z
-    .object({
-      results: z.array(
-        z.object({ kind: z.string(), label: z.string(), status: z.enum(['fresh', 'updated', 'error']), syncedAt: z.string().nullable(), error: z.string().optional() })
-      ),
+// ── Sincronización universal (P1) ───────────────────────────────────────────
+// Una sola definición de frescura para toda la app. El estado es barato (sale
+// de SQLite) y dice por qué cada fuente está como está; correr es lo único que
+// puede salir al portal.
+
+const syncResultSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  status: z.enum(['fresh', 'updated', 'skipped', 'paused', 'error']),
+  syncedAt: z.string().nullable(),
+  detail: z.string().nullable().optional(),
+  reason: z.string().optional(),
+  error: z.string().optional(),
+  invalidates: z.array(z.string()).optional(),
+});
+export type SyncResult = z.infer<typeof syncResultSchema>;
+
+const syncStateSchema = z.object({
+  now: z.string(),
+  running: z.boolean(),
+  hold: z.string().nullable(),
+  sources: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      dependsOn: z.array(z.string()),
+      ttlMs: z.number(),
+      needsPortal: z.boolean(),
+      syncedAt: z.string().nullable(),
+      ageMs: z.number().nullable(),
+      expired: z.boolean(),
+      relevant: z.boolean(),
+      lastRunAt: z.string().nullable(),
+      lastSuccessAt: z.string().nullable(),
+      lastStatus: z.string().nullable(),
+      error: z.string().nullable(),
     })
-    .parse(await send('/api/refresh', 'POST'));
+  ),
+});
+export type SyncState = z.infer<typeof syncStateSchema>;
+
+// ── Calendario académico oficial (P3) ───────────────────────────────────────
+// Fechas públicas de PUCMM, cacheadas en SQLite. No es PeopleSoft y no lleva
+// datos personales: es lo mismo que ve cualquiera en la web de la universidad.
+
+const academicCalendarSchema = z.object({
+  events: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      startsOn: z.string(),
+      endsOn: z.string(),
+      url: z.string().nullable(),
+      sourceUrl: z.string(),
+    })
+  ),
+  total: z.number(),
+  syncedAt: z.string().nullable(),
+});
+export type AcademicCalendar = z.infer<typeof academicCalendarSchema>;
+
+export async function fetchAcademicCalendar(limit = 5): Promise<AcademicCalendar> {
+  return academicCalendarSchema.parse(await getJSON(`/api/academic-calendar?limit=${limit}`));
+}
+
+// ── Ritmo de cupo (feature nueva) ───────────────────────────────────────────
+// La serie que mikampus viene guardando desde el primer día. El portal te dice
+// cuántos asientos hay ahora; esto te dice cuántos había hace dos horas.
+
+const seatTrendSchema = z.object({
+  term: z.string().nullable(),
+  trends: z.record(
+    z.string(),
+    z.object({
+      samples: z.number(),
+      change: z.number().nullable(),
+      perHour: z.number().nullable(),
+      direction: z.enum(['filling', 'opening', 'stable', 'unknown']),
+      windowHours: z.number(),
+      closedAt: z.string().nullable(),
+      reopenedAt: z.string().nullable(),
+      summary: z.string().nullable(),
+      latestAt: z.string().nullable(),
+      seatsOpen: z.number().nullable(),
+    })
+  ),
+});
+export type SeatTrends = z.infer<typeof seatTrendSchema>;
+
+export async function fetchSeatTrends(term: string, classNbrs: string[]): Promise<SeatTrends> {
+  if (!term || classNbrs.length === 0) return { term: term || null, trends: {} };
+  const qs = new URLSearchParams({ term, classNbrs: classNbrs.join(',') });
+  return seatTrendSchema.parse(await getJSON(`/api/seat-trend?${qs}`));
+}
+
+// ── Recordatorio antes de clase (feature nueva) ─────────────────────────────
+
+const classRemindersSchema = z.object({
+  enabled: z.boolean(),
+  leadMinutes: z.number(),
+  next: z
+    .object({
+      title: z.string(),
+      room: z.string().nullable(),
+      start: z.string(),
+      minutesAway: z.number(),
+      willNotify: z.boolean(),
+    })
+    .nullable(),
+});
+export type ClassReminders = z.infer<typeof classRemindersSchema>;
+
+export async function fetchClassReminders(): Promise<ClassReminders> {
+  return classRemindersSchema.parse(await getJSON('/api/class-reminders'));
+}
+
+export async function setClassReminders(input: { enabled?: boolean; leadMinutes?: number }): Promise<ClassReminders> {
+  return classRemindersSchema.parse(await send('/api/class-reminders', 'PATCH', input));
+}
+
+export async function fetchSyncState(): Promise<SyncState> {
+  return syncStateSchema.parse(await getJSON('/api/sync'));
+}
+
+/**
+ * `force` incluye las fuentes todavía vigentes. No evade consentimiento ni
+ * prioridad: una inscripción en curso sigue mandando sobre el portal.
+ */
+export async function runSync(input: { force?: boolean; keys?: string[] } = {}) {
+  return z
+    .object({ results: z.array(syncResultSchema), state: syncStateSchema })
+    .parse(await send('/api/sync', 'POST', input));
 }

@@ -68,6 +68,15 @@ export function SSEProvider({ children }: { children: ReactNode }) {
         case 'watcher-set':
           qc.invalidateQueries({ queryKey: ['state'] });
           break;
+        // P1: la invalidación es por evento y la declara la fuente, no la
+        // pantalla que disparó el refresh. Así una pestaña abierta en Notas se
+        // entera de que el avance cambió sin que nadie recargue.
+        case 'sync-source':
+          for (const key of (data.invalidates ?? []) as string[]) {
+            qc.invalidateQueries({ queryKey: [key] });
+          }
+          qc.invalidateQueries({ queryKey: ['sync'] });
+          break;
       }
     };
     return () => source.close();

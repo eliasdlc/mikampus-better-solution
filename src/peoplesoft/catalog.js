@@ -1,4 +1,6 @@
 import { CLASS_SEARCH_URL } from './constants.js';
+import { mergeSection } from '../shared/sectionMerge.ts';
+import { writeDiagnostic } from '../diagnostics.js';
 import { db, logSync } from '../db.js';
 import { scrapedSectionSchema, normalizeSeatStatus } from '../shared/schemas.ts';
 import { parseMeetings } from '../shared/meetings.ts';
@@ -19,17 +21,37 @@ const upsertCourseStmt = db.prepare(`
     updated_at = datetime('now')
 `);
 
+// Los valores que llegan acá YA pasaron por mergeSection: este statement no
+// decide nada, solo escribe el resultado. La lógica de "lo vacío no pisa lo
+// lleno" vive en shared/sectionMerge.ts, donde se puede probar sola.
 const upsertSectionStmt = db.prepare(`
-  INSERT INTO sections (course_id, term, class_nbr, section, component, instructor, meetings, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  INSERT INTO sections (course_id, term, class_nbr, section, component, instructor, meetings,
+                        instructor_source, meetings_source, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   ON CONFLICT(term, class_nbr) DO UPDATE SET
     course_id = excluded.course_id,
     section = excluded.section,
     component = excluded.component,
     instructor = excluded.instructor,
     meetings = excluded.meetings,
+    instructor_source = excluded.instructor_source,
+    meetings_source = excluded.meetings_source,
     updated_at = datetime('now')
 `);
+
+// Los encuentros ya guardados viven como JSON en una columna de texto. Ojo con
+// el nombre: `parseMeetings` (shared/meetings.ts) parsea el TEXTO del portal
+// ("LuMi 8:00AM - 9:30AM"); esto lee lo que nosotros mismos serializamos. Una
+// fila vieja o corrupta no puede tumbar un sync entero.
+function storedMeetings(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 const recordSeatsStmt = db.prepare(`
   INSERT INTO seats_snapshot (section_id, status, seats_open, seats_cap, wait_total)
@@ -56,24 +78,132 @@ export function coursesMissingTitle() {
 
 // Guarda una sección validada (course + section + snapshot de cupo) en una
 // transacción. `s` ya pasó por scrapedSectionSchema.
-export function saveSection(s) {
+export function saveSection(s, { source = 'class-search' } = {}) {
   const title = resolveTitle(s.courseCode, s.title);
   upsertCourseStmt.run(s.courseCode, s.subject, s.catalogNbr, title, s.career, s.credits);
   const courseId = db.prepare('SELECT id FROM courses WHERE code = ?').get(s.courseCode).id;
+
+  // La correlación es por STRM + class number, que es la UNIQUE de la tabla.
+  // Nunca por código de materia ni por sección: dos grupos de la misma materia
+  // se intercambiarían profesor y aula.
+  const existing = db
+    .prepare(
+      `SELECT section, component, instructor, meetings,
+              instructor_source AS instructorSource, meetings_source AS meetingsSource
+       FROM sections WHERE term = ? AND class_nbr = ?`
+    )
+    .get(s.term, s.classNbr);
+
+  const { fields, conflicts } = mergeSection(
+    existing
+      ? {
+          section: existing.section,
+          component: existing.component,
+          instructor: existing.instructor,
+          meetings: storedMeetings(existing.meetings),
+          instructorSource: existing.instructorSource,
+          meetingsSource: existing.meetingsSource,
+        }
+      : null,
+    { section: s.section, component: s.component, instructor: s.instructor, meetings: s.meetings ?? [] },
+    source
+  );
+
   upsertSectionStmt.run(
     courseId,
     s.term,
     s.classNbr,
-    s.section,
-    s.component,
-    s.instructor,
-    JSON.stringify(s.meetings)
+    fields.section,
+    fields.component,
+    fields.instructor,
+    JSON.stringify(fields.meetings),
+    fields.instructorSource,
+    fields.meetingsSource
   );
+
+  // Una discrepancia no se resuelve en silencio ni rompe el sync: queda escrita
+  // para que se pueda ver por qué dos pantallas del portal dicen cosas distintas.
+  for (const conflict of conflicts) {
+    writeDiagnostic(
+      'section-merge',
+      `${s.term}/${s.classNbr} ${conflict.field}: se conservó "${conflict.kept}" (${conflict.from}) sobre "${conflict.rejected}" (${conflict.over})`
+    );
+  }
+
   const sectionId = db.prepare('SELECT id FROM sections WHERE term = ? AND class_nbr = ?').get(s.term, s.classNbr).id;
   if (s.seats) {
     recordSeatsStmt.run(sectionId, s.seats.status, s.seats.open, s.seats.capacity, s.seats.waitTotal);
   }
   return sectionId;
+}
+
+// El Class Search no publica créditos: de 907 materias del catálogo real, 900
+// llegan con credits en null. Eso deja sin sentido todo lo que se mide en
+// créditos —la carga máxima del recomendador, el total de un plan, el "X cr"
+// del buscador— justo donde el estudiante decide.
+//
+// El plan académico oficial SÍ los trae, y es la fuente más autoritativa que
+// existe (los emite la Dirección del Registro). Se copian al catálogo una vez
+// al arrancar, y solo donde falta el dato: nunca se pisa un crédito que el
+// portal haya llegado a informar.
+const fillCreditsStmt = db.prepare(`
+  UPDATE courses SET credits = ?, updated_at = datetime('now')
+  WHERE code = ? AND credits IS NULL
+`);
+
+// Lo mismo pasa con los títulos, por otra vía: el Class Search deja el nombre
+// vacío y resolveTitle (arriba) pone el código como marcador hasta que el
+// Browse Catalog lo complete. Mientras eso no corra, el plan recomendado dice
+// "ICC-471" donde debería decir "Gestión de Proyectos". La condición
+// `title = code` es exactamente ese marcador: nunca pisa un nombre real.
+const fillTitleStmt = db.prepare(`
+  UPDATE courses SET title = ?, updated_at = datetime('now')
+  WHERE code = ? AND title = code
+`);
+
+export function applyPlanFacts(plan) {
+  if (!plan?.courses) return { credits: 0, titles: 0 };
+  let credits = 0;
+  let titles = 0;
+  for (const rule of Object.values(plan.courses)) {
+    if (rule.units != null && Number.isFinite(rule.units)) {
+      credits += fillCreditsStmt.run(rule.units, rule.code).changes;
+    }
+    if (rule.title) titles += fillTitleStmt.run(rule.title, rule.code).changes;
+  }
+  return { credits, titles };
+}
+
+// ── Historia de cupo ───────────────────────────────────────────────────────
+// La serie que el watcher y el catálogo vienen escribiendo desde el principio.
+// Se lee acotada por ventana y por sección: son las secciones que le importan a
+// alguien ahora mismo (su carrito), no el catálogo entero.
+export function seatHistory(term, classNbrs, { windowHours = 24 } = {}) {
+  if (!classNbrs?.length) return new Map();
+  const placeholders = classNbrs.map(() => '?').join(', ');
+  const since = new Date(Date.now() - windowHours * 3_600_000).toISOString();
+  const rows = db
+    .prepare(
+      `SELECT s.class_nbr AS classNbr, snap.status, snap.seats_open AS seatsOpen,
+              snap.seats_cap AS seatsCap, snap.captured_at AS capturedAt
+       FROM sections s
+       JOIN seats_snapshot snap ON snap.section_id = s.id
+       WHERE s.term = ? AND s.class_nbr IN (${placeholders}) AND snap.captured_at >= ?
+       ORDER BY s.class_nbr, snap.captured_at`
+    )
+    .all(term, ...classNbrs, since);
+
+  const byClass = new Map();
+  for (const row of rows) {
+    if (!byClass.has(row.classNbr)) byClass.set(row.classNbr, []);
+    byClass.get(row.classNbr).push({
+      status: row.status,
+      seatsOpen: row.seatsOpen,
+      seatsCap: row.seatsCap,
+      capturedAt: row.capturedAt,
+    });
+  }
+  return byClass;
 }
 
 // ── Capa de lectura (GET /api/catalog) ─────────────────────────────────────

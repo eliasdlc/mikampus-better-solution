@@ -9,7 +9,18 @@ import { chromium } from 'playwright';
 const PORT = 4188;
 const BASE = `http://localhost:${PORT}`;
 const OUT = 'screenshots/smoke';
-const ROUTES = ['/', '/buscar', '/planner', '/builder', '/horario', '/inscripcion', '/academico', '/holds'];
+// Las rutas del producto tal como quedó tras P2: Planear se fusionó dentro de
+// Inscripción, y /buscar y /holds viven donde se usan. Las tres etapas se
+// fotografían por separado porque son tres layouts distintos.
+const ROUTES = [
+  '/',
+  '/horario',
+  '/inscripcion',
+  '/inscripcion?etapa=grupos',
+  '/inscripcion?etapa=carrito',
+  '/academico',
+  '/ajustes',
+];
 const WIDTHS = [390, 768, 1440];
 
 // Un plan de mentira con items en los tres estados (grupo elegido con y sin
@@ -143,6 +154,56 @@ const TERM_PROXIMO = {
 };
 
 const FIXTURES = {
+  // El gate no puede depender del estado local de quien lo corre. Antes tomaba
+  // la sesión y el onboarding de la app-data real de la máquina: si estaba sin
+  // configurar el smoke moría en la pantalla de onboarding, y si estaba
+  // configurada las capturas salían con datos académicos de una persona. Las
+  // dos cosas son problemas. Ahora la sesión también es fixture.
+  '/api/onboarding': {
+    step: 'done',
+    completedAt: '2026-07-16T12:00:00.000Z',
+    mode: 'desktop',
+    modes: [],
+    prerequisites: [],
+    browser: { installed: true, root: '/tmp', source: 'system', install: { status: 'done', percent: 100, message: null, error: null } },
+    account: true,
+  },
+  '/api/auth/me': { mode: 'local', user: { id: 1, username: 'estudiante' }, csrfToken: 'smoke-csrf' },
+  // El catálogo que alimenta ⌘K y los buscadores. Sintético: tres materias ICC3
+  // inventadas, suficientes para probar el índice sin datos de nadie.
+  '/api/catalog': {
+    term: '1930',
+    generatedAt: new Date().toISOString(),
+    syncedAt: '2026-07-16 12:00:00',
+    courses: [
+      {
+        id: 1, code: 'ICC-303', subject: 'ICC', catalogNbr: '303', title: 'Estructuras de Datos', career: 'GRDO', credits: 4,
+        sections: [{ id: 11, term: '1930', classNbr: '4567', section: '101', component: 'LEC', instructor: 'M. Pérez', meetings: [{ days: ['Mo', 'We'], start: '10:00', end: '13:00', room: 'A-201' }], seats: { status: 'open', open: 3, capacity: 30, waitTotal: 0 }, seatsUpdatedAt: '2026-07-16 12:00:00' }],
+      },
+      {
+        id: 2, code: 'ICC-321', subject: 'ICC', catalogNbr: '321', title: 'Bases de Datos', career: 'GRDO', credits: 4,
+        sections: [{ id: 12, term: '1930', classNbr: '4570', section: '101', component: 'LEC', instructor: null, meetings: [{ days: ['Tu', 'Th'], start: '08:00', end: '10:00', room: 'B-105' }], seats: { status: 'open', open: 11, capacity: 30, waitTotal: 0 }, seatsUpdatedAt: '2026-07-16 12:00:00' }],
+      },
+      {
+        id: 3, code: 'ICC-332', subject: 'ICC', catalogNbr: '332', title: 'Sistemas Operativos', career: 'GRDO', credits: 4,
+        sections: [{ id: 13, term: '1930', classNbr: '4580', section: '102', component: 'LEC', instructor: 'A. Gómez', meetings: [{ days: ['Fr'], start: '14:00', end: '17:00', room: 'C-300' }], seats: { status: 'closed', open: 0, capacity: 30, waitTotal: 4 }, seatsUpdatedAt: '2026-07-16 12:00:00' }],
+      },
+    ],
+  },
+  '/api/pensum/codes': { codes: ['ICC-303', 'ICC-321', 'ICC-332'] },
+  '/api/status': {
+    now: new Date().toISOString(),
+    agent: { running: true, pid: 1234, port: 4173, startedAt: new Date().toISOString(), version: '0.1.0' },
+    mode: 'desktop',
+    schema: { version: 9, applied: [], migratedFrom: 9, preUpgradeBackup: null },
+    watcher: null,
+    schedule: null,
+    monitoringGap: null,
+    credential: null,
+    backup: { lastSuccessfulAt: null, nextRunAt: null, due: false, keep: 7, directory: '/tmp', copies: [], sameDiskWarning: '' },
+    update: { policy: 'manual', lastCheck: null, inProgress: null },
+    power: { mustStayAwake: false, note: '' },
+  },
   '/api/grades': {
     generatedAt: new Date().toISOString(),
     syncedAt: '2026-07-16 12:00:00',
@@ -163,6 +224,44 @@ const FIXTURES = {
   // El caso real hoy: sin holds, ya consultado. La pantalla afirma el vacío en
   // vez de invitar a consultar.
   '/api/holds': { generatedAt: new Date().toISOString(), syncedAt: '2026-07-16 12:00:00', holds: [] },
+  // El orquestador de P1: el control global lee esto y pinta el estado por fuente.
+  '/api/sync': {
+    now: new Date().toISOString(),
+    running: false,
+    hold: null,
+    sources: [
+      { key: 'terms', label: 'Ciclos', dependsOn: [], ttlMs: 21600000, needsPortal: false, syncedAt: '2026-07-16 12:00:00', ageMs: 60000, expired: false, relevant: true, lastRunAt: '2026-07-16 12:00:00', lastSuccessAt: '2026-07-16 12:00:00', lastStatus: 'ok', error: null },
+      { key: 'mySchedule', label: 'Horario', dependsOn: ['terms'], ttlMs: 43200000, needsPortal: true, syncedAt: '2026-07-16 12:00:00', ageMs: 60000, expired: false, relevant: true, lastRunAt: '2026-07-16 12:00:00', lastSuccessAt: '2026-07-16 12:00:00', lastStatus: 'ok', error: null },
+      { key: 'cart', label: 'Carrito', dependsOn: ['terms'], ttlMs: 600000, needsPortal: true, syncedAt: '2026-07-16 12:00:00', ageMs: 900000, expired: true, relevant: true, lastRunAt: '2026-07-16 12:00:00', lastSuccessAt: '2026-07-16 12:00:00', lastStatus: 'ok', error: null },
+    ],
+  },
+  // El calendario oficial de P3, con una fecha próxima y una de varios días.
+  '/api/academic-calendar': {
+    events: [
+      { id: 'e1', title: 'Inicio de Ciclo 1930', startsOn: '2026-08-17', endsOn: '2026-08-17', url: 'https://pucmm.edu.do/events/inicio/', sourceUrl: 'https://pucmm.edu.do/calendarios/calendario-academico/' },
+      { id: 'e2', title: 'Período de preinscripción para el Ciclo 1940', startsOn: '2026-11-11', endsOn: '2026-11-13', url: null, sourceUrl: 'https://pucmm.edu.do/calendarios/calendario-academico/' },
+    ],
+    total: 2,
+    syncedAt: '2026-07-16 12:00:00',
+  },
+  // El ritmo de cupo: una sección llenándose y otra estable.
+  '/api/seat-trend': {
+    term: '1930',
+    trends: {
+      4567: { samples: 6, change: -9, perHour: -2.2, direction: 'filling', windowHours: 4, closedAt: null, reopenedAt: null, summary: 'perdió 9 cupos en las últimas 4 h', latestAt: '2026-07-16 12:00:00', seatsOpen: 3 },
+      6100: { samples: 4, change: 0, perHour: 0, direction: 'stable', windowHours: 6, closedAt: null, reopenedAt: null, summary: 'sin cambios en las últimas 6 h', latestAt: '2026-07-16 12:00:00', seatsOpen: 11 },
+    },
+  },
+  '/api/class-reminders': {
+    enabled: true,
+    leadMinutes: 20,
+    next: { title: 'Estructuras de Datos', room: 'A-201', start: '10:00', minutesAway: 95, willNotify: true },
+  },
+  '/api/enrollment-windows': {
+    term: '1930',
+    syncedAt: '2026-07-16 12:00:00',
+    windows: [{ session: 'Regular', startsAt: '2026-08-25', endsAt: '2026-08-27', precision: 'date' }],
+  },
   '/api/state': {
     schedule: { atISO: new Date(Date.now() + 3 * 864e5).toISOString() },
     watcher: { intervalMs: 45000, lastCheckAt: new Date(Date.now() - 40e3).toISOString() },
@@ -238,9 +337,9 @@ try {
 
     for (const route of ROUTES) {
       await page.goto(BASE + route, { waitUntil: 'networkidle' });
-      if (route === '/buscar') await page.fill('input[placeholder*="Estructuras"]', 'calc');
       await page.waitForTimeout(400);
-      const name = `${route === '/' ? 'inicio' : route.slice(1)}-${width}`;
+      const slug = route === '/' ? 'inicio' : route.slice(1).replace(/[/?=&]/g, '-');
+      const name = `${slug}-${width}`;
       await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true });
 
       // La página nunca debe scrollear a lo ancho: si el body desborda, es un
@@ -256,7 +355,13 @@ try {
     }
     // El ⌘K tiene que ser operable sin mouse (gate del plan §6.5), así que se
     // verifica sin mouse: abrir, escribir, entrar a una materia con Enter y
-    // salir con Esc. El catálogo sale de la DB real (ICC del término 1930).
+    // salir con Esc. El catálogo es fixture sintético (ICC3xx inventadas).
+    //
+    // Esta comprobación esperaba una segunda página de secciones DENTRO de la
+    // paleta. Eso dejó de existir en 7131332, cuando elegir una materia pasó a
+    // abrir su diálogo de detalle, y la aserción nunca se actualizó: el gate
+    // llevaba fallando desde entonces sin que nadie lo mirara. Ahora comprueba
+    // lo que la app hace de verdad.
     await page.goto(BASE + '/horario', { waitUntil: 'networkidle' });
     await page.keyboard.press('Control+k');
     await page.waitForSelector('[cmdk-input]', { timeout: 3000 });
@@ -269,18 +374,18 @@ try {
       failures.push(`palette-${width}: ⌘K no encontró materias para "icc3"`);
       console.log(`  ✗ palette-${width}.png — sin resultados`);
     } else {
-      // Enter sobre el item seleccionado entra a las secciones de la materia.
+      // Enter sobre el item seleccionado abre el detalle de la materia.
       await page.keyboard.press('Enter');
-      await page.waitForTimeout(300);
-      const secciones = await page.locator('[cmdk-item][data-value^="section-"]').count();
-      await page.screenshot({ path: `${OUT}/palette-secciones-${width}.png`, fullPage: true });
+      await page.waitForTimeout(400);
+      const detalle = await page.locator('[role="dialog"]').count();
+      await page.screenshot({ path: `${OUT}/palette-detalle-${width}.png`, fullPage: true });
       await page.keyboard.press('Escape');
-      await page.waitForTimeout(200);
-      const cerrado = (await page.locator('[cmdk-input]').count()) === 0;
+      await page.waitForTimeout(300);
+      const cerrado = (await page.locator('[role="dialog"]').count()) === 0 && (await page.locator('[cmdk-input]').count()) === 0;
 
-      if (!secciones) failures.push(`palette-${width}: Enter no abrió las secciones de la materia`);
-      if (!cerrado) failures.push(`palette-${width}: Esc no cerró el overlay`);
-      console.log(secciones && cerrado ? `  ✓ palette-${width}.png (${materias} materias, ${secciones} secciones, Esc cierra)` : `  ✗ palette-${width}`);
+      if (!detalle) failures.push(`palette-${width}: Enter no abrió el detalle de la materia`);
+      if (!cerrado) failures.push(`palette-${width}: Esc no cerró el detalle`);
+      console.log(detalle && cerrado ? `  ✓ palette-${width}.png (${materias} materias, detalle abre, Esc cierra)` : `  ✗ palette-${width}`);
     }
 
     // La PWA se verifica donde importa: en el ancho del teléfono. Que el

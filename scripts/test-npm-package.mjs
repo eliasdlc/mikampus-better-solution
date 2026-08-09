@@ -7,7 +7,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-if (!existsSync(path.join(root, 'dist', 'app', 'launcher.js'))) throw new Error('Primero ejecutá npm run build:production');
+// `dist/` no lo produce build:production (que escribe en build/), sino el paso
+// de prepack. El mensaje decía lo primero y mandaba a correr un build que ya
+// estaba hecho.
+if (!existsSync(path.join(root, 'dist', 'app', 'launcher.js'))) {
+  throw new Error('Primero ejecutá: npm run build:production && node scripts/prepare-npm-package.mjs (o npm pack, que corre prepack)');
+}
 function exec(command, args, options = {}) { return new Promise((resolve, reject) => execFile(command, args, options, (error, stdout, stderr) => error ? reject(new Error(stderr || error.message)) : resolve(stdout))); }
 const output = await exec('npm', ['pack', '--dry-run', '--ignore-scripts', '--json'], { cwd: root });
 const packed = JSON.parse(output)[0];

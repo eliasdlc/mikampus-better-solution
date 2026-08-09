@@ -88,6 +88,129 @@ export const MIGRATIONS = [
     minCompatibleVersion: 1,
     up: repairTermIdentity,
   },
+  {
+    version: 4,
+    name: 'watcher-scope',
+    // Agrega una columna con DEFAULT: una app v1..v3 la ignora y sigue leyendo
+    // y escribiendo watchers sin romperse, así que el rollback es seguro. El
+    // default 'both' es deliberado — es exactamente lo que el watcher hacía
+    // antes de que el alcance fuera elegible, así que una base existente no
+    // cambia de comportamiento al migrar.
+    minCompatibleVersion: 1,
+    up(db) {
+      // El baseline lo crea db.js antes de migrar, no una migración. Una base
+      // mínima que solo ejercita el framework de migraciones no tiene la tabla,
+      // y no tenerla no es un error: no hay nada que migrar.
+      if (!tableExists(db, 'watchers')) return;
+      const columns = db.prepare('PRAGMA table_info(watchers)').all();
+      if (columns.some((column) => column.name === 'scope')) return;
+      db.exec(`ALTER TABLE watchers ADD COLUMN scope TEXT NOT NULL DEFAULT 'both'`);
+    },
+  },
+  {
+    version: 5,
+    name: 'sync-sources',
+    // Solo agrega una tabla nueva de bookkeeping: una app v1..v4 la ignora y
+    // sigue sincronizando con su lista vieja, así que el rollback es seguro.
+    // Nada de lo que vive acá es dato del portal — es el registro de CUÁNDO se
+    // intentó y con qué resultado, que hasta ahora solo existía en memoria y
+    // por eso se perdía en cada reinicio.
+    minCompatibleVersion: 1,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_sources (
+          user_id      INTEGER NOT NULL,
+          source_key   TEXT NOT NULL,
+          last_run_at  TEXT,
+          last_status  TEXT,
+          last_error   TEXT,
+          PRIMARY KEY (user_id, source_key)
+        );
+      `);
+    },
+  },
+  {
+    version: 6,
+    name: 'academic-calendar',
+    // Tabla nueva y compartida: el calendario oficial no es de nadie en
+    // particular, es público. Una app v1..v5 la ignora, así que el rollback es
+    // seguro. No lleva user_id porque no hay nada personal acá — es justamente
+    // la única fuente del producto que no sale de la cuenta de la persona.
+    minCompatibleVersion: 1,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS academic_calendar (
+          event_id   TEXT PRIMARY KEY,
+          title      TEXT NOT NULL,
+          starts_on  TEXT NOT NULL,
+          ends_on    TEXT NOT NULL,
+          url        TEXT,
+          source_url TEXT NOT NULL,
+          fetched_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_academic_calendar_dates ON academic_calendar(starts_on, ends_on);
+      `);
+    },
+  },
+  {
+    version: 7,
+    name: 'sync-source-last-success',
+    // `last_run_at` respondía "¿cuándo se intentó?" y se estaba usando también
+    // para "¿cuándo funcionó?". No son lo mismo: con esa confusión, una fuente
+    // que falla queda marcada como recién corrida y no se reintenta hasta que
+    // venza su TTL — justo al revés de lo que debería pasar. Se separan.
+    minCompatibleVersion: 1,
+    up(db) {
+      if (!tableExists(db, 'sync_sources')) return;
+      const columns = db.prepare('PRAGMA table_info(sync_sources)').all();
+      if (columns.some((column) => column.name === 'last_success_at')) return;
+      db.exec('ALTER TABLE sync_sources ADD COLUMN last_success_at TEXT');
+      // Una fila existente solo pudo haberse escrito con éxito o con error; las
+      // que quedaron en 'ok' conservan su instante como último éxito conocido.
+      db.exec("UPDATE sync_sources SET last_success_at = last_run_at WHERE last_status = 'ok'");
+    },
+  },
+  {
+    version: 8,
+    name: 'section-field-provenance',
+    // Dos pantallas del portal describen la misma sección y ninguna la describe
+    // completa: View My Classes trae aula y horario pero no profesor, Class
+    // Search trae profesor pero no sabe si estás inscrito. Sin recordar de dónde
+    // salió cada campo, el último scrape en llegar pisaba al anterior y el
+    // profesor desaparecía en cada sync de horario.
+    //
+    // Columnas nuevas y opcionales: una app v1..v7 las ignora y sigue leyendo
+    // secciones igual, así que el rollback es seguro.
+    minCompatibleVersion: 1,
+    up(db) {
+      if (!tableExists(db, 'sections')) return;
+      const columns = db.prepare('PRAGMA table_info(sections)').all().map((column) => column.name);
+      if (!columns.includes('instructor_source')) db.exec('ALTER TABLE sections ADD COLUMN instructor_source TEXT');
+      if (!columns.includes('meetings_source')) db.exec('ALTER TABLE sections ADD COLUMN meetings_source TEXT');
+    },
+  },
+  {
+    version: 9,
+    name: 'official-gpa',
+    // El acumulado que PUBLICA PeopleSoft se leía en cada sync y se tiraba: solo
+    // sobrevivía como texto en un mensaje de error si no cuadraba. Sin él
+    // guardado no se puede usar como baseline de una proyección ni mostrar la
+    // reconciliación, que es justo lo que P5 exige antes de proyectar nada.
+    minCompatibleVersion: 1,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS gpa_official (
+          user_id          INTEGER PRIMARY KEY,
+          gpa              REAL,
+          units_toward_gpa REAL,
+          grade_points     REAL,
+          units_passed     REAL,
+          term_label       TEXT,
+          captured_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
 
 // Las columnas que guardan el IDENTIFICADOR resuelto de un ciclo (STRM si se

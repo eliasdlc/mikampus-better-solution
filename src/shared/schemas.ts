@@ -271,11 +271,16 @@ export type PlanToCartResult = z.infer<typeof planToCartResultSchema>;
 // La propuesta explica cada materia y ya trae la sección elegida por el solver.
 // Crear el plan persiste exactamente esta combinación después de recalcularla
 // en el server; el frontend nunca puede colar una sección arbitraria.
+// Ojo con los créditos: `positive()` era un bug, no una validación. Un
+// laboratorio de física vale 0 unidades DE VERDAD (así lo emite el plan
+// académico y así lo reporta el portal), y exigir > 0 hacía que la propuesta
+// entera fallara la validación justo cuando el recomendador acertaba al
+// incluirlo. Es `nonnegative()` en toda la cadena.
 export const recommendedAlternativeSchema = z.object({
   courseId: z.number().int(),
   code: z.string(),
   title: z.string(),
-  credits: z.number().positive(),
+  credits: z.number().nonnegative(),
   sections: z.number().int().positive(),
 });
 
@@ -283,7 +288,7 @@ export const recommendedCourseSchema = z.object({
   courseId: z.number().int(),
   code: z.string(),
   title: z.string(),
-  credits: z.number().positive(),
+  credits: z.number().nonnegative(),
   kind: z.enum(['obligatoria', 'electiva']),
   groupId: z.number().int(),
   groupLabel: z.string(),
@@ -291,15 +296,38 @@ export const recommendedCourseSchema = z.object({
   reason: z.string(),
   section: catalogSectionSchema,
   alternatives: z.array(recommendedAlternativeSchema),
+  // Cuántas materias del plan destraba aprobarla: es lo que separa una deuda
+  // cara de una barata.
+  unlocks: z.number().int().nonnegative().default(0),
+  // No null por gusto: dice que esta fila entró porque es co-requisito de otra
+  // (el laboratorio de su teoría), no porque se eligiera por sí misma.
+  requiredBy: z.string().nullable().default(null),
+  conditionalOn: z.array(z.string()).default([]),
 });
 export type RecommendedCourse = z.infer<typeof recommendedCourseSchema>;
+
+// Lo que NO se puede proponer y por qué. Suele ser más útil que la propuesta:
+// dice exactamente qué materia hay que aprobar para desatascar la carrera.
+export const blockedCourseSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+  periodLabel: z.string(),
+  reason: z.string(),
+  missing: z.array(z.string()),
+});
+export type BlockedCourse = z.infer<typeof blockedCourseSchema>;
+
+export const recommendationStrategySchema = z.enum(['ponerse-al-dia', 'avanzar']);
+export type RecommendationStrategy = z.infer<typeof recommendationStrategySchema>;
 
 export const recommendationResponseSchema = z.object({
   term: z.string(),
   generatedAt: z.string(),
+  strategy: recommendationStrategySchema.default('ponerse-al-dia'),
   maxCredits: z.number().positive(),
   totalCredits: z.number().nonnegative(),
   recommendations: z.array(recommendedCourseSchema),
+  blocked: z.array(blockedCourseSchema).default([]),
   schedule: z.object({
     valid: z.boolean(),
     adjusted: z.boolean(),
@@ -308,6 +336,18 @@ export const recommendationResponseSchema = z.object({
   caveats: z.array(z.string()),
 });
 export type RecommendationResponse = z.infer<typeof recommendationResponseSchema>;
+
+// Las dos propuestas del mismo ciclo. Cuál conviene no lo decide el algoritmo:
+// depende de si pesa más no arrastrar deudas o no atrasar la graduación.
+export const recommendationOptionsResponseSchema = z.object({
+  term: z.string().nullable(),
+  generatedAt: z.string(),
+  plan: z
+    .object({ code: z.string(), career: z.string().nullable(), issuedAt: z.string().nullable() })
+    .nullable(),
+  proposals: z.array(recommendationResponseSchema),
+});
+export type RecommendationOptionsResponse = z.infer<typeof recommendationOptionsResponseSchema>;
 
 // Carrito real (GET /api/cart), enriquecido: además del label crudo del portal,
 // el código canónico (color estable + cruce con el catálogo), el título del
@@ -595,9 +635,45 @@ export type GoalEvaluation = z.infer<typeof goalEvaluationSchema>;
 // Metas + proyección viajan juntas: la UI las muestra en el mismo panel y una
 // mutación de meta refresca ambas. basedOn dice sobre cuántos créditos al índice
 // se calcula todo, para que el número no salga sin su base.
+// Los dos horizontes de P5, con su reconciliación. `currentTerm` y `graduation`
+// vienen en null cuando el acumulado reconstruido no cuadra con el que publica
+// PeopleSoft: la UI no esconde el número, es que no existe.
+const horizonSchema = z.object({
+  id: z.enum(['current-term', 'graduation']),
+  label: z.string(),
+  baseline: z.number().nullable(),
+  baselineUnits: z.number(),
+  futureCredits: z.number(),
+  assumedAverage: z.number(),
+  exact: z.number().nullable(),
+  asPublished: z.number().nullable(),
+});
+
+const horizonScenariosSchema = z.object({
+  best: horizonSchema,
+  maintain: horizonSchema,
+  floor: horizonSchema,
+});
+
+export const projectionReportSchema = z.object({
+  reconciliation: z.object({
+    status: z.enum(['match', 'mismatch', 'unknown']),
+    official: z.number().nullable(),
+    reconstructed: z.number().nullable(),
+    difference: z.number().nullable(),
+    precision: z.number(),
+    explanation: z.string(),
+  }),
+  currentTerm: horizonScenariosSchema.nullable(),
+  graduation: horizonScenariosSchema.nullable(),
+  formula: z.string(),
+});
+export type ProjectionReport = z.infer<typeof projectionReportSchema>;
+
 export const goalsResponseSchema = z.object({
   goals: z.array(goalEvaluationSchema),
   projection: gpaProjectionSchema.nullable(),
+  horizons: projectionReportSchema,
   basedOn: z.object({
     gpa: z.number().nullable(),
     unitsTowardGpa: z.number(),
@@ -612,15 +688,37 @@ export type GoalsResponse = z.infer<typeof goalsResponseSchema>;
 const areaStatSchema = z.object({ subject: z.string(), gpa: z.number(), count: z.number().int() });
 const loadStatSchema = z.object({ avgGpa: z.number(), avgCredits: z.number(), terms: z.number().int() });
 
+// Los metadatos que ordenan las señales (P5 §7) viajan con cada una: la UI
+// pinta por severidad y agrupa por prioridad sin recalcular nada.
+const insightMetaShape = {
+  severity: z.enum(['risk', 'watch', 'info']),
+  recency: z.enum(['current', 'recent', 'historical']),
+  actionability: z.enum(['act', 'consider', 'context']),
+  confidence: z.enum(['high', 'medium', 'low']),
+};
+
+const termPointSchema = z.object({ term: z.string(), gpa: z.number() });
+
 export const insightSchema = z.discriminatedUnion('kind', [
+  // El cambio reciente y la tendencia son señales distintas a propósito: se
+  // puede venir subiendo tres ciclos y haber caído el último.
   z.object({
-    kind: z.literal('gpa-trend'),
+    kind: z.literal('recent-change'),
+    direction: z.enum(['up', 'down', 'flat']),
+    delta: z.number(),
+    from: termPointSchema,
+    to: termPointSchema,
+    ...insightMetaShape,
+  }),
+  z.object({
+    kind: z.literal('rolling-trend'),
     direction: z.enum(['rising', 'falling', 'flat']),
     delta: z.number(),
-    points: z.array(z.object({ term: z.string(), gpa: z.number() })),
+    points: z.array(termPointSchema),
+    ...insightMetaShape,
   }),
-  z.object({ kind: z.literal('area-performance'), best: areaStatSchema, worst: areaStatSchema }),
-  z.object({ kind: z.literal('load-vs-result'), heavy: loadStatSchema, light: loadStatSchema }),
+  z.object({ kind: z.literal('area-performance'), best: areaStatSchema, worst: areaStatSchema, ...insightMetaShape }),
+  z.object({ kind: z.literal('load-vs-result'), heavy: loadStatSchema, light: loadStatSchema, ...insightMetaShape }),
   z.object({
     kind: z.literal('repeated-courses'),
     courses: z.array(
@@ -629,8 +727,14 @@ export const insightSchema = z.discriminatedUnion('kind', [
         attempts: z.array(z.object({ term: z.string().nullable(), grade: z.string().nullable() })),
       })
     ),
+    ...insightMetaShape,
   }),
-  z.object({ kind: z.literal('withdrawn-courses'), count: z.number().int(), codes: z.array(z.string()) }),
+  z.object({
+    kind: z.literal('withdrawn-courses'),
+    count: z.number().int(),
+    codes: z.array(z.string()),
+    ...insightMetaShape,
+  }),
 ]);
 export type Insight = z.infer<typeof insightSchema>;
 
@@ -670,6 +774,10 @@ export const appStateSchema = z.object({
       intervalMs: z.number(),
       lastCheckAt: z.string().nullable().default(null),
       autoEnroll: z.boolean().default(false),
+      // Qué hechos del portal interrumpen a esta persona. El default 'both' es
+      // el comportamiento histórico, así que un estado servido por una versión
+      // anterior se lee sin romperse.
+      scope: z.enum(['seats', 'groups', 'both']).default('both'),
       activationOrder: z.number().int().nullable().default(null),
       appointmentAt: z.string().nullable().default(null),
       status: z.enum(['running', 'paused', 'offline', 'credentials-required', 'backing-off', 'stopped', 'monitoring-gap']).default('running'),

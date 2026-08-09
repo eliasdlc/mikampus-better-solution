@@ -134,5 +134,49 @@ assert.ok(
   'la SPA local conserva acceso'
 );
 
+// ── Hosts de confianza: el proxy de identidad entra, el resto no. ──
+// Lo que se protege: que declarar un host para `tailscale serve` no se
+// convierta sin querer en "cualquiera puede hablarle al agente". El Host pasa a
+// estar permitido; el Origin sigue teniendo que coincidir, que es lo que
+// impide que un sitio ajeno mute nada.
+// El .env del equipo puede tener hosts declarados; esta prueba fija los suyos
+// para no depender de cómo esté configurada la máquina que la corre.
+delete process.env.MIKAMPUS_TRUSTED_HOSTS;
+assert.equal(
+  guard({ method: 'GET', headers: { host: 'agentbox.tailaa5099.ts.net' } }).res.statusCode,
+  421,
+  'sin declararlo, el hostname del tailnet es un desconocido más'
+);
+
+process.env.MIKAMPUS_TRUSTED_HOSTS = 'agentbox.tailaa5099.ts.net';
+assert.ok(
+  guard({ method: 'GET', headers: { host: 'agentbox.tailaa5099.ts.net' } }).passed,
+  'declarado, el host de confianza entra'
+);
+assert.ok(
+  guard({ method: 'GET', headers: { host: 'AgentBox.TailAA5099.ts.net' } }).passed,
+  'y la comparación no depende de mayúsculas'
+);
+assert.ok(
+  guard({ method: 'POST', headers: { host: 'agentbox.tailaa5099.ts.net', origin: 'https://agentbox.tailaa5099.ts.net' } }).passed,
+  'la SPA servida por el proxy puede mutar'
+);
+assert.equal(
+  guard({ method: 'POST', headers: { host: 'agentbox.tailaa5099.ts.net', origin: 'https://evil.example' } }).res.statusCode,
+  403,
+  'pero un origen ajeno sigue sin poder, aunque el Host sea de confianza'
+);
+assert.equal(
+  guard({ method: 'GET', headers: { host: 'otro.tailaa5099.ts.net' } }).res.statusCode,
+  421,
+  'declarar un host no habilita a sus vecinos del mismo dominio'
+);
+assert.equal(
+  guard({ method: 'GET', headers: { host: '192.168.1.5:4173' } }).res.statusCode,
+  421,
+  'y la LAN sigue afuera'
+);
+process.env.MIKAMPUS_TRUSTED_HOSTS = '';
+
 await rm(dir, { recursive: true, force: true });
 console.log('✓ auth: sesiones con hash + expiración, cookie SameSite, CSRF obligatorio en mutaciones, rate-limit de login');

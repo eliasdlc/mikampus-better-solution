@@ -4,11 +4,11 @@ import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
-import { readCatalog } from './peoplesoft/catalog.js';
+import { readCatalog, seatHistory, syncCatalogCourse, applyPlanFacts } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
 import { readTerms, reconcileTerms, planningTerm } from './terms.js';
-import { fetchGrades, saveGrades, readGrades, termSummaries, diffPublishedGrades } from './peoplesoft/grades.js';
+import { fetchGrades, saveGrades, readGrades, termSummaries, diffPublishedGrades, readOfficialTotals } from './peoplesoft/grades.js';
 import {
   fetchAdvisement,
   readPensum,
@@ -21,8 +21,9 @@ import {
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
 import { computeInsights } from './shared/insights.ts';
+import { buildProjection, creditsInProgressFor } from './shared/projection.ts';
 import { db, lastSync, deleteAllUserData, logAction, readActions } from './db.js';
-import { getUser } from './users.js';
+import { getUser, LOCAL_USER_ID } from './users.js';
 import * as auth from './auth.js';
 import { credentialInfo, deleteCredential, purgeExpiredCredentials } from './credentialVault.js';
 import * as plans from './plans.js';
@@ -32,11 +33,11 @@ import { startCatalogCron, stopCatalogCron } from './cron.js';
 import { readEnrollmentWindows, syncEnrollmentWindows } from './peoplesoft/enrollmentWindows.js';
 import { dropClass } from './peoplesoft/dropClass.js';
 import { startBackupCron, stopBackupCron } from './backups.js';
-import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js';
+import { recommendationForTerm, recommendationOptions, planForUser, STRATEGIES, DEFAULT_MAX_CREDITS } from './recommendations.js';
 import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
 import { acquireAgentLock, agentHealthAuthorized, recordRuntimeStart, recordRuntimeStop, releaseAgentLock } from './runtime.js';
 import { resourcePath } from './paths.js';
-import { chooseMode, markOnboardingComplete, onboardingState, startBrowserInstall } from './onboarding.js';
+import { chooseMode, markOnboardingComplete, onboardingState, publishRuntimeMode, startBrowserInstall } from './onboarding.js';
 import { fullStatus } from './status.js';
 import { clearNotifications, markFeedRead, readFeed, unreadCount } from './notifications.js';
 import { availableAdapters, deleteChannel, listChannels, saveChannel, setChannelEnabled, testChannel } from './channels.js';
@@ -45,6 +46,10 @@ import { erasePreview, eraseLocalArtifacts } from './erase.js';
 import { exportDiagnostics, listDiagnostics } from './diagnostics.js';
 import { checkForUpdate, setUpdatePolicy } from './updates.js';
 import { requireScraperMutationSupport } from './scraperSupport.js';
+import { pendingSync, runSync, startSyncLoop, stopSyncLoop, syncState } from './syncOrchestrator.js';
+import { readCalendar } from './academicCalendar.js';
+import { seatTrend, describeTrend } from './shared/seatTrend.ts';
+import { setReminderSettings, reminderStatus, startClassReminders, stopClassReminders } from './classReminders.js';
 
 const DIST_DIR = resourcePath('public', 'dist');
 const app = express();
@@ -57,7 +62,15 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, pid: process.pid, url: `http://127.0.0.1:${PORT}` });
 });
 
-const SECURE_COOKIES = false;
+// Se decide por request y no por build. En loopback la UI viaja por http y
+// marcar Secure dejaría la cookie inservible; detrás de un proxy que termina
+// TLS, no marcarla la dejaría viajar en claro el día que ese proxy se caiga a
+// http. El único que puede mentir en esta cabecera es algo que ya está en
+// loopback, y lo peor que consigue es que la cookie no se envíe: molesta, no
+// escala privilegios.
+function secureCookies(req) {
+  return String(req.headers['x-forwarded-proto'] ?? '').toLowerCase() === 'https';
+}
 
 // El portal solo publicó fechas en el recon actual. Para que la credencial no
 // sobreviva al período de inscripción, convertimos el cierre publicado en el
@@ -85,51 +98,9 @@ function revokeUnattendedCredentialIfUnused(userId) {
   if (!scheduled && !watching) deleteCredential(userId);
 }
 
-const REFRESH_POLICY = [
-  { kind: 'mySchedule', label: 'Horario', maxAgeMs: 12 * 60 * 60_000 },
-  { kind: 'cart', label: 'Carrito', maxAgeMs: 10 * 60_000 },
-  { kind: 'grades', label: 'Notas', maxAgeMs: 24 * 60 * 60_000 },
-  { kind: 'advisement', label: 'Avance', maxAgeMs: 7 * 24 * 60 * 60_000 },
-  { kind: 'holds', label: 'Holds', maxAgeMs: 12 * 60 * 60_000 },
-];
-const refreshInFlight = new Map();
-
-async function refreshExpired(userId, { force = false } = {}) {
-  const results = [];
-  for (const item of REFRESH_POLICY) {
-    const syncedAt = lastSync(item.kind, { userId });
-    const expired = !syncedAt || Date.now() - new Date(syncedAt).getTime() >= item.maxAgeMs;
-    if (!force && !expired) {
-      results.push({ ...item, status: 'fresh', syncedAt });
-      continue;
-    }
-
-    scheduler.emitEvent({ type: 'log', userId, message: `Actualizando ${item.label.toLowerCase()}…` });
-    try {
-      if (item.kind === 'mySchedule') {
-        await withPage(userId, (page) => syncSchedule(page, { userId, onStep: (message) => scheduler.emitEvent({ type: 'log', userId, message }) }));
-        reconcileTerms();
-      } else if (item.kind === 'cart') {
-        await withPage(userId, (page) => syncCart(page, { userId }));
-      } else if (item.kind === 'grades') {
-        const { courses } = await withPage(userId, (page) => fetchGrades(page, { userId }));
-        saveGrades(userId, courses);
-        reconcileTerms();
-      } else if (item.kind === 'advisement') {
-        const data = await withPage(userId, (page) => fetchAdvisement(page, { userId }));
-        saveRequirementTree(userId, data, { cohortStartTerm: earliestGradeTerm(userId) });
-      } else if (item.kind === 'holds') {
-        const parsed = await withPage(userId, (page) => fetchHolds(page, { userId }));
-        saveHolds(userId, parsed.holds);
-      }
-      results.push({ ...item, status: 'updated', syncedAt: lastSync(item.kind, { userId }) });
-    } catch (err) {
-      scheduler.emitEvent({ type: 'log', userId, message: `No se pudo actualizar ${item.label.toLowerCase()}: ${err.message}` });
-      results.push({ ...item, status: 'error', syncedAt, error: err.message });
-    }
-  }
-  return results;
-}
+// La política de refresco ya no vive acá: es el registro de fuentes de
+// src/syncOrchestrator.js, con dependencias, relevancia y prioridad. Este
+// archivo solo expone la puerta HTTP.
 
 app.use('/api', auth.localRequestGuard, auth.authMiddleware);
 
@@ -172,7 +143,7 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { user, token, csrfToken, expiresAt } = await auth.loginWithPortal(req.body ?? {});
     scheduler.emitEvent({ type: 'log', message: `Sesión iniciada: ${user.portalUsername}` });
-    res.set('Set-Cookie', auth.sessionCookieHeader(token, { secure: SECURE_COOKIES }));
+    res.set('Set-Cookie', auth.sessionCookieHeader(token, { secure: secureCookies(req) }));
     res.json({ ok: true, user: { id: user.id, username: user.portalUsername }, csrfToken, expiresAt });
   } catch (err) {
     res.status(err.status ?? 500).json({ error: err.message });
@@ -182,7 +153,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/logout', async (req, res) => {
   try {
     await auth.logout(auth.cookieValue(req.headers.cookie, auth.SESSION_COOKIE));
-    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: SECURE_COOKIES }));
+    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: secureCookies(req) }));
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -376,7 +347,7 @@ app.delete('/api/account/data', async (req, res) => {
     // Una actualización silenciosa que arrancó al entrar puede seguir en la
     // cola de Playwright. Esperarla evita que escriba filas nuevas después del
     // borrado solicitado.
-    await refreshInFlight.get(req.userId);
+    await pendingSync(req.userId);
     scheduler.cancelSchedule(req.userId);
     scheduler.stopWatcher(req.userId);
     await resetSession(req.userId);
@@ -392,25 +363,30 @@ app.delete('/api/account/data', async (req, res) => {
     const removed = req.body?.keepBackups
       ? eraseLocalArtifacts({ onlyRuntimeSafe: true, keep: ['backups'] })
       : eraseLocalArtifacts({ onlyRuntimeSafe: true });
-    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: SECURE_COOKIES }));
+    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: secureCookies(req) }));
     res.json({ ok: true, removed, note: 'Para borrar también la base, el vault y el browser descargado, ejecutá `mikampus erase-data --yes`.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Un solo refresh global: sirve cache de inmediato en el cliente y solo sale
-// al portal por lo vencido. El orden de la política declara el primer sync
-// (horario → carrito → notas → avance → holds), aunque cada tarea usa la cola
-// del context del usuario y por tanto no bloquea a otros estudiantes.
-app.post('/api/refresh', async (req, res) => {
-  let pending = refreshInFlight.get(req.userId);
-  if (!pending) {
-    pending = refreshExpired(req.userId, { force: Boolean(req.body?.force) }).finally(() => refreshInFlight.delete(req.userId));
-    refreshInFlight.set(req.userId, pending);
+// ── Sincronización universal (P1) ───────────────────────────────────────────
+// Una sola definición de frescura para toda la app. El GET es barato (SQLite) y
+// responde "qué está viejo y por qué"; el POST es el único camino al portal.
+app.get('/api/sync', (req, res) => {
+  res.json(syncState(req.userId));
+});
+
+// `force` incluye las fuentes vigentes; no evade consentimiento ni prioridad.
+// `keys` acota a un subconjunto y arrastra sus dependencias.
+app.post('/api/sync', async (req, res) => {
+  try {
+    const keys = Array.isArray(req.body?.keys) && req.body.keys.length ? req.body.keys.map(String) : undefined;
+    const results = await runSync(req.userId, { force: Boolean(req.body?.force), keys });
+    res.json({ results, state: syncState(req.userId) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
-  const results = await pending;
-  res.json({ results });
 });
 
 // Mismo trato que el horario y las notas: el GET sirve el cache de SQLite con
@@ -477,6 +453,38 @@ app.get('/api/catalog', (req, res) => {
   res.set('ETag', etag);
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
   res.json(readCatalog(term));
+});
+
+// "Ver más grupos": trae del portal TODAS las secciones de UNA materia en un
+// ciclo y las persiste en el catálogo local. El catálogo se llena por barridos
+// de subject que son caros y espaciados, así que lo que la UI muestra es
+// siempre una foto vieja: faltan los grupos abiertos después del último
+// barrido, que en inscripción son justo los que importan.
+//
+// Es una sola navegación (syncCatalogCourse, el mismo camino del watcher), no
+// un árbol de prefijos: se puede disparar desde la UI sin quemar el
+// presupuesto. Devuelve la materia ya releída del catálogo para que la
+// pantalla se repinte con los grupos nuevos sin un round-trip extra.
+app.post('/api/catalog/course/sync', async (req, res) => {
+  const term = req.body?.term ? String(req.body.term) : null;
+  const courseCode = req.body?.courseCode ? String(req.body.courseCode).trim().toUpperCase() : '';
+  const career = req.body?.career ? String(req.body.career) : 'GRDO';
+  if (!term || !courseCode) {
+    return res.status(400).json({ error: 'Faltan term o courseCode' });
+  }
+  try {
+    const { saved } = await withPage(req.userId, (page) =>
+      syncCatalogCourse(page, { term, career, courseCode })
+    );
+    const course = readCatalog(term).courses.find((entry) => entry.code === courseCode) ?? null;
+    scheduler.emitEvent({
+      type: 'log',
+      message: `${courseCode}: ${course?.sections.length ?? 0} grupo(s) en el portal para ${term}`,
+    });
+    res.json({ term, courseCode, saved, course });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 // Términos que la DB local conoce, ya resueltos contra hoy: cuál ciclo corre
@@ -773,9 +781,38 @@ function goalsContext(userId) {
 function goalsResponse(userId) {
   const ctx = goalsContext(userId);
   const hasBasis = ctx.summary.unitsTowardGpa > 0 || ctx.remainingCredits > 0;
+
+  // Los dos horizontes de P5. "Al cerrar este ciclo" solo cuenta los créditos en
+  // curso DEL CICLO ACTUAL: sumar todo lo en curso mezclaba cuatrimestres y era
+  // lo que inflaba el mejor caso. Y si el acumulado reconstruido no reconcilia
+  // con el que publica PeopleSoft, `horizons` vuelve sin números — la UI no
+  // tiene que acordarse de esconderlos.
+  // Entre ciclos no hay "este ciclo", pero sí puede haber materias inscritas
+  // del que viene: el horizonte corto se ancla al ciclo que REALMENTE tiene los
+  // créditos en curso. Sin esto la pantalla decía "EN CURSO 4 créditos" arriba y
+  // "no tenés materias en curso en este ciclo" abajo, sobre los mismos datos.
+  const terms = readTerms();
+  const courses = readGrades(userId);
+  const shortHorizonTerm =
+    [terms.current?.label, terms.next?.label]
+      .filter(Boolean)
+      .find((label) => creditsInProgressFor(courses, label) > 0) ??
+    terms.current?.label ??
+    terms.next?.label ??
+    null;
+
+  const horizons = buildProjection({
+    official: readOfficialTotals(userId),
+    reconstructed: ctx.summary,
+    currentTermCredits: creditsInProgressFor(courses, shortHorizonTerm),
+    remainingCredits: ctx.remainingCredits,
+    currentTermLabel: shortHorizonTerm,
+  });
+
   return {
     goals: goals.evaluateGoals(goals.listGoals(userId), ctx),
     projection: hasBasis ? projectFinalGpa(ctx.summary, ctx.remainingCredits) : null,
+    horizons,
     basedOn: {
       gpa: ctx.summary.gpa,
       unitsTowardGpa: ctx.summary.unitsTowardGpa,
@@ -837,6 +874,61 @@ app.get('/api/pensum/codes', (req, res) => {
     .all(req.userId)
     .map((r) => r.code);
   res.json({ codes: [...new Set([...reqCodes, ...enrolled])] });
+});
+
+// Recordatorio antes de clase. Todo el dato ya está en disco: este endpoint no
+// toca PeopleSoft, solo lee tu horario y dice qué viene.
+app.get('/api/class-reminders', (req, res) => {
+  res.json(reminderStatus(req.userId));
+});
+
+app.patch('/api/class-reminders', (req, res) => {
+  try {
+    setReminderSettings({ enabled: req.body?.enabled, leadMinutes: req.body?.leadMinutes });
+    res.json(reminderStatus(req.userId));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// El ritmo de cupo de unas secciones concretas (feature nueva). Sale de la
+// serie `seats_snapshot` que la app ya venía guardando y nunca leía más allá de
+// la última fila. Es cálculo local sobre disco: no toca el portal.
+app.get('/api/seat-trend', (req, res) => {
+  const term = req.query.term ? String(req.query.term) : null;
+  const classNbrs = String(req.query.classNbrs ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 40);
+  if (!term || !classNbrs.length) return res.json({ term, trends: {} });
+
+  const history = seatHistory(term, classNbrs);
+  const trends = {};
+  for (const classNbr of classNbrs) {
+    const trend = seatTrend(history.get(classNbr) ?? []);
+    trends[classNbr] = {
+      samples: trend.samples,
+      change: trend.change,
+      perHour: trend.perHour,
+      direction: trend.direction,
+      windowHours: trend.windowHours,
+      closedAt: trend.closedAt,
+      reopenedAt: trend.reopenedAt,
+      summary: describeTrend(trend),
+      latestAt: trend.latest?.capturedAt ?? null,
+      seatsOpen: trend.latest?.seatsOpen ?? null,
+    };
+  }
+  res.json({ term, trends });
+});
+
+// El calendario académico oficial. Sale de SQLite (<10ms) y trae su antigüedad:
+// si el último fetch falló, la pantalla muestra lo cacheado diciendo de cuándo
+// es, en vez de quedarse vacía.
+app.get('/api/academic-calendar', (req, res) => {
+  const limit = Number(req.query.limit);
+  res.json(readCalendar({ limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 5 }));
 });
 
 app.get('/api/holds', (req, res) => {
@@ -927,11 +1019,31 @@ app.post('/api/search/add', async (req, res) => {
 // Los errores de src/plans.js son de datos del usuario (plan inexistente,
 // materia duplicada, sección de otro término) → 400 con el mensaje tal cual.
 
+// Los controles del recomendador viajan por query/body y NO se persisten: son
+// una pregunta ("¿y si tomo 12 créditos y dejo Física para después?"), no una
+// configuración. Lista separada por comas para que la URL siga siendo
+// compartible y el estado de la pantalla viva ahí.
+function recommendationOptionsFrom(source) {
+  const codes = (value) =>
+    String(value ?? '')
+      .split(',')
+      .map((code) => code.trim().toUpperCase())
+      .filter(Boolean);
+  const strategy = STRATEGIES.includes(source?.strategy) ? source.strategy : 'ponerse-al-dia';
+  return {
+    maxCredits: source?.maxCredits ?? DEFAULT_MAX_CREDITS,
+    strategy,
+    include: codes(source?.include),
+    exclude: codes(source?.exclude),
+  };
+}
+
+// Las DOS propuestas del ciclo (ponerse al día / avanzar) con el porqué de cada
+// materia y, sobre todo, lo que NO se puede proponer y por qué falta.
 app.get('/api/recommendation', (req, res) => {
   try {
     const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
-    const maxCredits = req.query.maxCredits ?? DEFAULT_MAX_CREDITS;
-    res.json(recommendationForTerm(req.userId, term, maxCredits));
+    res.json(recommendationOptions(req.userId, term, recommendationOptionsFrom(req.query)));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -940,7 +1052,7 @@ app.get('/api/recommendation', (req, res) => {
 app.post('/api/recommendation/plan', (req, res) => {
   try {
     const term = planningTerm(req.body?.term ? String(req.body.term) : null, latestScheduledTerm(req.userId));
-    const proposal = recommendationForTerm(req.userId, term, req.body?.maxCredits ?? DEFAULT_MAX_CREDITS);
+    const proposal = recommendationForTerm(req.userId, term, recommendationOptionsFrom(req.body));
     if (!proposal.schedule.valid || proposal.recommendations.length === 0) {
       throw new Error(proposal.caveats[0] ?? 'No hay una combinación recomendada para este ciclo');
     }
@@ -1131,19 +1243,32 @@ app.delete('/api/schedule', (req, res) => {
 
 app.post('/api/watch', (req, res) => {
   try {
-    const { enabled, autoEnroll = false, appointmentAt = null, term, consent = false } = req.body ?? {};
+    const {
+      enabled,
+      autoEnroll = false,
+      appointmentAt = null,
+      term,
+      consent = false,
+      scope = scheduler.DEFAULT_WATCHER_SCOPE,
+    } = req.body ?? {};
     if (enabled) {
+      if (!scheduler.WATCHER_SCOPES.includes(scope)) throw new Error(`Alcance de watcher desconocido: ${scope}`);
       if (autoEnroll) requireScraperMutationSupport();
+      // La razón queda escrita junto a la credencial guardada: si alguien abre
+      // Ajustes en dos meses, tiene que poder leer para qué la autorizó.
       authorizeUnattendedCredential(req.userId, {
         consent,
         term,
-        reason: autoEnroll ? 'watcher con auto-inscripción' : 'watcher de cupos (solo notificar)',
+        reason: autoEnroll
+          ? `watcher con auto-inscripción (${scheduler.WATCHER_SCOPE_LABELS[scope]})`
+          : `watcher (${scheduler.WATCHER_SCOPE_LABELS[scope]}, solo notificar)`,
       });
       const parsedAppointment = appointmentAt ? new Date(appointmentAt) : null;
       if (appointmentAt && Number.isNaN(parsedAppointment.getTime())) throw new Error('La hora de inscripción no es válida');
       scheduler.startWatcher(req.userId, {
         autoEnroll: Boolean(autoEnroll),
         appointmentAt: parsedAppointment?.toISOString() ?? null,
+        scope,
       });
     } else {
       scheduler.stopWatcher(req.userId);
@@ -1197,6 +1322,9 @@ const HOST = '127.0.0.1';
 // grades) al arrancar, para que el modelo de tiempo esté al día sin esperar a
 // una sync. Es barato: son pocas filas y upserts idempotentes.
 reconcileTerms();
+// Antes de cualquier evento notificable: el modo guardado gobierna el proceso.
+const bootMode = publishRuntimeMode();
+if (bootMode) console.log(`[agent] modo de runtime: ${bootMode}`);
 const runtimeStart = recordRuntimeStart();
 // Higiene al arrancar: sesiones vencidas fuera, credenciales vencidas fuera.
 auth.purgeExpiredSessions();
@@ -1220,9 +1348,26 @@ try {
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);
+  // El catálogo del portal llega sin créditos y, hasta que corra el sync de
+  // títulos, con el código en lugar del nombre. El plan académico oficial tiene
+  // los dos. Se completan al arrancar para que el plan recomendado no diga
+  // "ICC-471, 0 créditos" donde debería decir "Gestión de Proyectos, 4".
+  const plan = planForUser(LOCAL_USER_ID);
+  if (plan) {
+    const { credits, titles } = applyPlanFacts(plan);
+    if (credits || titles) {
+      console.log(`[catálogo] desde el plan ${plan.plan}: ${credits} crédito(s) y ${titles} título(s) completados`);
+    }
+  }
   // Apagado salvo que CATALOG_CRON_AT diga a qué hora (ver src/cron.js).
   startCatalogCron();
   startBackupCron();
+  // El tick liviano de P1: cada minuto pregunta a SQLite si algo venció. Sin
+  // sesión viva no sale al portal — la fuente queda `paused` con su último dato.
+  startSyncLoop(LOCAL_USER_ID);
+  // El aviso antes de clase corre en el agente, no en la pestaña: el sentido
+  // entero es que llegue con el navegador cerrado.
+  startClassReminders(LOCAL_USER_ID);
 });
 server.on('error', (error) => {
   releaseAgentLock();
@@ -1234,6 +1379,8 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
     stopCatalogCron();
     stopBackupCron();
+    stopSyncLoop();
+    stopClassReminders();
     await shutdown();
     server.close(() => {
       releaseAgentLock();

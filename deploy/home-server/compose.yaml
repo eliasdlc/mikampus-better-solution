@@ -6,6 +6,9 @@ services:
     environment:
       MIKAMPUS_DB: /var/lib/mikampus/mikampus.db
       MIKAMPUS_RUNTIME_DIR: /var/lib/mikampus/runtime
+      # Un contenedor no tiene escritorio: el modo se declara acá y no se deja
+      # a que alguien lo elija en el onboarding.
+      MIKAMPUS_RUNTIME_MODE: home-server
       # Generalo con: openssl rand -base64 32
       MIKAMPUS_AGENT_TOKEN_FILE: /run/secrets/mikampus_agent_token
     volumes:
