@@ -4,7 +4,7 @@ import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
-import { readCatalog } from './peoplesoft/catalog.js';
+import { readCatalog, seatHistory } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
 import { readTerms, reconcileTerms, planningTerm } from './terms.js';
@@ -48,6 +48,8 @@ import { checkForUpdate, setUpdatePolicy } from './updates.js';
 import { requireScraperMutationSupport } from './scraperSupport.js';
 import { pendingSync, runSync, startSyncLoop, stopSyncLoop, syncState } from './syncOrchestrator.js';
 import { readCalendar } from './academicCalendar.js';
+import { seatTrend, describeTrend } from './shared/seatTrend.ts';
+import { setReminderSettings, reminderStatus, startClassReminders, stopClassReminders } from './classReminders.js';
 
 const DIST_DIR = resourcePath('public', 'dist');
 const app = express();
@@ -830,6 +832,53 @@ app.get('/api/pensum/codes', (req, res) => {
   res.json({ codes: [...new Set([...reqCodes, ...enrolled])] });
 });
 
+// Recordatorio antes de clase. Todo el dato ya está en disco: este endpoint no
+// toca PeopleSoft, solo lee tu horario y dice qué viene.
+app.get('/api/class-reminders', (req, res) => {
+  res.json(reminderStatus(req.userId));
+});
+
+app.patch('/api/class-reminders', (req, res) => {
+  try {
+    setReminderSettings({ enabled: req.body?.enabled, leadMinutes: req.body?.leadMinutes });
+    res.json(reminderStatus(req.userId));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// El ritmo de cupo de unas secciones concretas (feature nueva). Sale de la
+// serie `seats_snapshot` que la app ya venía guardando y nunca leía más allá de
+// la última fila. Es cálculo local sobre disco: no toca el portal.
+app.get('/api/seat-trend', (req, res) => {
+  const term = req.query.term ? String(req.query.term) : null;
+  const classNbrs = String(req.query.classNbrs ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 40);
+  if (!term || !classNbrs.length) return res.json({ term, trends: {} });
+
+  const history = seatHistory(term, classNbrs);
+  const trends = {};
+  for (const classNbr of classNbrs) {
+    const trend = seatTrend(history.get(classNbr) ?? []);
+    trends[classNbr] = {
+      samples: trend.samples,
+      change: trend.change,
+      perHour: trend.perHour,
+      direction: trend.direction,
+      windowHours: trend.windowHours,
+      closedAt: trend.closedAt,
+      reopenedAt: trend.reopenedAt,
+      summary: describeTrend(trend),
+      latestAt: trend.latest?.capturedAt ?? null,
+      seatsOpen: trend.latest?.seatsOpen ?? null,
+    };
+  }
+  res.json({ term, trends });
+});
+
 // El calendario académico oficial. Sale de SQLite (<10ms) y trae su antigüedad:
 // si el último fetch falló, la pantalla muestra lo cacheado diciendo de cuándo
 // es, en vez de quedarse vacía.
@@ -1241,6 +1290,9 @@ const server = app.listen(PORT, HOST, () => {
   // El tick liviano de P1: cada minuto pregunta a SQLite si algo venció. Sin
   // sesión viva no sale al portal — la fuente queda `paused` con su último dato.
   startSyncLoop(LOCAL_USER_ID);
+  // El aviso antes de clase corre en el agente, no en la pestaña: el sentido
+  // entero es que llegue con el navegador cerrado.
+  startClassReminders(LOCAL_USER_ID);
 });
 server.on('error', (error) => {
   releaseAgentLock();
@@ -1253,6 +1305,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
     stopCatalogCron();
     stopBackupCron();
     stopSyncLoop();
+    stopClassReminders();
     await shutdown();
     server.close(() => {
       releaseAgentLock();

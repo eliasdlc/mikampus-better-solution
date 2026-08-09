@@ -137,6 +137,38 @@ export function saveSection(s, { source = 'class-search' } = {}) {
   return sectionId;
 }
 
+// ── Historia de cupo ───────────────────────────────────────────────────────
+// La serie que el watcher y el catálogo vienen escribiendo desde el principio.
+// Se lee acotada por ventana y por sección: son las secciones que le importan a
+// alguien ahora mismo (su carrito), no el catálogo entero.
+export function seatHistory(term, classNbrs, { windowHours = 24 } = {}) {
+  if (!classNbrs?.length) return new Map();
+  const placeholders = classNbrs.map(() => '?').join(', ');
+  const since = new Date(Date.now() - windowHours * 3_600_000).toISOString();
+  const rows = db
+    .prepare(
+      `SELECT s.class_nbr AS classNbr, snap.status, snap.seats_open AS seatsOpen,
+              snap.seats_cap AS seatsCap, snap.captured_at AS capturedAt
+       FROM sections s
+       JOIN seats_snapshot snap ON snap.section_id = s.id
+       WHERE s.term = ? AND s.class_nbr IN (${placeholders}) AND snap.captured_at >= ?
+       ORDER BY s.class_nbr, snap.captured_at`
+    )
+    .all(term, ...classNbrs, since);
+
+  const byClass = new Map();
+  for (const row of rows) {
+    if (!byClass.has(row.classNbr)) byClass.set(row.classNbr, []);
+    byClass.get(row.classNbr).push({
+      status: row.status,
+      seatsOpen: row.seatsOpen,
+      seatsCap: row.seatsCap,
+      capturedAt: row.capturedAt,
+    });
+  }
+  return byClass;
+}
+
 // ── Capa de lectura (GET /api/catalog) ─────────────────────────────────────
 // Sirve el catálogo cacheado desde disco en <10ms. Agrupa secciones por materia
 // y adjunta el último snapshot de cupo de cada una con su timestamp.

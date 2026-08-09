@@ -695,6 +695,61 @@ export async function fetchAcademicCalendar(limit = 5): Promise<AcademicCalendar
   return academicCalendarSchema.parse(await getJSON(`/api/academic-calendar?limit=${limit}`));
 }
 
+// ── Ritmo de cupo (feature nueva) ───────────────────────────────────────────
+// La serie que mikampus viene guardando desde el primer día. El portal te dice
+// cuántos asientos hay ahora; esto te dice cuántos había hace dos horas.
+
+const seatTrendSchema = z.object({
+  term: z.string().nullable(),
+  trends: z.record(
+    z.string(),
+    z.object({
+      samples: z.number(),
+      change: z.number().nullable(),
+      perHour: z.number().nullable(),
+      direction: z.enum(['filling', 'opening', 'stable', 'unknown']),
+      windowHours: z.number(),
+      closedAt: z.string().nullable(),
+      reopenedAt: z.string().nullable(),
+      summary: z.string().nullable(),
+      latestAt: z.string().nullable(),
+      seatsOpen: z.number().nullable(),
+    })
+  ),
+});
+export type SeatTrends = z.infer<typeof seatTrendSchema>;
+
+export async function fetchSeatTrends(term: string, classNbrs: string[]): Promise<SeatTrends> {
+  if (!term || classNbrs.length === 0) return { term: term || null, trends: {} };
+  const qs = new URLSearchParams({ term, classNbrs: classNbrs.join(',') });
+  return seatTrendSchema.parse(await getJSON(`/api/seat-trend?${qs}`));
+}
+
+// ── Recordatorio antes de clase (feature nueva) ─────────────────────────────
+
+const classRemindersSchema = z.object({
+  enabled: z.boolean(),
+  leadMinutes: z.number(),
+  next: z
+    .object({
+      title: z.string(),
+      room: z.string().nullable(),
+      start: z.string(),
+      minutesAway: z.number(),
+      willNotify: z.boolean(),
+    })
+    .nullable(),
+});
+export type ClassReminders = z.infer<typeof classRemindersSchema>;
+
+export async function fetchClassReminders(): Promise<ClassReminders> {
+  return classRemindersSchema.parse(await getJSON('/api/class-reminders'));
+}
+
+export async function setClassReminders(input: { enabled?: boolean; leadMinutes?: number }): Promise<ClassReminders> {
+  return classRemindersSchema.parse(await send('/api/class-reminders', 'PATCH', input));
+}
+
 export async function fetchSyncState(): Promise<SyncState> {
   return syncStateSchema.parse(await getJSON('/api/sync'));
 }

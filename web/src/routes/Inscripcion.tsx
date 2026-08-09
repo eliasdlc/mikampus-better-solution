@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, LayoutGrid, ShoppingCart, Zap, type LucideIcon } from 'lucide-react';
-import { fetchCart, syncCart, enrollNow, fetchTermContext, fetchCatalog, fetchPensum } from '../lib/api.ts';
+import { fetchCart, syncCart, enrollNow, fetchTermContext, fetchCatalog, fetchPensum, fetchSeatTrends } from '../lib/api.ts';
 import type { CartRow, CatalogCourse, TermInfo } from '../../../src/shared/schemas.ts';
 import { sectionToBlocks, hasCollisions, type Block } from '../lib/grid.ts';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
@@ -122,6 +122,17 @@ export function Inscripcion() {
   const hasCollision = hasCollisions(blocks);
   const isLive = enroll.isPending || refresh.isPending;
   const readyToSubmit = rows.length > 0 && !hasClosedSection && !hasCollision;
+
+  // El ritmo de cupo de MIS secciones. Sale de la serie que la app ya venía
+  // guardando: el portal dice cuántos asientos hay ahora, esto dice cuántos
+  // había hace dos horas — que durante una inscripción es la decisión entera.
+  const cartClassNbrs = rows.map((row) => row.classNbr).filter((value): value is string => Boolean(value));
+  const trends = useQuery({
+    queryKey: ['seat-trend', termId, cartClassNbrs.join(',')],
+    queryFn: () => fetchSeatTrends(termId!, cartClassNbrs),
+    enabled: Boolean(termId) && cartClassNbrs.length > 0,
+    refetchInterval: 60_000,
+  });
 
   const recommendedCourses = useMemo(() => {
     const byId = new Map((catalog.data?.courses ?? []).map((course) => [course.id, course]));
@@ -299,6 +310,17 @@ export function Inscripcion() {
                           </span>
                           {row.status && <SeatBadge status={row.status} />}
                         </span>
+                        {/* Lo que el portal no puede decirte: cómo venía este
+                            cupo. mikampus lo sabe porque lo viene anotando. */}
+                        {row.classNbr && trends.data?.trends[row.classNbr]?.summary && (
+                          <span
+                            className={`basis-full text-xs ${
+                              trends.data.trends[row.classNbr].direction === 'filling' ? 'text-waitlist' : 'text-muted'
+                            }`}
+                          >
+                            {trends.data.trends[row.classNbr].summary}
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>

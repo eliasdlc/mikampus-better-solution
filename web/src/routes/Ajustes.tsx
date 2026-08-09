@@ -14,6 +14,8 @@ import {
   fetchDiagnostics,
   fetchErasePreview,
   runSync,
+  fetchClassReminders,
+  setClassReminders,
   removeChannel,
   setBackupRetention,
   setUpdatePolicy,
@@ -111,6 +113,7 @@ export function Ajustes() {
       <EstadoSection />
 
       <NotificacionesSection />
+      <RecordatoriosSection />
 
       <CanalesSection />
 
@@ -447,6 +450,85 @@ function ErasePreview() {
         ))}
       </ul>
     </div>
+  );
+}
+
+// Recordatorio antes de clase. Es lo que un agente local puede hacer y el
+// portal no: mikampus ya sabe tu horario y ya sobrevive al navegador cerrado.
+// Nace apagado — una app que empieza a notificar sola es una app que se
+// desinstala.
+function RecordatoriosSection() {
+  const qc = useQueryClient();
+  const reminders = useQuery({ queryKey: ['class-reminders'], queryFn: fetchClassReminders });
+  const guardar = useMutation({
+    mutationFn: setClassReminders,
+    onSuccess: (fresh) => qc.setQueryData(['class-reminders'], fresh),
+  });
+
+  const data = reminders.data;
+  const activo = data?.enabled ?? false;
+
+  return (
+    <section className="border-line bg-surface rounded-[var(--radius)] border p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-display text-base font-semibold tracking-tight">Aviso antes de clase</h2>
+          <p className="text-muted mt-1 text-sm">
+            Un recordatorio con el aula y la hora, unos minutos antes de cada clase de hoy. Sale del horario que ya
+            está guardado: no consulta el portal.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={activo}
+          aria-label="Activar aviso antes de clase"
+          disabled={guardar.isPending}
+          onClick={() => guardar.mutate({ enabled: !activo })}
+          className={`h-6 w-10 shrink-0 rounded-full p-0.5 transition-colors duration-100 ${
+            activo ? 'bg-accent' : 'bg-surface-2 border-line border'
+          }`}
+        >
+          <span
+            className={`block size-5 rounded-full bg-white transition-transform duration-100 ${activo ? 'translate-x-4' : ''}`}
+          />
+        </button>
+      </div>
+
+      {activo && (
+        <div className="mt-4 space-y-3">
+          <label className="flex flex-wrap items-center gap-2 text-sm">
+            Avisarme
+            <input
+              type="number"
+              min={5}
+              max={120}
+              step={5}
+              defaultValue={data?.leadMinutes ?? 20}
+              onBlur={(event) => guardar.mutate({ leadMinutes: Number(event.target.value) })}
+              className="border-line bg-bg tabular w-20 rounded-[var(--radius)] border px-2 py-1.5 font-mono text-sm"
+            />
+            minutos antes
+          </label>
+
+          {data?.next ? (
+            <p className="text-muted text-sm">
+              Próxima clase hoy: <span className="text-fg font-medium">{data.next.title}</span> a las{' '}
+              <span className="tabular font-mono">{data.next.start}</span>
+              {data.next.room ? ` en ${data.next.room}` : ''} ·{' '}
+              {data.next.willNotify ? 'se va a avisar' : 'ya está dentro del margen, no se avisará'}.
+            </p>
+          ) : (
+            <p className="text-muted text-sm">Hoy no queda ninguna clase por delante.</p>
+          )}
+
+          <p className="text-muted text-xs">
+            En Local Desktop el aviso llega solo con el equipo encendido y despierto. Un recordatorio atrasado no se
+            envía: si el agente estuvo dormido y la clase ya empezó, avisar no ayuda.
+          </p>
+        </div>
+      )}
+      {guardar.error && <p className="text-closed mt-2 text-sm">{(guardar.error as Error).message}</p>}
+    </section>
   );
 }
 
