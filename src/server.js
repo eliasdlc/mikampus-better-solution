@@ -1139,19 +1139,32 @@ app.delete('/api/schedule', (req, res) => {
 
 app.post('/api/watch', (req, res) => {
   try {
-    const { enabled, autoEnroll = false, appointmentAt = null, term, consent = false } = req.body ?? {};
+    const {
+      enabled,
+      autoEnroll = false,
+      appointmentAt = null,
+      term,
+      consent = false,
+      scope = scheduler.DEFAULT_WATCHER_SCOPE,
+    } = req.body ?? {};
     if (enabled) {
+      if (!scheduler.WATCHER_SCOPES.includes(scope)) throw new Error(`Alcance de watcher desconocido: ${scope}`);
       if (autoEnroll) requireScraperMutationSupport();
+      // La razón queda escrita junto a la credencial guardada: si alguien abre
+      // Ajustes en dos meses, tiene que poder leer para qué la autorizó.
       authorizeUnattendedCredential(req.userId, {
         consent,
         term,
-        reason: autoEnroll ? 'watcher con auto-inscripción' : 'watcher de cupos (solo notificar)',
+        reason: autoEnroll
+          ? `watcher con auto-inscripción (${scheduler.WATCHER_SCOPE_LABELS[scope]})`
+          : `watcher (${scheduler.WATCHER_SCOPE_LABELS[scope]}, solo notificar)`,
       });
       const parsedAppointment = appointmentAt ? new Date(appointmentAt) : null;
       if (appointmentAt && Number.isNaN(parsedAppointment.getTime())) throw new Error('La hora de inscripción no es válida');
       scheduler.startWatcher(req.userId, {
         autoEnroll: Boolean(autoEnroll),
         appointmentAt: parsedAppointment?.toISOString() ?? null,
+        scope,
       });
     } else {
       scheduler.stopWatcher(req.userId);

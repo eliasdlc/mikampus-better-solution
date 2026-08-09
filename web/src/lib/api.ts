@@ -159,7 +159,19 @@ export function scheduleAt(input: { atISO: string; term?: string; consent?: bool
 export function cancelSchedule() {
   return send('/api/schedule', 'DELETE');
 }
-export function setWatcher(input: { enabled: boolean; autoEnroll?: boolean; appointmentAt?: string | null; term?: string; consent?: boolean }) {
+// Qué mira el watcher: el cupo de TU sección, los grupos nuevos que abra la
+// universidad, o las dos cosas. Ver src/scheduler.js para por qué "groups" no
+// puede auto-inscribir.
+export type WatcherScope = 'seats' | 'groups' | 'both';
+
+export function setWatcher(input: {
+  enabled: boolean;
+  autoEnroll?: boolean;
+  appointmentAt?: string | null;
+  term?: string;
+  consent?: boolean;
+  scope?: WatcherScope;
+}) {
   return send('/api/watch', 'POST', input);
 }
 export function enrollNow() {
@@ -466,6 +478,7 @@ const statusSchema = z.object({
       pauseReason: z.string().nullable(),
       autoEnroll: z.boolean(),
       appointmentAt: z.string().nullable(),
+      scope: z.enum(['seats', 'groups', 'both']),
     })
     .nullable(),
   schedule: z.object({ atISO: z.string(), state: z.string(), lastError: z.string().nullable() }).nullable(),

@@ -88,6 +88,25 @@ export const MIGRATIONS = [
     minCompatibleVersion: 1,
     up: repairTermIdentity,
   },
+  {
+    version: 4,
+    name: 'watcher-scope',
+    // Agrega una columna con DEFAULT: una app v1..v3 la ignora y sigue leyendo
+    // y escribiendo watchers sin romperse, así que el rollback es seguro. El
+    // default 'both' es deliberado — es exactamente lo que el watcher hacía
+    // antes de que el alcance fuera elegible, así que una base existente no
+    // cambia de comportamiento al migrar.
+    minCompatibleVersion: 1,
+    up(db) {
+      // El baseline lo crea db.js antes de migrar, no una migración. Una base
+      // mínima que solo ejercita el framework de migraciones no tiene la tabla,
+      // y no tenerla no es un error: no hay nada que migrar.
+      if (!tableExists(db, 'watchers')) return;
+      const columns = db.prepare('PRAGMA table_info(watchers)').all();
+      if (columns.some((column) => column.name === 'scope')) return;
+      db.exec(`ALTER TABLE watchers ADD COLUMN scope TEXT NOT NULL DEFAULT 'both'`);
+    },
+  },
 ];
 
 // Las columnas que guardan el IDENTIFICADOR resuelto de un ciclo (STRM si se

@@ -670,6 +670,10 @@ export const appStateSchema = z.object({
       intervalMs: z.number(),
       lastCheckAt: z.string().nullable().default(null),
       autoEnroll: z.boolean().default(false),
+      // Qué hechos del portal interrumpen a esta persona. El default 'both' es
+      // el comportamiento histórico, así que un estado servido por una versión
+      // anterior se lee sin romperse.
+      scope: z.enum(['seats', 'groups', 'both']).default('both'),
       activationOrder: z.number().int().nullable().default(null),
       appointmentAt: z.string().nullable().default(null),
       status: z.enum(['running', 'paused', 'offline', 'credentials-required', 'backing-off', 'stopped', 'monitoring-gap']).default('running'),

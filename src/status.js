@@ -46,7 +46,7 @@ function watcherInfo(userId) {
   const row = db
     .prepare(
       `SELECT status, last_check_at AS lastCheckAt, next_check_at AS nextCheckAt, consecutive_failures AS consecutiveFailures,
-              pause_reason AS pauseReason, auto_enroll AS autoEnroll, appointment_at AS appointmentAt
+              pause_reason AS pauseReason, auto_enroll AS autoEnroll, appointment_at AS appointmentAt, scope
        FROM watchers WHERE user_id = ?`
     )
     .get(userId);

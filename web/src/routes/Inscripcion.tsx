@@ -15,6 +15,7 @@ import {
   fetchCatalog,
   fetchPensum,
 } from '../lib/api.ts';
+import type { WatcherScope } from '../lib/api.ts';
 import type { CartRow, CatalogCourse } from '../../../src/shared/schemas.ts';
 import { AlertTriangle, CheckCircle2, CircleDot, Clock3, Radio, Zap } from 'lucide-react';
 import { sectionToBlocks, hasCollisions, type Block } from '../lib/grid.ts';
@@ -26,6 +27,28 @@ import { Countdown } from '../components/Countdown.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
 import { CourseSearchBox } from '../components/CourseSearchBox.tsx';
+
+// Los dos hechos que el watcher sabe distinguir, dichos como los vive alguien
+// que está tratando de entrar a una materia. El texto nombra la consecuencia
+// —entrás sin mover nada, o tenés que cambiarte de grupo— porque es lo que
+// decide cuál querés, no la definición técnica de cada uno.
+const SCOPE_OPTIONS: { id: WatcherScope; title: string; detail: string }[] = [
+  {
+    id: 'seats',
+    title: 'Solo cupos de mis secciones',
+    detail: 'Avisa cuando se libere un asiento en el NRC exacto que tenés en el carrito. Entrás sin cambiar tu horario.',
+  },
+  {
+    id: 'groups',
+    title: 'Solo grupos nuevos',
+    detail: 'Avisa cuando la universidad abra un NRC que antes no existía. Implica cambiarte de sección.',
+  },
+  {
+    id: 'both',
+    title: 'Ambas',
+    detail: 'Todo lo anterior. Es lo que hacía el watcher antes de poder elegir.',
+  },
+];
 
 // El carrito enriquecido trae horario por fila: se proyecta en el WeeklyGrid
 // para ver el horario que estás a punto de inscribir — imposible en micampus.
@@ -90,11 +113,20 @@ export function Inscripcion() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
   });
   const watch = useMutation({
-    mutationFn: (input: { enabled: boolean; autoEnroll?: boolean }) => {
-      const expiresAt = windows.data?.windows[0]?.endsAt ?? 'el cierre de inscripción';
-      const purpose = input.autoEnroll ? 'Auto-inscripción puede modificar tu matrícula' : 'El watcher consulta el portal aunque la pestaña esté cerrada';
-      if (!window.confirm(`${purpose}. Se guardará tu credencial cifrada hasta ${expiresAt}. ¿Aceptás?`)) {
-        return Promise.reject(new Error('No autorizaste la auto-inscripción.'));
+    mutationFn: (input: { enabled: boolean; autoEnroll?: boolean; scope?: WatcherScope }) => {
+      // El consentimiento se pide cuando cambia lo que la app puede hacer sin
+      // vos —encender el watcher o darle permiso de inscribir—, no cada vez que
+      // ajustás qué te avisa. Repreguntar por un cambio de alcance entrena a
+      // decir que sí sin leer, que es justo lo que este diálogo debe evitar.
+      const raisesAuthority = (input.enabled && !watcherOn) || (input.autoEnroll === true && !autoEnrollOn);
+      if (raisesAuthority) {
+        const expiresAt = windows.data?.windows[0]?.endsAt ?? 'el cierre de inscripción';
+        const purpose = input.autoEnroll
+          ? 'Auto-inscripción puede modificar tu matrícula'
+          : 'El watcher consulta el portal aunque la pestaña esté cerrada';
+        if (!window.confirm(`${purpose}. Se guardará tu credencial cifrada hasta ${expiresAt}. ¿Aceptás?`)) {
+          return Promise.reject(new Error('No autorizaste la auto-inscripción.'));
+        }
       }
       return setWatcher({
         ...input,
@@ -108,6 +140,11 @@ export function Inscripcion() {
 
   const watcherOn = !!state.data?.watcher;
   const autoEnrollOn = state.data?.watcher?.autoEnroll ?? false;
+  // Mientras está apagado no hay fila en la base: el selector muestra con qué
+  // alcance se encendería, y por eso su estado vive acá y no solo en el server.
+  const activeScope = state.data?.watcher?.scope ?? 'both';
+  const [pendingScope, setPendingScope] = useState<WatcherScope>('both');
+  const scope: WatcherScope = watcherOn ? activeScope : pendingScope;
   const scheduledAt = state.data?.schedule?.atISO;
   const rows = cart.data?.rows ?? [];
   const blocks = useMemo(() => cartBlocks(rows), [rows]);
@@ -374,7 +411,7 @@ export function Inscripcion() {
               <button
                 role="switch"
                 aria-checked={watcherOn}
-                onClick={() => watch.mutate({ enabled: !watcherOn, autoEnroll: false })}
+                onClick={() => watch.mutate({ enabled: !watcherOn, autoEnroll: false, scope })}
                 className={`h-6 w-10 rounded-full p-0.5 transition-colors duration-100 ${watcherOn ? 'bg-accent' : 'bg-surface-2 border-line border'}`}
               >
                 <span className={`block size-5 rounded-full bg-white transition-transform duration-100 ${watcherOn ? 'translate-x-4' : ''}`} />
@@ -386,21 +423,66 @@ export function Inscripcion() {
                 : 'Consulta compartida: una sola cuenta revisa las materias vigiladas de todos.'}
             </p>
             <p className="text-muted text-xs">El intervalo se ajusta al presupuesto del servidor durante el pico.</p>
+
+            <fieldset className="space-y-1.5">
+              <legend className="text-xs font-medium">Qué vigilar</legend>
+              {SCOPE_OPTIONS.map((option) => (
+                <label
+                  key={option.id}
+                  className={`border-line flex items-start gap-2 rounded-[var(--radius)] border p-2.5 text-xs ${
+                    scope === option.id ? 'bg-surface-2' : ''
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="watcher-scope"
+                    checked={scope === option.id}
+                    disabled={watch.isPending}
+                    onChange={() => {
+                      setPendingScope(option.id);
+                      // Vigilar solo grupos nuevos y auto-inscribir es una
+                      // combinación que el server rechaza: un grupo nuevo no es
+                      // tu sección y nunca inscribe solo. Se apaga acá para que
+                      // el cambio no falle con un error que no explica nada.
+                      if (watcherOn) {
+                        watch.mutate({
+                          enabled: true,
+                          scope: option.id,
+                          autoEnroll: option.id === 'groups' ? false : autoEnrollOn,
+                        });
+                      }
+                    }}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block font-medium">{option.title}</span>
+                    <span className="text-muted">{option.detail}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+
             {watcherOn && (
-              <label className="border-line flex items-start gap-2 rounded-[var(--radius)] border p-2.5 text-xs">
+              <label
+                className={`border-line flex items-start gap-2 rounded-[var(--radius)] border p-2.5 text-xs ${
+                  scope === 'groups' ? 'opacity-60' : ''
+                }`}
+              >
                 <input
                   type="checkbox"
                   checked={autoEnrollOn}
-                  disabled={watch.isPending}
-                  onChange={(event) => watch.mutate({ enabled: true, autoEnroll: event.target.checked })}
+                  disabled={watch.isPending || scope === 'groups'}
+                  onChange={(event) => watch.mutate({ enabled: true, autoEnroll: event.target.checked, scope })}
                   className="mt-0.5"
                 />
                 <span>
                   <span className="block font-medium">Inscribirme al instante si abre cupo</span>
                   <span className="text-muted">
-                    {autoEnrollOn
-                      ? 'Activo con cola FIFO. Si no conocemos tu hora exacta, solo te avisará hasta que abra.'
-                      : 'Por defecto solo avisa; activarlo pide consentimiento explícito.'}
+                    {scope === 'groups'
+                      ? 'No aplica vigilando solo grupos nuevos: una sección que no elegiste nunca se inscribe sola.'
+                      : autoEnrollOn
+                        ? 'Activo con cola FIFO. Si no conocemos tu hora exacta, solo te avisará hasta que abra.'
+                        : 'Por defecto solo avisa; activarlo pide consentimiento explícito.'}
                   </span>
                 </span>
               </label>

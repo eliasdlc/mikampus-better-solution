@@ -12,6 +12,32 @@ import { reportOperatorFailure, reportOperatorSuccess } from './operatorNotify.j
 // sobrevivan un reinicio. user_id sigue en las tablas por compatibilidad con
 // datos locales antiguos, pero el runtime solo autentica la identidad local.
 
+// Qué mira el watcher. La distinción no es cosmética: son dos hechos distintos
+// del portal y le sirven a personas distintas.
+//
+//   seats  — se liberó un asiento en LA sección que ya elegiste en el carrito.
+//            Es lo que te deja entrar sin cambiar nada de tu horario, y es lo
+//            único que puede disparar una auto-inscripción.
+//   groups — apareció un NRC que antes no existía, con cupo. No es tu sección:
+//            es la universidad abriendo un grupo nuevo, y sirve para decidir un
+//            swap. Nunca inscribe solo.
+//
+// Elegir uno no cambia lo que se le pide al portal —el scan de una materia es
+// el mismo y lo comparten todos los watchers—, solo qué te interrumpe. Por eso
+// acotar el alcance no hace el watcher más rápido ni más liviano: lo hace menos
+// ruidoso, que es el problema real.
+export const WATCHER_SCOPES = ['seats', 'groups', 'both'];
+export const DEFAULT_WATCHER_SCOPE = 'both';
+export const WATCHER_SCOPE_LABELS = {
+  seats: 'solo cupos de tus secciones',
+  groups: 'solo grupos nuevos',
+  both: 'cupos y grupos nuevos',
+};
+
+function scopeWatches(scope, what) {
+  return scope === 'both' || scope === what;
+}
+
 const listeners = new Set();
 export function onEvent(fn) {
   listeners.add(fn);
@@ -54,7 +80,7 @@ function stateFor(userId) {
 export function getState(userId) {
   const s = stateFor(userId);
   const watcher = db
-    .prepare('SELECT last_check_at, auto_enroll, activation_order, appointment_at, status, next_check_at, consecutive_failures, pause_reason, last_state FROM watchers WHERE user_id = ?')
+    .prepare('SELECT last_check_at, auto_enroll, activation_order, appointment_at, status, next_check_at, consecutive_failures, pause_reason, last_state, scope FROM watchers WHERE user_id = ?')
     .get(userId);
   return {
     schedule: s.schedule ? { atISO: s.schedule.atISO, prewarmAtISO: s.schedule.prewarmAtISO, prewarmed: s.schedule.prewarmed } : null,
@@ -66,6 +92,7 @@ export function getState(userId) {
           intervalMs: effectiveWatcherIntervalMs(),
           lastCheckAt: watcher.last_check_at ?? null,
           autoEnroll: watcher.auto_enroll === 1,
+          scope: watcher.scope ?? DEFAULT_WATCHER_SCOPE,
           activationOrder: watcher.activation_order,
           appointmentAt: watcher.appointment_at ?? null,
           status: watcher.status,
@@ -339,7 +366,7 @@ function watchersForCourse(courseCode) {
     .prepare(
       `SELECT w.user_id AS user_id, c.class_nbr AS class_nbr,
               w.auto_enroll AS auto_enroll, w.activation_order AS activation_order,
-              w.appointment_at AS appointment_at
+              w.appointment_at AS appointment_at, w.scope AS scope
        FROM watchers w JOIN cart_rows c ON c.user_id = w.user_id
        WHERE c.course_code = ? AND w.status = 'running'
        ORDER BY w.activation_order, w.user_id`
@@ -495,7 +522,10 @@ async function handleCourseScan(target) {
     const newOpen = [...after.values()].filter((section) => !before.has(section.class_nbr) && section.status === 'open');
     if (newOpen.length) {
       const labels = newOpen.map((section) => `NRC ${section.class_nbr}${section.section ? ` (${section.section})` : ''}`).join(', ');
-      for (const userId of new Set(activeOwners.map((owner) => owner.user_id))) {
+      const audience = new Set(
+        activeOwners.filter((owner) => scopeWatches(owner.scope, 'groups')).map((owner) => owner.user_id)
+      );
+      for (const userId of audience) {
         emit({
           type: 'notice',
           userId,
@@ -514,6 +544,7 @@ async function handleCourseScan(target) {
   // aceptaron auto-enroll con credencial viva entran en la cola FIFO.
   const openedByUser = new Map();
   for (const owner of activeOwners) {
+    if (!scopeWatches(owner.scope, 'seats')) continue;
     const previous = before.get(owner.class_nbr);
     const current = after.get(owner.class_nbr);
     if (!previous || previous.status === 'open' || current?.status !== 'open') continue;
@@ -583,23 +614,31 @@ function disarmSharedWatcherIfIdle() {
   lastCourseKey = null;
 }
 
-export function startWatcher(userId, { autoEnroll = false, appointmentAt = null } = {}) {
+export function startWatcher(userId, { autoEnroll = false, appointmentAt = null, scope = DEFAULT_WATCHER_SCOPE } = {}) {
+  if (!WATCHER_SCOPES.includes(scope)) throw new Error(`Alcance de watcher desconocido: ${scope}`);
+  // Un grupo nuevo nunca inscribe a nadie: es una sección que la persona no
+  // eligió, y meterla ahí le cambiaría el horario. Por eso vigilar SOLO grupos
+  // nuevos y pedir auto-inscripción es una combinación sin significado, y se
+  // rechaza acá en vez de aceptarla y no cumplirla en silencio.
+  if (autoEnroll && scope === 'groups') {
+    throw new Error('La auto-inscripción necesita vigilar el cupo de tu sección: elegí "cupos" o "ambas"');
+  }
   stopWatcher(userId);
   const activationOrder = db.prepare('SELECT COALESCE(MAX(activation_order), 0) + 1 AS next FROM watchers').get().next;
   db.prepare(
-    `INSERT INTO watchers (user_id, interval_ms, auto_enroll, activation_order, appointment_at)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO watchers (user_id, interval_ms, auto_enroll, activation_order, appointment_at, scope)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET interval_ms = excluded.interval_ms,
        auto_enroll = excluded.auto_enroll, activation_order = excluded.activation_order,
-       appointment_at = excluded.appointment_at, status = 'running', pause_reason = NULL,
+       appointment_at = excluded.appointment_at, scope = excluded.scope, status = 'running', pause_reason = NULL,
        consecutive_failures = 0, last_started_at = datetime('now'), created_at = datetime('now')`
-  ).run(userId, WATCHER_TICK_MS, autoEnroll ? 1 : 0, activationOrder, appointmentAt);
+  ).run(userId, WATCHER_TICK_MS, autoEnroll ? 1 : 0, activationOrder, appointmentAt, scope);
   armSharedWatcher();
   publishWatcherState();
   emit({
     type: 'log',
     userId,
-    message: `Watcher compartido activado (${autoEnroll ? `auto-inscripción FIFO #${activationOrder}` : 'solo notificar'} · ciclo efectivo: ${Math.round(effectiveWatcherIntervalMs() / 1000)}s)`,
+    message: `Watcher compartido activado (${WATCHER_SCOPE_LABELS[scope]} · ${autoEnroll ? `auto-inscripción FIFO #${activationOrder}` : 'solo notificar'} · ciclo efectivo: ${Math.round(effectiveWatcherIntervalMs() / 1000)}s)`,
   });
 }
 
