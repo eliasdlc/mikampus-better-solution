@@ -22,7 +22,7 @@ import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
 import { computeInsights } from './shared/insights.ts';
 import { db, lastSync, deleteAllUserData, logAction, readActions } from './db.js';
-import { getUser } from './users.js';
+import { getUser, LOCAL_USER_ID } from './users.js';
 import * as auth from './auth.js';
 import { credentialInfo, deleteCredential, purgeExpiredCredentials } from './credentialVault.js';
 import * as plans from './plans.js';
@@ -45,6 +45,7 @@ import { erasePreview, eraseLocalArtifacts } from './erase.js';
 import { exportDiagnostics, listDiagnostics } from './diagnostics.js';
 import { checkForUpdate, setUpdatePolicy } from './updates.js';
 import { requireScraperMutationSupport } from './scraperSupport.js';
+import { pendingSync, runSync, startSyncLoop, stopSyncLoop, syncState } from './syncOrchestrator.js';
 
 const DIST_DIR = resourcePath('public', 'dist');
 const app = express();
@@ -93,51 +94,9 @@ function revokeUnattendedCredentialIfUnused(userId) {
   if (!scheduled && !watching) deleteCredential(userId);
 }
 
-const REFRESH_POLICY = [
-  { kind: 'mySchedule', label: 'Horario', maxAgeMs: 12 * 60 * 60_000 },
-  { kind: 'cart', label: 'Carrito', maxAgeMs: 10 * 60_000 },
-  { kind: 'grades', label: 'Notas', maxAgeMs: 24 * 60 * 60_000 },
-  { kind: 'advisement', label: 'Avance', maxAgeMs: 7 * 24 * 60 * 60_000 },
-  { kind: 'holds', label: 'Holds', maxAgeMs: 12 * 60 * 60_000 },
-];
-const refreshInFlight = new Map();
-
-async function refreshExpired(userId, { force = false } = {}) {
-  const results = [];
-  for (const item of REFRESH_POLICY) {
-    const syncedAt = lastSync(item.kind, { userId });
-    const expired = !syncedAt || Date.now() - new Date(syncedAt).getTime() >= item.maxAgeMs;
-    if (!force && !expired) {
-      results.push({ ...item, status: 'fresh', syncedAt });
-      continue;
-    }
-
-    scheduler.emitEvent({ type: 'log', userId, message: `Actualizando ${item.label.toLowerCase()}…` });
-    try {
-      if (item.kind === 'mySchedule') {
-        await withPage(userId, (page) => syncSchedule(page, { userId, onStep: (message) => scheduler.emitEvent({ type: 'log', userId, message }) }));
-        reconcileTerms();
-      } else if (item.kind === 'cart') {
-        await withPage(userId, (page) => syncCart(page, { userId }));
-      } else if (item.kind === 'grades') {
-        const { courses } = await withPage(userId, (page) => fetchGrades(page, { userId }));
-        saveGrades(userId, courses);
-        reconcileTerms();
-      } else if (item.kind === 'advisement') {
-        const data = await withPage(userId, (page) => fetchAdvisement(page, { userId }));
-        saveRequirementTree(userId, data, { cohortStartTerm: earliestGradeTerm(userId) });
-      } else if (item.kind === 'holds') {
-        const parsed = await withPage(userId, (page) => fetchHolds(page, { userId }));
-        saveHolds(userId, parsed.holds);
-      }
-      results.push({ ...item, status: 'updated', syncedAt: lastSync(item.kind, { userId }) });
-    } catch (err) {
-      scheduler.emitEvent({ type: 'log', userId, message: `No se pudo actualizar ${item.label.toLowerCase()}: ${err.message}` });
-      results.push({ ...item, status: 'error', syncedAt, error: err.message });
-    }
-  }
-  return results;
-}
+// La política de refresco ya no vive acá: es el registro de fuentes de
+// src/syncOrchestrator.js, con dependencias, relevancia y prioridad. Este
+// archivo solo expone la puerta HTTP.
 
 app.use('/api', auth.localRequestGuard, auth.authMiddleware);
 
@@ -384,7 +343,7 @@ app.delete('/api/account/data', async (req, res) => {
     // Una actualización silenciosa que arrancó al entrar puede seguir en la
     // cola de Playwright. Esperarla evita que escriba filas nuevas después del
     // borrado solicitado.
-    await refreshInFlight.get(req.userId);
+    await pendingSync(req.userId);
     scheduler.cancelSchedule(req.userId);
     scheduler.stopWatcher(req.userId);
     await resetSession(req.userId);
@@ -407,18 +366,23 @@ app.delete('/api/account/data', async (req, res) => {
   }
 });
 
-// Un solo refresh global: sirve cache de inmediato en el cliente y solo sale
-// al portal por lo vencido. El orden de la política declara el primer sync
-// (horario → carrito → notas → avance → holds), aunque cada tarea usa la cola
-// del context del usuario y por tanto no bloquea a otros estudiantes.
-app.post('/api/refresh', async (req, res) => {
-  let pending = refreshInFlight.get(req.userId);
-  if (!pending) {
-    pending = refreshExpired(req.userId, { force: Boolean(req.body?.force) }).finally(() => refreshInFlight.delete(req.userId));
-    refreshInFlight.set(req.userId, pending);
+// ── Sincronización universal (P1) ───────────────────────────────────────────
+// Una sola definición de frescura para toda la app. El GET es barato (SQLite) y
+// responde "qué está viejo y por qué"; el POST es el único camino al portal.
+app.get('/api/sync', (req, res) => {
+  res.json(syncState(req.userId));
+});
+
+// `force` incluye las fuentes vigentes; no evade consentimiento ni prioridad.
+// `keys` acota a un subconjunto y arrastra sus dependencias.
+app.post('/api/sync', async (req, res) => {
+  try {
+    const keys = Array.isArray(req.body?.keys) && req.body.keys.length ? req.body.keys.map(String) : undefined;
+    const results = await runSync(req.userId, { force: Boolean(req.body?.force), keys });
+    res.json({ results, state: syncState(req.userId) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
-  const results = await pending;
-  res.json({ results });
 });
 
 // Mismo trato que el horario y las notas: el GET sirve el cache de SQLite con
@@ -1247,6 +1211,9 @@ const server = app.listen(PORT, HOST, () => {
   // Apagado salvo que CATALOG_CRON_AT diga a qué hora (ver src/cron.js).
   startCatalogCron();
   startBackupCron();
+  // El tick liviano de P1: cada minuto pregunta a SQLite si algo venció. Sin
+  // sesión viva no sale al portal — la fuente queda `paused` con su último dato.
+  startSyncLoop(LOCAL_USER_ID);
 });
 server.on('error', (error) => {
   releaseAgentLock();
@@ -1258,6 +1225,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
     stopCatalogCron();
     stopBackupCron();
+    stopSyncLoop();
     await shutdown();
     server.close(() => {
       releaseAgentLock();

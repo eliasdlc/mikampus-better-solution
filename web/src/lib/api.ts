@@ -630,12 +630,56 @@ export async function fetchErasePreview(): Promise<ErasePreview> {
   return erasePreviewSchema.parse(await getJSON('/api/account/erase-preview'));
 }
 
-export async function refreshExpiredData() {
-  return z
-    .object({
-      results: z.array(
-        z.object({ kind: z.string(), label: z.string(), status: z.enum(['fresh', 'updated', 'error']), syncedAt: z.string().nullable(), error: z.string().optional() })
-      ),
+// ── Sincronización universal (P1) ───────────────────────────────────────────
+// Una sola definición de frescura para toda la app. El estado es barato (sale
+// de SQLite) y dice por qué cada fuente está como está; correr es lo único que
+// puede salir al portal.
+
+const syncResultSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  status: z.enum(['fresh', 'updated', 'skipped', 'paused', 'error']),
+  syncedAt: z.string().nullable(),
+  detail: z.string().nullable().optional(),
+  reason: z.string().optional(),
+  error: z.string().optional(),
+  invalidates: z.array(z.string()).optional(),
+});
+export type SyncResult = z.infer<typeof syncResultSchema>;
+
+const syncStateSchema = z.object({
+  now: z.string(),
+  running: z.boolean(),
+  hold: z.string().nullable(),
+  sources: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      dependsOn: z.array(z.string()),
+      ttlMs: z.number(),
+      needsPortal: z.boolean(),
+      syncedAt: z.string().nullable(),
+      ageMs: z.number().nullable(),
+      expired: z.boolean(),
+      relevant: z.boolean(),
+      lastRunAt: z.string().nullable(),
+      lastStatus: z.string().nullable(),
+      error: z.string().nullable(),
     })
-    .parse(await send('/api/refresh', 'POST'));
+  ),
+});
+export type SyncState = z.infer<typeof syncStateSchema>;
+
+export async function fetchSyncState(): Promise<SyncState> {
+  return syncStateSchema.parse(await getJSON('/api/sync'));
+}
+
+/**
+ * `force` incluye las fuentes todavía vigentes. No evade consentimiento ni
+ * prioridad: una inscripción en curso sigue mandando sobre el portal.
+ */
+export async function runSync(input: { force?: boolean; keys?: string[] } = {}) {
+  return z
+    .object({ results: z.array(syncResultSchema), state: syncStateSchema })
+    .parse(await send('/api/sync', 'POST', input));
 }

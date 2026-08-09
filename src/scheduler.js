@@ -106,11 +106,57 @@ export function getState(userId) {
   };
 }
 
+// ── Prioridad sobre la única sesión del portal (P1) ─────────────────────────
+//
+// `withPage` es una fila FIFO: encolar un refresh de carrito delante de un
+// submit lo retrasa de verdad, y ese retraso se mide en cupos perdidos. El
+// orquestador de sincronización consulta este gate ANTES de encolar nada.
+//
+// Se cuentan las operaciones vivas en vez de mirar solo la tabla `schedules`
+// porque una auto-inscripción disparada por el watcher es igual de crítica y no
+// tiene fila propia hasta que termina.
+let criticalOps = 0;
+
+async function withEnrollmentPriority(fn) {
+  criticalOps += 1;
+  try {
+    return await fn();
+  } finally {
+    criticalOps -= 1;
+  }
+}
+
+// Desde el pre-warm hasta el submit, el portal es del que inscribe. El margen
+// duplica PREWARM_LEAD_MS a propósito: el jitter puede adelantar el pre-warm y
+// una consulta que arranca justo antes todavía estaría corriendo en T0.
+const ENROLLMENT_PRIORITY_WINDOW_MS = 2 * 8 * 60_000;
+
+/**
+ * Por qué una operación no crítica no debe tocar el portal ahora. null = libre.
+ */
+export function portalPriorityHold(userId, now = Date.now()) {
+  if (criticalOps > 0) return 'hay una inscripción en curso: el portal queda para esa operación';
+  const row = db
+    .prepare('SELECT at_iso, state FROM schedules WHERE user_id = ? ORDER BY at_iso LIMIT 1')
+    .get(userId);
+  if (!row) return null;
+  if (['preparing', 'submitting'].includes(row.state)) {
+    return 'hay una inscripción programada preparándose: el portal queda para esa operación';
+  }
+  if (row.state !== 'pending') return null;
+  const at = new Date(row.at_iso).getTime();
+  if (Number.isNaN(at)) return null;
+  if (at - now <= ENROLLMENT_PRIORITY_WINDOW_MS && at + 60_000 >= now) {
+    return 'tu inscripción programada está por dispararse: no se consulta nada más hasta que termine';
+  }
+  return null;
+}
+
 export async function runEnrollNow(userId, reason) {
   emit({ type: 'log', userId, message: `Ejecutando inscripción (${reason})...` });
   let result;
   try {
-    result = await withPage(userId, (page) => enrollFromCart(page), { retry: false });
+    result = await withEnrollmentPriority(() => withPage(userId, (page) => enrollFromCart(page), { retry: false }));
   } catch (err) {
     // No se sabe si el submit llegó: el audit log lo dice tal cual (ok NULL).
     logAction({ userId, action: 'enroll', detail: reason, response: err.message, ok: null });
@@ -206,7 +252,7 @@ async function prewarmSchedule(userId, schedule) {
   }
   emit({ type: 'log', userId, message: 'Preparando sesión y asistente de inscripción…' });
   try {
-    const result = await withPage(userId, (page) => prepareEnrollment(page), { retry: true });
+    const result = await withEnrollmentPriority(() => withPage(userId, (page) => prepareEnrollment(page), { retry: true }));
     if (!result.ok) throw new Error(`PeopleSoft no dejó listo el asistente (${result.reason})`);
     schedule.prewarmed = true;
     emit({ type: 'log', userId, message: 'Disparo preparado: a la hora exacta solo se enviará la inscripción.' });
@@ -232,7 +278,7 @@ async function fireSchedule(userId, schedule) {
     // Si el pre-warm sobrevivió hasta T0, no hay navegación ni Step 1 aquí.
     // Si no, el fallback completo es más lento pero todavía intenta inscribir.
     if (schedule.prewarmed) {
-      const prepared = await withPage(userId, (page) => finishPreparedEnrollment(page), { retry: false });
+      const prepared = await withEnrollmentPriority(() => withPage(userId, (page) => finishPreparedEnrollment(page), { retry: false }));
       if (prepared.ok) {
         const result = await recordEnrollResult(userId, prepared, 'hora programada');
         db.prepare("UPDATE schedules SET state = 'succeeded', updated_at = datetime('now') WHERE user_id = ?").run(userId);

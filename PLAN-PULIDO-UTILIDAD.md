@@ -11,7 +11,8 @@
 
 - **Fecha del diagnóstico:** 2026-07-22.
 - **Rama designada:** `feat/single-user-secure`, preservada como rama histórica de la fase.
-- **Estado:** P0 cerrada (identidad de ciclos e integridad); P1–P6 pendientes.
+- **Estado:** P0 y P1 cerradas (identidad de ciclos e integridad; sincronización
+  universal); P2–P6 pendientes.
 - **Dependencia de release:** las fases de distribución y CI pueden seguir validándose en
   source, pero no se publica npm, GitHub Release, tag estable ni landing de descarga hasta
   cerrar P0–P6.
@@ -452,7 +453,7 @@ Al terminar cada fase:
 | Fase | Estado | Evidencia de cierre |
 |---|---|---|
 | P0 — Ciclos e integridad | ✅ Hecho | `cycleLabel` deriva por mes de inicio (abril→Abril); `reconcileTerms` respeta la frontera STRM/etiqueta (`isStrmCode`) + telemetría a diagnostics; migración v3 `term-identity` (saneo label-as-code, fusión de duplicados, aborto ante STRM en conflicto, backup+transacción); convergencia de identificador al aparecer el STRM; Dashboard y `readSchedule` derivan "sincronizado" del registro de sync, no de `rows.length`. Tests: `test-terms`, `test-term-identity`, `test-schedule-identity` + suite completa, typecheck y lint en verde. |
-| P1 — Sync universal | ⬜ Pendiente | — |
+| P1 — Sync universal | ✅ Hecho | Registro de fuentes en `src/syncOrchestrator.js` (key, dependencias, TTL, portal sí/no, relevancia, invalidaciones) con orden topológico determinista: ciclos antes de horario/carrito/ventanas, notas antes de avance. Una sola promesa en vuelo por usuario — diez pedidos simultáneos producen una consulta por fuente. `GET/POST /api/sync` reemplazan `/api/refresh`; `REFRESH_POLICY` y el refresh-al-montar de `Layout.tsx` se retiraron. Tick de 60s en el agente con detección de hueco (>3 ticks = reanudación, una sola pasada, sin replay). Prioridad: `scheduler.portalPriorityHold()` cuenta operaciones de inscripción vivas y la ventana T-16min, y el refresh cede sin encolarse delante de un submit. Sin sesión la fuente queda `paused` con su dato cacheado y no se persiste credencial nueva. Estado por fuente durable en `sync_sources` (migración 5, `minCompatibleVersion: 1`). Invalidación por evento vía SSE `sync-source`. Tests: `test-sync-orchestrator` (orden, colapso de concurrencia, relevancia, dependencia caída, prioridad, reanudación) + suite completa, typecheck y lint en verde. |
 | P2 — Inscripción unificada | ⬜ Pendiente | — |
 | P3 — Inicio y calendario | ⬜ Pendiente | — |
 | P4 — Horario enriquecido | ⬜ Pendiente | — |

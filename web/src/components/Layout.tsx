@@ -1,13 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarDays,
   CalendarRange,
   ChartLine,
   GraduationCap,
   House,
-  RefreshCw,
   Search,
   Settings,
   type LucideIcon,
@@ -16,7 +14,7 @@ import { useSSE } from '../lib/sse.tsx';
 import { ThemeToggle } from './ThemeToggle.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
 import { AgentStatusBar } from './AgentStatus.tsx';
-import { refreshExpiredData } from '../lib/api.ts';
+import { SyncControl } from './SyncControl.tsx';
 
 // La navegación nombra las seis tareas, no las pantallas que el proyecto fue
 // acumulando. Buscar, holds y elegir grupos siguen existiendo donde se usan.
@@ -48,30 +46,12 @@ function NavItem({ to, label, icon: Icon, end }: { to: string; label: string; ic
 
 export function Layout({ children }: { children: ReactNode }) {
   const { connected } = useSSE();
-  const queryClient = useQueryClient();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const startedInitialRefresh = useRef(false);
-  const refresh = useMutation({
-    mutationFn: refreshExpiredData,
-    onSuccess: () => {
-      for (const key of ['cart', 'grades', 'holds', 'my-schedule', 'pensum', 'requirements', 'profile', 'plans', 'state']) {
-        queryClient.invalidateQueries({ queryKey: [key] });
-      }
-      queryClient.invalidateQueries({ queryKey: ['account-overview'] });
-    },
-  });
 
-  // Principio 4: entrar nunca espera a PeopleSoft. Las rutas leen SQLite de
-  // inmediato; una vez montada la app, esta pasada silenciosa trae solo lo que
-  // venció. El primer login pasa por el mismo flujo y respeta su prioridad.
-  useEffect(() => {
-    if (startedInitialRefresh.current) return;
-    startedInitialRefresh.current = true;
-    refresh.mutate();
-    // Solo al entrar a la app; un refetch de React Query no debe disparar otro
-    // scraping. `refresh` es estable para esta mutación.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // El refresh al montar murió con P1. Montar una pantalla no es una razón para
+  // salir al portal, y hacerlo desde acá creaba una segunda política de
+  // frescura que competía con la del backend. Ahora el tick del agente decide
+  // qué está vencido y el control global de abajo es el gesto explícito.
 
   // El atajo se escucha en la ventana y no en un componente: ⌘K es global
   // (plan §5.2), tiene que abrir estés donde estés. Ctrl+K para el mismo gesto
@@ -118,22 +98,15 @@ export function Layout({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        <div className="order-2 flex items-center gap-3 md:order-none md:mt-auto md:justify-between">
-          <span className="text-muted flex items-center gap-1.5 text-xs" title="Conexión de actividad en vivo">
-            <span className={`size-2 rounded-full ${connected ? 'bg-open' : 'bg-closed'}`} />
-            {connected ? 'en vivo' : 'sin conexión'}
-          </span>
-          <button
-            type="button"
-            onClick={() => refresh.mutate()}
-            disabled={refresh.isPending}
-            className="text-muted hover:text-fg flex items-center gap-1.5 text-xs disabled:opacity-50"
-            title="Actualizar los datos vencidos"
-          >
-            <RefreshCw className={`size-3 ${refresh.isPending ? 'animate-spin' : ''}`} aria-hidden />
-            {refresh.isPending ? 'actualizando…' : 'actualizar'}
-          </button>
-          <ThemeToggle />
+        <div className="order-2 flex w-full flex-col gap-2 md:order-none md:mt-auto">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted flex items-center gap-1.5 text-xs" title="Conexión de actividad en vivo">
+              <span className={`size-2 rounded-full ${connected ? 'bg-open' : 'bg-closed'}`} />
+              {connected ? 'en vivo' : 'sin conexión'}
+            </span>
+            <ThemeToggle />
+          </div>
+          <SyncControl />
         </div>
       </aside>
 

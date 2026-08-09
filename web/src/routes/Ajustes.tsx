@@ -13,7 +13,7 @@ import {
   fetchChannels,
   fetchDiagnostics,
   fetchErasePreview,
-  refreshExpiredData,
+  runSync,
   removeChannel,
   setBackupRetention,
   setUpdatePolicy,
@@ -36,11 +36,14 @@ export function Ajustes() {
   const actions = useQuery({ queryKey: ['actions'], queryFn: fetchActions });
   const [confirmDelete, setConfirmDelete] = useState('');
 
+  // Ajustes usa el MISMO orquestador que el control global: no existe una
+  // segunda política de frescura escondida en una pantalla (P1, decisión 6).
   const refresh = useMutation({
-    mutationFn: refreshExpiredData,
+    mutationFn: () => runSync({ force: true }),
     onSuccess: () => {
       for (const key of PERSONAL_QUERIES) queryClient.invalidateQueries({ queryKey: [key] });
       queryClient.invalidateQueries({ queryKey: ['account-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['sync'] });
     },
   });
 

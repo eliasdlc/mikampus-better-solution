@@ -107,6 +107,28 @@ export const MIGRATIONS = [
       db.exec(`ALTER TABLE watchers ADD COLUMN scope TEXT NOT NULL DEFAULT 'both'`);
     },
   },
+  {
+    version: 5,
+    name: 'sync-sources',
+    // Solo agrega una tabla nueva de bookkeeping: una app v1..v4 la ignora y
+    // sigue sincronizando con su lista vieja, así que el rollback es seguro.
+    // Nada de lo que vive acá es dato del portal — es el registro de CUÁNDO se
+    // intentó y con qué resultado, que hasta ahora solo existía en memoria y
+    // por eso se perdía en cada reinicio.
+    minCompatibleVersion: 1,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_sources (
+          user_id      INTEGER NOT NULL,
+          source_key   TEXT NOT NULL,
+          last_run_at  TEXT,
+          last_status  TEXT,
+          last_error   TEXT,
+          PRIMARY KEY (user_id, source_key)
+        );
+      `);
+    },
+  },
 ];
 
 // Las columnas que guardan el IDENTIFICADOR resuelto de un ciclo (STRM si se
