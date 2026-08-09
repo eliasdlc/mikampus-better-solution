@@ -7,6 +7,7 @@ import { fetchGrades, saveGrades, diffPublishedGrades, readGrades } from './peop
 import { fetchAdvisement, saveRequirementTree, earliestGradeTerm } from './peoplesoft/advisement.js';
 import { fetchHolds, saveHolds } from './peoplesoft/holds.js';
 import { syncEnrollmentWindows } from './peoplesoft/enrollmentWindows.js';
+import { syncAcademicCalendar } from './academicCalendar.js';
 import * as scheduler from './scheduler.js';
 
 // El orquestador de sincronización (P1). Antes cada pantalla decidía por su
@@ -138,6 +139,24 @@ export const SOURCES = [
     },
   },
   {
+    key: 'academicCalendar',
+    label: 'Calendario académico',
+    dependsOn: [],
+    // Una vez al día alcanza: PUCMM publica el calendario del año, no un feed.
+    ttlMs: 24 * HOUR,
+    // No es PeopleSoft: son páginas públicas. No necesita sesión, no toca la
+    // cola de Playwright y por eso no cede ante una inscripción en curso —
+    // un fetch HTTPS a pucmm.edu.do no le quita el turno a nadie.
+    needsPortal: false,
+    // El dato es institucional, no personal: su frescura no se guarda por usuario.
+    shared: true,
+    invalidates: ['academic-calendar', 'dashboard'],
+    async run() {
+      const { saved, failures } = await syncAcademicCalendar();
+      return { detail: failures.length ? `${saved} fecha(s), parcial` : `${saved} fecha(s)` };
+    },
+  },
+  {
     key: 'holds',
     label: 'Holds',
     dependsOn: [],
@@ -223,7 +242,8 @@ function readRow(userId, key) {
   return (
     db
       .prepare(
-        `SELECT last_run_at AS lastRunAt, last_status AS lastStatus, last_error AS lastError
+        `SELECT last_run_at AS lastRunAt, last_success_at AS lastSuccessAt,
+                last_status AS lastStatus, last_error AS lastError
          FROM sync_sources WHERE user_id = ? AND source_key = ?`
       )
       .get(userId, key) ?? null
@@ -231,19 +251,30 @@ function readRow(userId, key) {
 }
 
 function writeRow(userId, key, { status, error = null }) {
+  // Tres hechos distintos: cuándo se intentó, cuándo funcionó por última vez, y
+  // qué error hay ahora. Un fallo actualiza el intento y el error, y deja
+  // intacto el último éxito — si no, la fuente parecería fresca justo cuando
+  // más falta le hace reintentar.
+  const successAt = status === 'ok' ? new Date().toISOString() : null;
   db.prepare(
-    `INSERT INTO sync_sources (user_id, source_key, last_run_at, last_status, last_error)
-     VALUES (?, ?, datetime('now'), ?, ?)
+    `INSERT INTO sync_sources (user_id, source_key, last_run_at, last_success_at, last_status, last_error)
+     VALUES (?, ?, datetime('now'), ?, ?, ?)
      ON CONFLICT(user_id, source_key) DO UPDATE SET
-       last_run_at = datetime('now'), last_status = excluded.last_status, last_error = excluded.last_error`
-  ).run(userId, key, status, error);
+       last_run_at = datetime('now'),
+       last_success_at = COALESCE(excluded.last_success_at, sync_sources.last_success_at),
+       last_status = excluded.last_status,
+       last_error = excluded.last_error`
+  ).run(userId, key, successAt, status, error);
 }
 
 function freshness(userId, source, now) {
   // El éxito vive en sync_log (la misma fila que alimenta el StalenessTag), no
-  // en una segunda verdad que pueda desincronizarse. `terms` es cálculo local y
-  // no escribe sync_log: su frescura sale de la última corrida registrada.
-  const syncedAt = source.needsPortal ? lastSync(source.key, { userId }) : readRow(userId, source.key)?.lastRunAt ?? null;
+  // en una segunda verdad que pueda desincronizarse. Las fuentes que no
+  // escriben sync_log —`terms`, que es cálculo local— caen en su última corrida
+  // registrada. El calendario sí escribe, y es compartido: va sin userId.
+  // Frescura = último ÉXITO, nunca último intento. Un fallo no rejuvenece nada.
+  const syncedAt =
+    lastSync(source.key, source.shared ? {} : { userId }) ?? readRow(userId, source.key)?.lastSuccessAt ?? null;
   const ageMs = syncedAt ? now - new Date(`${syncedAt.replace(' ', 'T')}${syncedAt.endsWith('Z') ? '' : 'Z'}`).getTime() : null;
   const expired = ageMs == null || ageMs >= source.ttlMs;
   return { syncedAt, ageMs, expired };
@@ -274,6 +305,7 @@ export function syncState(userId, { now = Date.now() } = {}) {
         expired,
         relevant,
         lastRunAt: row?.lastRunAt ?? null,
+        lastSuccessAt: syncedAt,
         lastStatus: row?.lastStatus ?? null,
         error: row?.lastError ?? null,
       };

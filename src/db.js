@@ -796,7 +796,11 @@ export function deleteAllUserData(userId) {
   clearPersonalData(userId);
   db.exec('BEGIN');
   try {
-    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions', 'push_subscriptions']) {
+    // sync_sources va acá y no en PERSONAL_TABLES porque no es un dato del
+    // portal: es el bookkeeping de cuándo se consultó. Dejarlo vivo después de
+    // un borrado haría que el control de sincronización siguiera diciendo
+    // "actualizado hace 2h" sobre tablas ya vacías.
+    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions', 'push_subscriptions', 'sync_sources']) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
     }
     db.prepare('DELETE FROM sync_log WHERE user_id = ?').run(userId);

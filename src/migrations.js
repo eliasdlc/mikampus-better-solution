@@ -129,6 +129,47 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 6,
+    name: 'academic-calendar',
+    // Tabla nueva y compartida: el calendario oficial no es de nadie en
+    // particular, es público. Una app v1..v5 la ignora, así que el rollback es
+    // seguro. No lleva user_id porque no hay nada personal acá — es justamente
+    // la única fuente del producto que no sale de la cuenta de la persona.
+    minCompatibleVersion: 1,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS academic_calendar (
+          event_id   TEXT PRIMARY KEY,
+          title      TEXT NOT NULL,
+          starts_on  TEXT NOT NULL,
+          ends_on    TEXT NOT NULL,
+          url        TEXT,
+          source_url TEXT NOT NULL,
+          fetched_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_academic_calendar_dates ON academic_calendar(starts_on, ends_on);
+      `);
+    },
+  },
+  {
+    version: 7,
+    name: 'sync-source-last-success',
+    // `last_run_at` respondía "¿cuándo se intentó?" y se estaba usando también
+    // para "¿cuándo funcionó?". No son lo mismo: con esa confusión, una fuente
+    // que falla queda marcada como recién corrida y no se reintenta hasta que
+    // venza su TTL — justo al revés de lo que debería pasar. Se separan.
+    minCompatibleVersion: 1,
+    up(db) {
+      if (!tableExists(db, 'sync_sources')) return;
+      const columns = db.prepare('PRAGMA table_info(sync_sources)').all();
+      if (columns.some((column) => column.name === 'last_success_at')) return;
+      db.exec('ALTER TABLE sync_sources ADD COLUMN last_success_at TEXT');
+      // Una fila existente solo pudo haberse escrito con éxito o con error; las
+      // que quedaron en 'ok' conservan su instante como último éxito conocido.
+      db.exec("UPDATE sync_sources SET last_success_at = last_run_at WHERE last_status = 'ok'");
+    },
+  },
 ];
 
 // Las columnas que guardan el IDENTIFICADOR resuelto de un ciclo (STRM si se

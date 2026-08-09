@@ -28,12 +28,19 @@ function stubAll({ failing = new Set() } = {}) {
       orchestrator.setSourceRunner(source.key, async () => {
         calls.push(source.key);
         if (failing.has(source.key)) throw new Error(`falla simulada de ${source.key}`);
-        logSync({ userId: USER, kind: source.key, status: 'ok' });
+        // Las fuentes compartidas (el calendario oficial) registran su sync sin
+        // usuario: el dato es institucional, no de nadie.
+        logSync({ userId: source.shared ? null : USER, kind: source.key, status: 'ok' });
         return { detail: 'ok' };
       })
     );
   }
 }
+
+// Las que de verdad salen a PeopleSoft. El calendario académico NO está acá: es
+// una página pública y por eso sigue funcionando sin sesión, que es justo lo
+// que lo hace útil cuando la credencial venció.
+const PORTAL_KEYS = orchestrator.SOURCES.filter((source) => source.needsPortal).map((source) => source.key);
 
 function statusOf(results, key) {
   return results.find((entry) => entry.key === key);
@@ -65,11 +72,16 @@ try {
   assert.equal(statusOf(sinSesion, 'terms').status, 'updated', 'lo que no necesita portal sigue corriendo');
   assert.equal(calls.filter((key) => key === 'mySchedule').length, 0, 'una pausa no ejecuta la operación');
 
-  // Repetir no genera un loop de reintentos: mismo resultado, cero llamadas.
+  assert.ok(
+    calls.includes('academicCalendar'),
+    'el calendario es público: sin sesión de PeopleSoft sigue actualizándose'
+  );
+
+  // Repetir no genera un loop de reintentos contra el portal.
   const antes = calls.length;
   await orchestrator.runSync(USER, { force: true, emit: () => {} });
   assert.equal(
-    calls.slice(antes).filter((key) => key !== 'terms').length,
+    calls.slice(antes).filter((key) => PORTAL_KEYS.includes(key)).length,
     0,
     'sin sesión no se martilla el portal en cada pasada'
   );
@@ -127,6 +139,29 @@ try {
   const filaNotas = estadoTrasFallo.sources.find((source) => source.key === 'grades');
   assert.equal(filaNotas.lastStatus, 'error');
   assert.match(filaNotas.error, /falla simulada/);
+  // El intento queda registrado, pero el éxito anterior no se pisa: los datos
+  // cacheados de notas siguen siendo tan frescos como cuando llegaron.
+  assert.ok(filaNotas.lastRunAt, 'el intento fallido queda registrado');
+  assert.ok(filaNotas.lastSuccessAt, 'el último éxito real se conserva');
+
+  // El invariante que importa: una fuente que NUNCA tuvo éxito no puede quedar
+  // "fresca" por haber fallado. Si un fallo contara como corrida, se quedaría
+  // rota todo su TTL sin reintentar nunca. Se prueba con `terms`, que no
+  // escribe sync_log y por lo tanto depende solo de este bookkeeping.
+  while (restores.length) restores.pop()();
+  db.prepare('DELETE FROM sync_sources').run();
+  db.prepare('DELETE FROM sync_log').run();
+  restores.push(orchestrator.setSessionProbe(() => true));
+  stubAll({ failing: new Set(['terms']) });
+  await orchestrator.runSync(USER, { force: true, emit: () => {} });
+  const ciclosRotos = orchestrator.syncState(USER).sources.find((source) => source.key === 'terms');
+  assert.equal(ciclosRotos.lastStatus, 'error');
+  assert.equal(ciclosRotos.lastSuccessAt, null, 'un fallo no inventa un éxito');
+  assert.equal(ciclosRotos.expired, true, 'una fuente que nunca funcionó sigue vencida');
+
+  calls.length = 0;
+  await orchestrator.runSync(USER, { emit: () => {} });
+  assert.ok(calls.includes('terms'), 'sin force, una fuente que nunca funcionó se reintenta');
 
   // ── Una inscripción en curso manda sobre todo lo demás ───────────────────
   while (restores.length) restores.pop()();
@@ -145,6 +180,10 @@ try {
   assert.equal(statusOf(durante, 'cart').status, 'paused', 'el carrito no se refresca durante un submit');
   assert.ok(!calls.includes('cart'), 'ninguna acción mutante extra llega al portal durante la inscripción');
   assert.ok(!calls.includes('mySchedule'), 'ni siquiera una lectura se encola delante del submit');
+  assert.ok(
+    calls.includes('academicCalendar'),
+    'un fetch a una página pública no le quita el turno a la inscripción, así que no cede'
+  );
 
   // Un disparo inminente (todavía pending) tiene la misma prioridad.
   db.prepare("UPDATE schedules SET state = 'pending', at_iso = ? WHERE user_id = ?").run(

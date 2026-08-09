@@ -46,6 +46,7 @@ import { exportDiagnostics, listDiagnostics } from './diagnostics.js';
 import { checkForUpdate, setUpdatePolicy } from './updates.js';
 import { requireScraperMutationSupport } from './scraperSupport.js';
 import { pendingSync, runSync, startSyncLoop, stopSyncLoop, syncState } from './syncOrchestrator.js';
+import { readCalendar } from './academicCalendar.js';
 
 const DIST_DIR = resourcePath('public', 'dist');
 const app = express();
@@ -809,6 +810,14 @@ app.get('/api/pensum/codes', (req, res) => {
     .all(req.userId)
     .map((r) => r.code);
   res.json({ codes: [...new Set([...reqCodes, ...enrolled])] });
+});
+
+// El calendario académico oficial. Sale de SQLite (<10ms) y trae su antigüedad:
+// si el último fetch falló, la pantalla muestra lo cacheado diciendo de cuándo
+// es, en vez de quedarse vacía.
+app.get('/api/academic-calendar', (req, res) => {
+  const limit = Number(req.query.limit);
+  res.json(readCalendar({ limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 5 }));
 });
 
 app.get('/api/holds', (req, res) => {

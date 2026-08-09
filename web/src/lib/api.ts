@@ -663,12 +663,37 @@ const syncStateSchema = z.object({
       expired: z.boolean(),
       relevant: z.boolean(),
       lastRunAt: z.string().nullable(),
+      lastSuccessAt: z.string().nullable(),
       lastStatus: z.string().nullable(),
       error: z.string().nullable(),
     })
   ),
 });
 export type SyncState = z.infer<typeof syncStateSchema>;
+
+// ── Calendario académico oficial (P3) ───────────────────────────────────────
+// Fechas públicas de PUCMM, cacheadas en SQLite. No es PeopleSoft y no lleva
+// datos personales: es lo mismo que ve cualquiera en la web de la universidad.
+
+const academicCalendarSchema = z.object({
+  events: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      startsOn: z.string(),
+      endsOn: z.string(),
+      url: z.string().nullable(),
+      sourceUrl: z.string(),
+    })
+  ),
+  total: z.number(),
+  syncedAt: z.string().nullable(),
+});
+export type AcademicCalendar = z.infer<typeof academicCalendarSchema>;
+
+export async function fetchAcademicCalendar(limit = 5): Promise<AcademicCalendar> {
+  return academicCalendarSchema.parse(await getJSON(`/api/academic-calendar?limit=${limit}`));
+}
 
 export async function fetchSyncState(): Promise<SyncState> {
   return syncStateSchema.parse(await getJSON('/api/sync'));
