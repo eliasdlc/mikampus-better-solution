@@ -268,7 +268,12 @@ export function Builder({
         </ul>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
+      {/* Sin candidatas no hay dos columnas que balancear: la etapa se colapsa a
+          una sola. Antes la grilla semanal se dibujaba igual —catorce filas de
+          horas vacías ocupando media pantalla al lado de un párrafo de dos
+          líneas—, y el resultado se leía como una pantalla rota en vez de como
+          una pantalla que todavía no empezó. */}
+      <div className={`grid gap-6 ${candidates.length > 0 ? 'lg:grid-cols-[380px_minmax(0,1fr)]' : ''}`}>
         <section className="space-y-3">
           {catalogQ.data && (
             <CourseSearchBox
@@ -280,9 +285,13 @@ export function Builder({
           )}
 
           {candidates.length === 0 ? (
-            <p className="text-muted text-sm">
-              Sin candidatas todavía: cargá un plan o buscá materias arriba.
-            </p>
+            <div className="border-line text-muted rounded-[var(--radius)] border border-dashed p-6 text-center">
+              <p className="text-fg text-sm">Todavía no elegiste qué cursar</p>
+              <p className="mx-auto mt-1 max-w-sm text-xs">
+                Buscá una materia arriba o volvé a la etapa <span className="text-fg">Plan</span> y cargá uno: acá
+                elegís el grupo de cada una y el horario se arma solo.
+              </p>
+            </div>
           ) : (
             <ul className="space-y-2">
               {candidates.map((course) => (
@@ -345,7 +354,7 @@ export function Builder({
           {saveToPlan.error && <p className="text-closed text-xs">{(saveToPlan.error as Error).message}</p>}
         </section>
 
-        <section className="min-w-0 space-y-4">
+        <section className={`min-w-0 space-y-4 ${candidates.length === 0 ? 'hidden' : ''}`}>
           <WeeklyGrid blocks={blocks} animate />
 
           {suggesting && combos && (

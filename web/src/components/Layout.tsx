@@ -129,8 +129,16 @@ export function Layout({ children }: { children: ReactNode }) {
       </header>
 
       {/* ── Desktop: la barra lateral de siempre ───────────────────────────
-          print:hidden — la navegación no existe en papel (plan §5.5). */}
-      <aside className="border-line bg-surface hidden print:hidden md:flex md:h-screen md:flex-col md:items-stretch md:border-r md:px-4 md:py-5">
+          print:hidden — la navegación no existe en papel (plan §5.5).
+
+          sticky + self-start: la barra medía una pantalla de alto, pero como
+          era una celda normal del grid se iba con el scroll de la página, y en
+          Notas o en el carrito largo la navegación desaparecía justo cuando
+          hacía falta. `self-start` es obligatorio: sin él el grid estira la
+          celda a todo el alto de la fila y sticky no tiene contra qué pegarse.
+          El overflow propio es para el caso de una pantalla baja, donde el
+          contenido de la barra no entra en 100vh. */}
+      <aside className="border-line bg-surface hidden print:hidden md:sticky md:top-0 md:flex md:h-screen md:self-start md:overflow-y-auto md:flex-col md:items-stretch md:border-r md:px-4 md:py-5">
         <div className="mb-4 flex items-center gap-2">
           <span className="font-display text-lg font-semibold tracking-tight">mikampus</span>
         </div>
