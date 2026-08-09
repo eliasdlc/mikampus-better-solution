@@ -570,9 +570,18 @@ export const requirementGroupSchema: z.ZodType<RequirementGroup> = z.lazy(() =>
   })
 );
 
+// La llave es `user_id`, no `id`: la tabla `profile` dejó de ser la fila única
+// `id = 1` cuando pasó a tener un perfil por usuario (ver la migración en
+// src/db.js). El esquema se quedó pidiendo el `id` viejo, así que el server
+// devolvía una fila perfectamente válida y Zod la rechazaba en el browser:
+// /academico y /trayectoria morían con "No se pudo leer lo guardado".
+//
+// `id` sigue aceptado como opcional para no romper una respuesta servida por
+// una versión anterior del agente que todavía no migró.
 export const profileSchema = z
   .object({
-    id: z.number(),
+    user_id: z.number(),
+    id: z.number().optional(),
     career: z.string().nullable(),
     pensum_no: z.string().nullable(),
     plan_label: z.string().nullable(),
