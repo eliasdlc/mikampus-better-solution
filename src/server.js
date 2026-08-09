@@ -4,7 +4,7 @@ import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
-import { readCatalog, seatHistory } from './peoplesoft/catalog.js';
+import { readCatalog, seatHistory, syncCatalogCourse, applyPlanCredits } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
 import { readTerms, reconcileTerms, planningTerm } from './terms.js';
@@ -33,7 +33,7 @@ import { startCatalogCron, stopCatalogCron } from './cron.js';
 import { readEnrollmentWindows, syncEnrollmentWindows } from './peoplesoft/enrollmentWindows.js';
 import { dropClass } from './peoplesoft/dropClass.js';
 import { startBackupCron, stopBackupCron } from './backups.js';
-import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js';
+import { recommendationForTerm, recommendationOptions, planForUser, STRATEGIES, DEFAULT_MAX_CREDITS } from './recommendations.js';
 import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
 import { acquireAgentLock, agentHealthAuthorized, recordRuntimeStart, recordRuntimeStop, releaseAgentLock } from './runtime.js';
 import { resourcePath } from './paths.js';
@@ -453,6 +453,38 @@ app.get('/api/catalog', (req, res) => {
   res.set('ETag', etag);
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
   res.json(readCatalog(term));
+});
+
+// "Ver más grupos": trae del portal TODAS las secciones de UNA materia en un
+// ciclo y las persiste en el catálogo local. El catálogo se llena por barridos
+// de subject que son caros y espaciados, así que lo que la UI muestra es
+// siempre una foto vieja: faltan los grupos abiertos después del último
+// barrido, que en inscripción son justo los que importan.
+//
+// Es una sola navegación (syncCatalogCourse, el mismo camino del watcher), no
+// un árbol de prefijos: se puede disparar desde la UI sin quemar el
+// presupuesto. Devuelve la materia ya releída del catálogo para que la
+// pantalla se repinte con los grupos nuevos sin un round-trip extra.
+app.post('/api/catalog/course/sync', async (req, res) => {
+  const term = req.body?.term ? String(req.body.term) : null;
+  const courseCode = req.body?.courseCode ? String(req.body.courseCode).trim().toUpperCase() : '';
+  const career = req.body?.career ? String(req.body.career) : 'GRDO';
+  if (!term || !courseCode) {
+    return res.status(400).json({ error: 'Faltan term o courseCode' });
+  }
+  try {
+    const { saved } = await withPage(req.userId, (page) =>
+      syncCatalogCourse(page, { term, career, courseCode })
+    );
+    const course = readCatalog(term).courses.find((entry) => entry.code === courseCode) ?? null;
+    scheduler.emitEvent({
+      type: 'log',
+      message: `${courseCode}: ${course?.sections.length ?? 0} grupo(s) en el portal para ${term}`,
+    });
+    res.json({ term, courseCode, saved, course });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 // Términos que la DB local conoce, ya resueltos contra hoy: cuál ciclo corre
@@ -987,11 +1019,31 @@ app.post('/api/search/add', async (req, res) => {
 // Los errores de src/plans.js son de datos del usuario (plan inexistente,
 // materia duplicada, sección de otro término) → 400 con el mensaje tal cual.
 
+// Los controles del recomendador viajan por query/body y NO se persisten: son
+// una pregunta ("¿y si tomo 12 créditos y dejo Física para después?"), no una
+// configuración. Lista separada por comas para que la URL siga siendo
+// compartible y el estado de la pantalla viva ahí.
+function recommendationOptionsFrom(source) {
+  const codes = (value) =>
+    String(value ?? '')
+      .split(',')
+      .map((code) => code.trim().toUpperCase())
+      .filter(Boolean);
+  const strategy = STRATEGIES.includes(source?.strategy) ? source.strategy : 'ponerse-al-dia';
+  return {
+    maxCredits: source?.maxCredits ?? DEFAULT_MAX_CREDITS,
+    strategy,
+    include: codes(source?.include),
+    exclude: codes(source?.exclude),
+  };
+}
+
+// Las DOS propuestas del ciclo (ponerse al día / avanzar) con el porqué de cada
+// materia y, sobre todo, lo que NO se puede proponer y por qué falta.
 app.get('/api/recommendation', (req, res) => {
   try {
     const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
-    const maxCredits = req.query.maxCredits ?? DEFAULT_MAX_CREDITS;
-    res.json(recommendationForTerm(req.userId, term, maxCredits));
+    res.json(recommendationOptions(req.userId, term, recommendationOptionsFrom(req.query)));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -1000,7 +1052,7 @@ app.get('/api/recommendation', (req, res) => {
 app.post('/api/recommendation/plan', (req, res) => {
   try {
     const term = planningTerm(req.body?.term ? String(req.body.term) : null, latestScheduledTerm(req.userId));
-    const proposal = recommendationForTerm(req.userId, term, req.body?.maxCredits ?? DEFAULT_MAX_CREDITS);
+    const proposal = recommendationForTerm(req.userId, term, recommendationOptionsFrom(req.body));
     if (!proposal.schedule.valid || proposal.recommendations.length === 0) {
       throw new Error(proposal.caveats[0] ?? 'No hay una combinación recomendada para este ciclo');
     }
@@ -1296,6 +1348,14 @@ try {
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);
+  // El catálogo del portal llega sin créditos; el plan académico oficial los
+  // tiene. Se completan al arrancar para que todo lo que se mide en créditos
+  // deje de valer cero.
+  const plan = planForUser(LOCAL_USER_ID);
+  if (plan) {
+    const filled = applyPlanCredits(plan);
+    if (filled) console.log(`[catálogo] créditos completados desde el plan ${plan.plan}: ${filled} materia(s)`);
+  }
   // Apagado salvo que CATALOG_CRON_AT diga a qué hora (ver src/cron.js).
   startCatalogCron();
   startBackupCron();

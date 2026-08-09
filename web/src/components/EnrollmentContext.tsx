@@ -254,8 +254,15 @@ export function EnrollmentContext({
           />
           <Check ok={cartRows > 0} label={cartRows > 0 ? `${cartRows} materia(s) en el carrito` : 'El carrito está vacío'} />
         </ul>
+        {/* Esto decía que los prerrequisitos eran incognoscibles. Dejó de ser
+            cierto: salen del plan académico oficial y el recomendador los
+            aplica. Lo que sigue sin poder hacerse es validarlos contra ESTE
+            carrito, porque el carrito puede traer materias que el plan no
+            conoce — y prometer una verificación que no existe es peor que
+            decir dónde sí está. */}
         <p className="text-muted text-xs">
-          Los prerrequisitos no aparecen acá: PeopleSoft no los publica en ninguna pantalla que podamos leer.
+          Los prerrequisitos se revisan al armar el plan recomendado, no acá: el carrito puede traer materias que el
+          plan académico no lista.
         </p>
         <button
           type="button"

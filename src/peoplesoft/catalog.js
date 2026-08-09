@@ -137,6 +137,30 @@ export function saveSection(s, { source = 'class-search' } = {}) {
   return sectionId;
 }
 
+// El Class Search no publica créditos: de 907 materias del catálogo real, 900
+// llegan con credits en null. Eso deja sin sentido todo lo que se mide en
+// créditos —la carga máxima del recomendador, el total de un plan, el "X cr"
+// del buscador— justo donde el estudiante decide.
+//
+// El plan académico oficial SÍ los trae, y es la fuente más autoritativa que
+// existe (los emite la Dirección del Registro). Se copian al catálogo una vez
+// al arrancar, y solo donde falta el dato: nunca se pisa un crédito que el
+// portal haya llegado a informar.
+const fillCreditsStmt = db.prepare(`
+  UPDATE courses SET credits = ?, updated_at = datetime('now')
+  WHERE code = ? AND credits IS NULL
+`);
+
+export function applyPlanCredits(plan) {
+  if (!plan?.courses) return 0;
+  let filled = 0;
+  for (const rule of Object.values(plan.courses)) {
+    if (rule.units == null || !Number.isFinite(rule.units)) continue;
+    filled += fillCreditsStmt.run(rule.units, rule.code).changes;
+  }
+  return filled;
+}
+
 // ── Historia de cupo ───────────────────────────────────────────────────────
 // La serie que el watcher y el catálogo vienen escribiendo desde el principio.
 // Se lee acotada por ventana y por sección: son las secciones que le importan a

@@ -271,11 +271,16 @@ export type PlanToCartResult = z.infer<typeof planToCartResultSchema>;
 // La propuesta explica cada materia y ya trae la sección elegida por el solver.
 // Crear el plan persiste exactamente esta combinación después de recalcularla
 // en el server; el frontend nunca puede colar una sección arbitraria.
+// Ojo con los créditos: `positive()` era un bug, no una validación. Un
+// laboratorio de física vale 0 unidades DE VERDAD (así lo emite el plan
+// académico y así lo reporta el portal), y exigir > 0 hacía que la propuesta
+// entera fallara la validación justo cuando el recomendador acertaba al
+// incluirlo. Es `nonnegative()` en toda la cadena.
 export const recommendedAlternativeSchema = z.object({
   courseId: z.number().int(),
   code: z.string(),
   title: z.string(),
-  credits: z.number().positive(),
+  credits: z.number().nonnegative(),
   sections: z.number().int().positive(),
 });
 
@@ -283,7 +288,7 @@ export const recommendedCourseSchema = z.object({
   courseId: z.number().int(),
   code: z.string(),
   title: z.string(),
-  credits: z.number().positive(),
+  credits: z.number().nonnegative(),
   kind: z.enum(['obligatoria', 'electiva']),
   groupId: z.number().int(),
   groupLabel: z.string(),
@@ -291,15 +296,38 @@ export const recommendedCourseSchema = z.object({
   reason: z.string(),
   section: catalogSectionSchema,
   alternatives: z.array(recommendedAlternativeSchema),
+  // Cuántas materias del plan destraba aprobarla: es lo que separa una deuda
+  // cara de una barata.
+  unlocks: z.number().int().nonnegative().default(0),
+  // No null por gusto: dice que esta fila entró porque es co-requisito de otra
+  // (el laboratorio de su teoría), no porque se eligiera por sí misma.
+  requiredBy: z.string().nullable().default(null),
+  conditionalOn: z.array(z.string()).default([]),
 });
 export type RecommendedCourse = z.infer<typeof recommendedCourseSchema>;
+
+// Lo que NO se puede proponer y por qué. Suele ser más útil que la propuesta:
+// dice exactamente qué materia hay que aprobar para desatascar la carrera.
+export const blockedCourseSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+  periodLabel: z.string(),
+  reason: z.string(),
+  missing: z.array(z.string()),
+});
+export type BlockedCourse = z.infer<typeof blockedCourseSchema>;
+
+export const recommendationStrategySchema = z.enum(['ponerse-al-dia', 'avanzar']);
+export type RecommendationStrategy = z.infer<typeof recommendationStrategySchema>;
 
 export const recommendationResponseSchema = z.object({
   term: z.string(),
   generatedAt: z.string(),
+  strategy: recommendationStrategySchema.default('ponerse-al-dia'),
   maxCredits: z.number().positive(),
   totalCredits: z.number().nonnegative(),
   recommendations: z.array(recommendedCourseSchema),
+  blocked: z.array(blockedCourseSchema).default([]),
   schedule: z.object({
     valid: z.boolean(),
     adjusted: z.boolean(),
@@ -308,6 +336,18 @@ export const recommendationResponseSchema = z.object({
   caveats: z.array(z.string()),
 });
 export type RecommendationResponse = z.infer<typeof recommendationResponseSchema>;
+
+// Las dos propuestas del mismo ciclo. Cuál conviene no lo decide el algoritmo:
+// depende de si pesa más no arrastrar deudas o no atrasar la graduación.
+export const recommendationOptionsResponseSchema = z.object({
+  term: z.string().nullable(),
+  generatedAt: z.string(),
+  plan: z
+    .object({ code: z.string(), career: z.string().nullable(), issuedAt: z.string().nullable() })
+    .nullable(),
+  proposals: z.array(recommendationResponseSchema),
+});
+export type RecommendationOptionsResponse = z.infer<typeof recommendationOptionsResponseSchema>;
 
 // Carrito real (GET /api/cart), enriquecido: además del label crudo del portal,
 // el código canónico (color estable + cruce con el catálogo), el título del

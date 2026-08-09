@@ -2,10 +2,11 @@ import {
   appStateSchema,
   cartResponseSchema,
   catalogResponseSchema,
+  catalogCourseSchema,
   planDetailSchema,
   planSummarySchema,
   planToCartResultSchema,
-  recommendationResponseSchema,
+  recommendationOptionsResponseSchema,
   scheduleResponseSchema,
   termInfoSchema,
   termContextSchema,
@@ -34,7 +35,8 @@ import {
   type PlanDetail,
   type PlanSummary,
   type PlanToCartResult,
-  type RecommendationResponse,
+  type RecommendationOptionsResponse,
+  type RecommendationStrategy,
   type ScheduleResponse,
   type TermInfo,
   type TermContext,
@@ -124,6 +126,31 @@ export async function fetchState(): Promise<AppState> {
 
 export async function fetchCatalog(): Promise<CatalogResponse> {
   return catalogResponseSchema.parse(await getJSON('/api/catalog'));
+}
+
+// "Ver más grupos": relee UNA materia del portal y persiste sus secciones en el
+// catálogo local. Tarda segundos (es Playwright) y devuelve la materia ya
+// reconstruida desde disco, con todos sus grupos.
+const courseSyncResultSchema = z.object({
+  term: z.string(),
+  courseCode: z.string(),
+  saved: z.number(),
+  course: catalogCourseSchema.nullable(),
+});
+export type CourseSyncResult = z.infer<typeof courseSyncResultSchema>;
+
+export async function syncCourseSections(input: {
+  term: string;
+  courseCode: string;
+  career?: string | null;
+}): Promise<CourseSyncResult> {
+  return courseSyncResultSchema.parse(
+    await send('/api/catalog/course/sync', 'POST', {
+      term: input.term,
+      courseCode: input.courseCode,
+      career: input.career ?? 'GRDO',
+    })
+  );
 }
 
 // Mi Horario, desde cache. Ojo: /api/schedule es el scheduler de inscripción,
@@ -279,18 +306,45 @@ export async function fetchInsights(): Promise<InsightsResponse> {
   return insightsResponseSchema.parse(await getJSON('/api/insights'));
 }
 
-// ── Recomendador (/planner, Fase 9) ─────────────────────────────────────────
-export async function fetchRecommendation(term: string, maxCredits: number): Promise<RecommendationResponse> {
-  const qs = new URLSearchParams({ term, maxCredits: String(maxCredits) });
-  return recommendationResponseSchema.parse(await getJSON(`/api/recommendation?${qs}`));
+// ── Recomendador de ciclo ───────────────────────────────────────────────────
+// Devuelve las DOS propuestas (ponerse al día / avanzar) del mismo ciclo: cuál
+// conviene depende de si pesa más no arrastrar deudas o no atrasar la
+// graduación, y eso no lo decide el algoritmo.
+export type RecommendationControls = {
+  maxCredits: number;
+  include?: string[];
+  exclude?: string[];
+};
+
+function controlsToQuery(controls: RecommendationControls): Record<string, string> {
+  return {
+    maxCredits: String(controls.maxCredits),
+    ...(controls.include?.length ? { include: controls.include.join(',') } : {}),
+    ...(controls.exclude?.length ? { exclude: controls.exclude.join(',') } : {}),
+  };
 }
 
-export async function createRecommendedPlan(input: {
-  term: string;
-  maxCredits: number;
-  name?: string;
-}): Promise<PlanDetail> {
-  return planDetailSchema.parse(await send('/api/recommendation/plan', 'POST', input));
+export async function fetchRecommendation(
+  term: string,
+  controls: RecommendationControls
+): Promise<RecommendationOptionsResponse> {
+  const qs = new URLSearchParams({ term, ...controlsToQuery(controls) });
+  return recommendationOptionsResponseSchema.parse(await getJSON(`/api/recommendation?${qs}`));
+}
+
+export async function createRecommendedPlan(
+  input: { term: string; name?: string; strategy: RecommendationStrategy } & RecommendationControls
+): Promise<PlanDetail> {
+  return planDetailSchema.parse(
+    await send('/api/recommendation/plan', 'POST', {
+      term: input.term,
+      name: input.name,
+      strategy: input.strategy,
+      maxCredits: input.maxCredits,
+      include: input.include?.join(',') ?? '',
+      exclude: input.exclude?.join(',') ?? '',
+    })
+  );
 }
 
 // ── Notas, pénsum y holds ───────────────────────────────────────────────────

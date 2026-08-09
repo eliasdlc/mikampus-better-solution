@@ -25,7 +25,9 @@ import type {
   PlanDetail,
   PlanItem,
   PlanToCartResult,
+  RecommendationOptionsResponse,
   RecommendationResponse,
+  RecommendationStrategy,
   ScheduleCourse,
 } from '../../../src/shared/schemas.ts';
 import { sectionToBlocks } from '../lib/grid.ts';
@@ -120,7 +122,12 @@ export function Planner({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [recommendOpen, setRecommendOpen] = useState(false);
+  // Los controles del recomendador son una pregunta ("¿y si tomo 12 créditos y
+  // dejo Física para después?"), no una configuración: viven en la pantalla y
+  // no se persisten.
   const [maxCredits, setMaxCredits] = useState(18);
+  const [strategy, setStrategy] = useState<RecommendationStrategy>('ponerse-al-dia');
+  const [excluded, setExcluded] = useState<string[]>([]);
   const planId = activePlanId ?? selectedId ?? plansQ.data?.[0]?.id ?? null;
   const selectPlan = (id: number | null) => {
     setSelectedId(id);
@@ -165,11 +172,26 @@ export function Planner({
     termsQ.data?.find((term) => term.hasSections)?.term ??
     null;
   const recommendation = useMutation({
-    mutationFn: ({ term, load }: { term: string; load: number }) => fetchRecommendation(term, load),
+    mutationFn: ({ term, load, skip }: { term: string; load: number; skip: string[] }) =>
+      fetchRecommendation(term, { maxCredits: load, exclude: skip }),
   });
+  const runRecommendation = (overrides: { load?: number; skip?: string[] } = {}) => {
+    if (!recommendationTerm) return;
+    recommendation.mutate({
+      term: recommendationTerm,
+      load: overrides.load ?? maxCredits,
+      skip: overrides.skip ?? excluded,
+    });
+  };
   const createRecommended = useMutation({
-    mutationFn: ({ term, load }: { term: string; load: number }) =>
-      createRecommendedPlan({ term, maxCredits: load, name: 'Plan recomendado' }),
+    mutationFn: ({ term, load, skip, pick }: { term: string; load: number; skip: string[]; pick: RecommendationStrategy }) =>
+      createRecommendedPlan({
+        term,
+        maxCredits: load,
+        exclude: skip,
+        strategy: pick,
+        name: pick === 'avanzar' ? 'Plan recomendado (avanzar)' : 'Plan recomendado',
+      }),
     onSuccess: (detail) => {
       applyDetail(detail);
       // Esta mutación nace de ?recomendado=1. Actualizamos ambos parámetros
@@ -187,7 +209,7 @@ export function Planner({
   const openRecommendation = () => {
     if (!recommendationTerm) return;
     setRecommendOpen(true);
-    recommendation.mutate({ term: recommendationTerm, load: maxCredits });
+    runRecommendation();
   };
 
   // El Dashboard enlaza con ?recomendado=1 cuando el próximo ciclo no tiene
@@ -195,7 +217,8 @@ export function Planner({
   useEffect(() => {
     if (searchParams.get('recomendado') !== '1' || !recommendationTerm || recommendOpen) return;
     setRecommendOpen(true);
-    recommendation.mutate({ term: recommendationTerm, load: maxCredits });
+    runRecommendation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, recommendationTerm]);
   const duplicate = useMutation({
     mutationFn: () => duplicatePlan(planId!),
@@ -298,16 +321,29 @@ export function Planner({
 
       {recommendOpen && (
         <RecommendationPanel
-          proposal={recommendation.data ?? null}
+          options={recommendation.data ?? null}
+          strategy={strategy}
           maxCredits={maxCredits}
+          excluded={excluded}
           pending={recommendation.isPending}
           creating={createRecommended.isPending}
           error={(recommendation.error ?? createRecommended.error) as Error | null}
+          onStrategy={setStrategy}
           onMaxCredits={setMaxCredits}
-          onRecalculate={() => recommendationTerm && recommendation.mutate({ term: recommendationTerm, load: maxCredits })}
+          onToggleExcluded={(code) => {
+            const next = excluded.includes(code) ? excluded.filter((c) => c !== code) : [...excluded, code];
+            setExcluded(next);
+            runRecommendation({ skip: next });
+          }}
+          onRecalculate={() => runRecommendation()}
           onCreate={() =>
-            recommendation.data &&
-            createRecommended.mutate({ term: recommendation.data.term, load: recommendation.data.maxCredits })
+            recommendation.data?.term &&
+            createRecommended.mutate({
+              term: recommendation.data.term,
+              load: maxCredits,
+              skip: excluded,
+              pick: strategy,
+            })
           }
           onClose={() => {
             setRecommendOpen(false);
@@ -369,7 +405,11 @@ export function Planner({
         </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[400px_minmax(0,1fr)]">
-          <section className="space-y-3">
+          {/* min-w-0: en móvil esto es una grilla de una columna, y un item de
+              grilla no baja de su min-content salvo que se le diga. Sin esto la
+              columna se estiraba a lo que midiera la fila más larga del plan y
+              la pantalla entera scrolleaba 23px en horizontal. */}
+          <section className="min-w-0 space-y-3">
             <div className="flex items-baseline justify-between">
               <h2 className="text-sm font-medium">
                 {plan.items.length} materia(s) ·{' '}
@@ -457,61 +497,155 @@ export function Planner({
   );
 }
 
+const STRATEGY_TABS: { id: RecommendationStrategy; label: string; hint: string }[] = [
+  {
+    id: 'ponerse-al-dia',
+    label: 'Ponerme al día',
+    hint: 'Drena primero la deuda más vieja del pénsum, aunque no destrabe nada.',
+  },
+  {
+    id: 'avanzar',
+    label: 'Avanzar',
+    hint: 'Ataca primero las materias que más cosas destraban, para no atrasar la graduación.',
+  },
+];
+
 function RecommendationPanel({
-  proposal,
+  options,
+  strategy,
   maxCredits,
+  excluded,
   pending,
   creating,
   error,
+  onStrategy,
   onMaxCredits,
+  onToggleExcluded,
   onRecalculate,
   onCreate,
   onClose,
 }: {
-  proposal: RecommendationResponse | null;
+  options: RecommendationOptionsResponse | null;
+  strategy: RecommendationStrategy;
   maxCredits: number;
+  excluded: string[];
   pending: boolean;
   creating: boolean;
   error: Error | null;
+  onStrategy: (value: RecommendationStrategy) => void;
   onMaxCredits: (value: number) => void;
+  onToggleExcluded: (code: string) => void;
   onRecalculate: () => void;
   onCreate: () => void;
   onClose: () => void;
 }) {
+  const proposal: RecommendationResponse | null =
+    options?.proposals.find((item) => item.strategy === strategy) ?? options?.proposals[0] ?? null;
+
+  // Una materia y su laboratorio son UNA decisión académica repartida en dos
+  // inscripciones. Listarlos como dos filas sueltas es lo que hacía que se
+  // pudiera "quitar el lab" sin entender que eso invalida la materia entera.
+  const bundles = useMemo(() => {
+    if (!proposal) return [];
+    const leads = proposal.recommendations.filter((item) => item.requiredBy == null);
+    return leads.map((lead) => ({
+      lead,
+      attached: proposal.recommendations.filter((item) => item.requiredBy === lead.code),
+    }));
+  }, [proposal]);
+
   return (
-    <section className="border-line bg-surface overflow-hidden rounded-[var(--radius)] border">
+    // @container y no breakpoints de viewport: este panel vive anidado dentro de
+    // dos columnas (el workspace de inscripción y el planner), así que a 1440px
+    // de pantalla mide 600px. Con `lg:` creía tener sitio de sobra, partía en dos
+    // columnas y el porqué de cada materia terminaba a una palabra por línea.
+    <section className="@container border-line bg-surface overflow-hidden rounded-[var(--radius)] border">
       <div className="border-line relative border-b px-4 py-3 pr-20">
-        <div>
-          <p className="text-muted text-xs font-medium tracking-wide uppercase">Lectura de tu pénsum</p>
-          <h2 className="font-display mt-0.5 text-xl font-semibold tracking-tight">Plan recomendado</h2>
-          <p className="text-muted mt-1 max-w-2xl text-sm">
-            Prioriza el período pendiente más viejo y conserva solo materias que caben juntas.
-          </p>
-        </div>
+        <p className="text-muted text-xs font-medium tracking-wide uppercase">
+          {options?.plan
+            ? `Plan ${options.plan.code}${options.plan.issuedAt ? ` · emitido ${options.plan.issuedAt}` : ''}`
+            : 'Lectura de tu pénsum'}
+        </p>
+        <h2 className="font-display mt-0.5 text-xl font-semibold tracking-tight">Plan recomendado</h2>
+        <p className="text-muted mt-1 max-w-2xl text-sm">
+          Cruza el plan académico oficial con lo que ya aprobaste: respeta prerrequisitos, nunca separa una materia de
+          su laboratorio, y solo propone lo que cabe en un horario real.
+        </p>
         <button type="button" onClick={onClose} className="text-muted hover:text-fg absolute top-2 right-2 min-h-11 px-2 text-sm">
           cerrar
         </button>
       </div>
 
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-        <div>
+      {/* Las dos propuestas: cuál conviene no lo decide el algoritmo. */}
+      <div className="border-line border-b px-4 py-2.5">
+        <div className="border-line flex w-full gap-1 rounded-[var(--radius)] border p-1 sm:w-fit" role="tablist">
+          {STRATEGY_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={strategy === tab.id}
+              onClick={() => onStrategy(tab.id)}
+              className={`flex-1 rounded-[calc(var(--radius)-2px)] px-3 py-1.5 text-sm transition-colors duration-100 sm:flex-none ${
+                strategy === tab.id ? 'bg-accent text-accent-fg font-medium' : 'text-muted hover:bg-surface-2 hover:text-fg'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-muted mt-1.5 text-xs">{STRATEGY_TABS.find((t) => t.id === strategy)?.hint}</p>
+      </div>
+
+      <div className="grid gap-4 p-4 @3xl:grid-cols-[minmax(0,1fr)_240px]">
+        <div className="min-w-0">
           {pending ? (
-            <p className="text-muted py-4 text-sm">Cruzando requisitos, oferta y horarios…</p>
-          ) : proposal?.recommendations.length ? (
+            <p className="text-muted py-4 text-sm">Cruzando plan académico, requisitos, oferta y horarios…</p>
+          ) : bundles.length ? (
             <ol className="border-line divide-line divide-y rounded-[var(--radius)] border">
-              {proposal.recommendations.map((item) => (
-                <li key={`${item.groupId}-${item.code}`} className="grid gap-2 px-3 py-3 sm:grid-cols-[minmax(0,220px)_1fr]">
-                  <CourseChip code={item.code} title={item.title} size="sm" />
-                  <div className="min-w-0">
-                    <p className="text-sm">{item.reason}</p>
-                    <p className="text-muted tabular mt-1 font-mono text-xs">
-                      {item.section.section ?? item.section.classNbr} · {meetingSummary(item.section)}
-                    </p>
-                    {item.kind === 'electiva' && item.alternatives.length > 0 && (
-                      <p className="text-muted mt-1 text-xs">
-                        Alternativas: {item.alternatives.map((alt) => `${alt.title} (${alt.code})`).join(' · ')}
+              {bundles.map(({ lead, attached }) => (
+                <li key={`${lead.groupId}-${lead.code}`} className="px-3 py-3">
+                  <div className="grid gap-2 @lg:grid-cols-[minmax(0,200px)_minmax(0,1fr)]">
+                    <div>
+                      <CourseChip code={lead.code} title={lead.title} size="sm" />
+                      {lead.unlocks > 0 && (
+                        <p className="text-muted mt-1 text-xs">destraba {lead.unlocks} materia(s)</p>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm">{lead.reason}</p>
+                      <p className="text-muted tabular mt-1 font-mono text-xs">
+                        {lead.section.section ?? lead.section.classNbr} · {meetingSummary(lead.section)}
                       </p>
-                    )}
+                      {lead.conditionalOn.length > 0 && (
+                        <p className="text-waitlist mt-1 text-xs">
+                          Cuenta con que apruebes {lead.conditionalOn.join(' y ')}, que estás cursando ahora.
+                        </p>
+                      )}
+                      {/* El laboratorio va anidado bajo su teoría: son una sola
+                          materia y quitarle una mitad la invalida entera. */}
+                      {attached.map((extra) => (
+                        <div key={extra.code} className="border-line mt-2 border-l-2 pl-2.5">
+                          <CourseChip code={extra.code} title={extra.title} size="sm" />
+                          <p className="text-muted tabular mt-0.5 font-mono text-xs">
+                            {extra.section.section ?? extra.section.classNbr} · {meetingSummary(extra.section)}
+                          </p>
+                          <p className="text-muted mt-0.5 text-xs">{extra.reason}</p>
+                        </div>
+                      ))}
+                      {lead.kind === 'electiva' && lead.alternatives.length > 0 && (
+                        <p className="text-muted mt-1 text-xs">
+                          Alternativas: {lead.alternatives.map((alt) => `${alt.title} (${alt.code})`).join(' · ')}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onToggleExcluded(lead.code)}
+                        className="text-muted hover:text-fg mt-1.5 text-xs underline underline-offset-2"
+                      >
+                        No la quiero este ciclo
+                      </button>
+                    </div>
                   </div>
                 </li>
               ))}
@@ -522,15 +656,64 @@ function RecommendationPanel({
             </p>
           )}
 
-          {proposal?.schedule.adjusted && (
+          {proposal && proposal.schedule.omitted.length > 0 && (
             <div className="border-waitlist/35 bg-waitlist/5 mt-3 rounded-[var(--radius)] border px-3 py-2 text-sm">
-              Se redujo la propuesta para evitar choques. {proposal.schedule.omitted.length} requisito(s) quedaron fuera.
+              <p className="font-medium">Quedaron fuera de este ciclo</p>
+              <ul className="mt-1 space-y-0.5 text-xs">
+                {proposal.schedule.omitted.map((item) => (
+                  <li key={item.code}>
+                    <span className="tabular font-mono">{item.code}</span> — {item.reason}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
+
+          {/* Lo que NO se puede cursar y por qué. Suele ser lo más útil de la
+              pantalla: dice exactamente qué aprobar para desatascar la carrera. */}
+          {proposal && proposal.blocked.length > 0 && (
+            <div className="border-line mt-3 rounded-[var(--radius)] border">
+              <p className="border-line border-b px-3 py-2 text-sm font-medium">
+                Todavía no podés cursarlas ({proposal.blocked.length})
+              </p>
+              <ul className="divide-line divide-y">
+                {proposal.blocked.map((item) => (
+                  <li key={item.code} className="px-3 py-2">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="tabular font-mono text-xs font-medium">{item.code}</span>
+                      <span className="text-sm">{item.title}</span>
+                      <span className="text-muted text-xs">· {item.periodLabel}</span>
+                    </div>
+                    <p className="text-muted mt-0.5 text-xs">{item.reason}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {excluded.length > 0 && (
+            <div className="border-line mt-3 rounded-[var(--radius)] border border-dashed px-3 py-2">
+              <p className="text-muted text-xs">Descartadas por vos para este ciclo:</p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {excluded.map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => onToggleExcluded(code)}
+                    className="border-line hover:bg-surface-2 tabular rounded-full border px-2.5 py-1 font-mono text-xs"
+                  >
+                    {code} <span aria-hidden>×</span>
+                    <span className="sr-only">volver a considerar</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {error && <p className="text-closed mt-2 text-sm">{error.message}</p>}
         </div>
 
-        <aside className="border-line space-y-3 border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-4">
+        <aside className="border-line space-y-3 border-t pt-4 @3xl:border-t-0 @3xl:border-l @3xl:pt-0 @3xl:pl-4">
           <label className="block text-sm font-medium">
             Carga máxima
             <span className="mt-1 flex items-center gap-2">
