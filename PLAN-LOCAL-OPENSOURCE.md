@@ -13,9 +13,13 @@
 - **Fecha de última actualización:** 2026-07-22
 - **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
   `feat/open-source-ready` queda preservada tras el merge de Fase 0.
-- **Fase en curso:** Fase 7 — pulido de utilidad aprobado y pendiente de ejecución. La
-  implementación local de Fase 6 está terminada, pero publicación y validación de tag quedan
-  bloqueadas hasta cerrar P0–P6 de [`PLAN-PULIDO-UTILIDAD.md`](./PLAN-PULIDO-UTILIDAD.md).
+- **Fase en curso:** ninguna. Fase 7 cerró con P0–P6 de
+  [`PLAN-PULIDO-UTILIDAD.md`](./PLAN-PULIDO-UTILIDAD.md) completas, y con eso se
+  desbloquearon y se ejecutaron los gates de validación de Fases 5 y 6 que
+  estaban esperando ese cierre. Lo único pendiente es **publicar**, que no es
+  una tarea del plan sino una decisión del operador: configurar el environment
+  protegido del repositorio y crear el primer tag. Nada de eso se hizo desde un
+  checkout local.
 - **Cierre de implementación de Fase 5:** se genera un tarball standalone Linux x64 con
   runtime Node, installer/uninstaller, SHA-256, SBOM, procedencia y notices; el
   flujo de smoke definido cubre first-run, stop/start, upgrade y preservación de
@@ -77,6 +81,22 @@
   targets quedan explícitamente fuera hasta tener smoke nativo y resolver P3. `npm pack
   --dry-run` contiene sólo runtime, SPA y avisos, no fixtures/recon/tests/hosted.
 
+- **Validación de Fases 5 y 6 (post-P6):** con el gate de utilidad cerrado se
+  ejecutó la batería completa de release en local, toda en verde:
+  `build:production`, `smoke:package` (SPA, SQLite en app-data, payload
+  mínimo), `smoke:distribution` (archive, checksum, first-run, stop/start,
+  upgrade y uninstall preservando datos), `smoke:npm-package` (86 archivos,
+  runtime y avisos, sin source ni fixtures, `npx` verde),
+  `smoke:lifecycle` (primer uso sin terminal, origen ajeno rechazado),
+  `test:release-manifest`, `audit:public` y `audit:history` (154 revisiones).
+  El smoke responsive se reparó —llevaba fallando desde `7131332` y dependía
+  del estado local de la máquina— y ahora cubre 7 rutas × 390/768/1440 px con
+  fixtures sintéticos.
+
+  **Lo que queda es del operador, no del plan:** el environment protegido de
+  GitHub es una configuración del repositorio y el primer tag es una decisión
+  de publicación. Ninguna de las dos se ejecuta desde acá.
+
 - **Cierre de Fase 4:** el primer uso corre sin terminal (modo con garantías,
   prerequisitos, browser con progreso y recién después la credencial) y una barra
   permanente publica agente, watcher, gap, backoff, próxima acción, vencimiento de
@@ -99,9 +119,9 @@
 | 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ✅ Hecho |
 | 3 | Spike de empaquetado y build de producción | ✅ Hecho |
 | 4 | Onboarding, notificaciones y ciclo de vida de datos | ✅ Hecho |
-| 5 | Distribución (instaladores/binarios + npm) | 🟨 En curso |
-| 6 | CI de releases, documentación y landing | 🟨 En curso |
-| 7 | Pulido de utilidad para lanzamiento (P0–P6) | 🟨 En curso |
+| 5 | Distribución (instaladores/binarios + npm) | ✅ Validada (sin publicar) |
+| 6 | CI de releases, documentación y landing | ✅ Validada (sin publicar) |
+| 7 | Pulido de utilidad para lanzamiento (P0–P6) | ✅ Hecho |
 
 Leyenda: ⬜ pendiente · 🟨 en curso · ✅ hecho.
 
