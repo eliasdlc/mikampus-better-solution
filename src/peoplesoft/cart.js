@@ -101,6 +101,71 @@ export async function getCartStatus(page) {
   return enrichCartRows(await frame.evaluate(extractCartRows));
 }
 
+// ── Quitar una materia del carrito ──────────────────────────────────────────
+//
+// Cada fila del carrito trae su propio botón de borrar: <a id="P_DELETE$N">,
+// con el índice de la fila (ver fixtures/recon-cart.html). El índice NO es
+// estable entre cargas —si sacás la fila 1, la que era 2 pasa a ser 1— así que
+// el que manda es el NRC: se relee el carrito en vivo y se busca la fila cuyo
+// classNbr coincide. Borrar por índice recibido del browser era la forma
+// segura de sacar la materia equivocada.
+//
+// Sacar del carrito NO es dar de baja: el carrito es una lista de intenciones,
+// no matrícula. Por eso esto no exige el ritual de confirmación de dropClass.
+export async function removeFromCart(page, { classNbr, courseCode, onStep = () => {} }) {
+  if (!classNbr && !courseCode) throw new Error('Hace falta el NRC o el código de la materia para quitarla del carrito');
+
+  onStep(`abriendo el carrito para quitar ${courseCode ?? `NRC ${classNbr}`}…`);
+  await page.goto(CART_URL, { waitUntil: 'commit' });
+  await page.waitForTimeout(5_000);
+
+  let frame = contentFrame(page);
+  const rows = enrichCartRows(await frame.evaluate(extractCartRows));
+  const target = rows.find((row) =>
+    classNbr ? String(row.classNbr) === String(classNbr) : row.courseCode === courseCode
+  );
+  if (!target) {
+    throw new Error(`${courseCode ?? `NRC ${classNbr}`} ya no está en el carrito del portal`);
+  }
+
+  // Las filas atadas (un práctico ligado a su teórica) no tienen botón propio:
+  // el portal las saca junto con la fila que las manda. Decirlo es mejor que
+  // fallar con "no encontré el botón".
+  const deleteLink = frame.locator(`[id="P_DELETE$${target.index}"]`);
+  if ((await deleteLink.count()) === 0) {
+    throw new Error(
+      `PeopleSoft no ofrece quitar ${target.courseCode ?? target.classLabel} por separado: se quita junto con la sección a la que está ligada`
+    );
+  }
+
+  onStep(`quitando ${target.courseCode ?? target.classLabel}…`);
+  await deleteLink.click();
+  await page.waitForTimeout(6_000);
+
+  // Algunas instalaciones intercalan una confirmación; otras borran de una. Se
+  // acepta cualquiera de las dos en vez de asumir la que vimos en el recon.
+  frame = contentFrame(page);
+  const confirm = frame.locator('input[value="Yes"], input[value="Sí"], input[value="OK"], input[value="Delete"]');
+  if ((await confirm.count()) > 0) {
+    await confirm.first().click();
+    await page.waitForTimeout(6_000);
+    frame = contentFrame(page);
+  }
+
+  // La verdad es el carrito releído, no el click: si el portal ignoró la
+  // acción, esto lo detecta acá en vez de dejar la UI mostrando una fila que
+  // sigue existiendo del otro lado.
+  const after = enrichCartRows(await frame.evaluate(extractCartRows));
+  const stillThere = after.some((row) =>
+    classNbr ? String(row.classNbr) === String(classNbr) : row.courseCode === courseCode
+  );
+  if (stillThere) {
+    throw new Error(`PeopleSoft no quitó ${target.courseCode ?? target.classLabel} del carrito`);
+  }
+
+  return { removed: target, rows: after };
+}
+
 // Capabilities del wizard, contra fixtures/recon-cart-phase85-step{1,2}.html.
 // Es deliberadamente un parser separado de las filas: responde qué decisiones
 // ofrece PeopleSoft, no qué estados pinta como leyenda.

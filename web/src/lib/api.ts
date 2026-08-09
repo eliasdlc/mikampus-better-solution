@@ -105,6 +105,13 @@ export async function syncCart(): Promise<CartResponse> {
   return cartResponseSchema.parse(await send('/api/cart/sync', 'POST'));
 }
 
+// Quita una fila del carrito EN EL PORTAL: son segundos de Playwright, no una
+// edición local. El NRC manda sobre el índice de la fila porque el índice se
+// renumera en cuanto sale una materia.
+export async function removeCartRow(input: { classNbr?: string | null; courseCode?: string | null }): Promise<CartResponse> {
+  return cartResponseSchema.parse(await send('/api/cart/remove', 'POST', input));
+}
+
 export async function validateCart(): Promise<CartValidationResponse> {
   return cartValidationResponseSchema.parse(await send('/api/cart/validate', 'POST'));
 }
@@ -198,8 +205,17 @@ export function setWatcher(input: {
   term?: string;
   consent?: boolean;
   scope?: WatcherScope;
+  intervalMs?: number;
 }) {
   return send('/api/watch', 'POST', input);
+}
+
+// Solo el ritmo. Va por PATCH y no por POST porque cambiar cada cuánto se
+// consulta no enciende nada ni pide autorización nueva: se puede ajustar con el
+// watcher apagado y queda guardado para la próxima vez que lo prendas.
+export async function setWatcherInterval(intervalMs: number): Promise<AppState> {
+  const data = await send('/api/watch', 'PATCH', { intervalMs });
+  return appStateSchema.parse((data as { state: unknown }).state);
 }
 export function enrollNow() {
   return send('/api/enroll', 'POST');
@@ -705,12 +721,18 @@ const syncStateSchema = z.object({
   now: z.string(),
   running: z.boolean(),
   hold: z.string().nullable(),
+  // El techo global de frescura: nada scrapeado se queda más viejo que esto.
+  // `ms: 0` significa que cada fuente conserva su propia frescura natural.
+  interval: z
+    .object({ ms: z.number(), defaultMs: z.number(), minMs: z.number(), maxMs: z.number() })
+    .default({ ms: 3_600_000, defaultMs: 3_600_000, minMs: 900_000, maxMs: 86_400_000 }),
   sources: z.array(
     z.object({
       key: z.string(),
       label: z.string(),
       dependsOn: z.array(z.string()),
       ttlMs: z.number(),
+      naturalTtlMs: z.number().default(0),
       needsPortal: z.boolean(),
       syncedAt: z.string().nullable(),
       ageMs: z.number().nullable(),
@@ -806,6 +828,14 @@ export async function setClassReminders(input: { enabled?: boolean; leadMinutes?
 
 export async function fetchSyncState(): Promise<SyncState> {
   return syncStateSchema.parse(await getJSON('/api/sync'));
+}
+
+// Cada cuánto se considera vieja la información traída de PeopleSoft. No sale
+// al portal: mueve la línea a partir de la cual el próximo tick del agente sí
+// lo hará. `0` deja a cada fuente con su frescura natural.
+export async function setSyncInterval(intervalMs: number): Promise<SyncState> {
+  const data = await send('/api/sync', 'PATCH', { intervalMs });
+  return syncStateSchema.parse((data as { state: unknown }).state);
 }
 
 /**

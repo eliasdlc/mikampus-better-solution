@@ -2,7 +2,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
-import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
+import { readCart, removeFromCart, saveCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readCatalog, seatHistory, syncCatalogCourse, applyPlanFacts } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
@@ -46,7 +46,7 @@ import { erasePreview, eraseLocalArtifacts } from './erase.js';
 import { exportDiagnostics, listDiagnostics } from './diagnostics.js';
 import { checkForUpdate, setUpdatePolicy } from './updates.js';
 import { requireScraperMutationSupport } from './scraperSupport.js';
-import { pendingSync, runSync, startSyncLoop, stopSyncLoop, syncState } from './syncOrchestrator.js';
+import { pendingSync, runSync, setSyncIntervalMs, startSyncLoop, stopSyncLoop, syncState } from './syncOrchestrator.js';
 import { readCalendar } from './academicCalendar.js';
 import { seatTrend, describeTrend } from './shared/seatTrend.ts';
 import { setReminderSettings, reminderStatus, startClassReminders, stopClassReminders } from './classReminders.js';
@@ -377,6 +377,18 @@ app.get('/api/sync', (req, res) => {
   res.json(syncState(req.userId));
 });
 
+// Cada cuánto se considera vieja la información scrapeada. Es un techo sobre la
+// frescura declarada por cada fuente, no un disparo: cambiarlo no sale al
+// portal, solo mueve la línea a partir de la cual el próximo tick lo hará.
+app.patch('/api/sync', (req, res) => {
+  try {
+    setSyncIntervalMs(req.body?.intervalMs);
+    res.json({ state: syncState(req.userId) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // `force` incluye las fuentes vigentes; no evade consentimiento ni prioridad.
 // `keys` acota a un subconjunto y arrastra sus dependencias.
 app.post('/api/sync', async (req, res) => {
@@ -405,6 +417,51 @@ app.post('/api/cart/sync', async (req, res) => {
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el carrito: ${err.message}` });
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Quitar una materia del carrito. Escribe en el portal, así que pasa por el
+// mismo gate que agregar e inscribir, y queda en el historial de acciones: todo
+// lo que mikampus cambia de tu lado allá afuera se puede auditar después.
+app.post('/api/cart/remove', async (req, res) => {
+  const { classNbr = null, courseCode = null } = req.body ?? {};
+  if (!classNbr && !courseCode) {
+    return res.status(400).json({ error: 'Faltan classNbr o courseCode' });
+  }
+  try {
+    requireScraperMutationSupport();
+    const { removed, rows } = await withPage(req.userId, (page) =>
+      removeFromCart(page, {
+        classNbr,
+        courseCode,
+        onStep: (message) => scheduler.emitEvent({ type: 'log', message }),
+      })
+    );
+    saveCart(req.userId, rows);
+    logAction({
+      userId: req.userId,
+      action: 'remove-from-cart',
+      detail: `${removed.courseCode ?? removed.classLabel}${removed.classNbr ? ` · NRC ${removed.classNbr}` : ''}`,
+      response: 'quitada del carrito',
+      ok: true,
+    });
+    const cart = readCart(req.userId);
+    scheduler.emitEvent({ type: 'cart-status', rows: cart.rows, syncedAt: cart.syncedAt });
+    scheduler.emitEvent({
+      type: 'log',
+      message: `${removed.courseCode ?? removed.classLabel} quitada del carrito`,
+    });
+    res.json(cart);
+  } catch (err) {
+    logAction({
+      userId: req.userId,
+      action: 'remove-from-cart',
+      detail: courseCode ?? `NRC ${classNbr}`,
+      response: err.message,
+      ok: false,
+    });
+    scheduler.emitEvent({ type: 'log', message: `No se pudo quitar del carrito: ${err.message}` });
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -1250,7 +1307,12 @@ app.post('/api/watch', (req, res) => {
       term,
       consent = false,
       scope = scheduler.DEFAULT_WATCHER_SCOPE,
+      intervalMs,
     } = req.body ?? {};
+    // El ritmo se aplica antes de arrancar para que el primer tick ya use el
+    // valor nuevo, y también cuando se apaga: quedarse con la preferencia
+    // guardada es lo esperable al volver a encenderlo.
+    if (intervalMs !== undefined) scheduler.setWatcherTickMs(intervalMs);
     if (enabled) {
       if (!scheduler.WATCHER_SCOPES.includes(scope)) throw new Error(`Alcance de watcher desconocido: ${scope}`);
       if (autoEnroll) requireScraperMutationSupport();
@@ -1275,6 +1337,19 @@ app.post('/api/watch', (req, res) => {
       revokeUnattendedCredentialIfUnused(req.userId);
     }
     res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Solo el ritmo, sin tocar el encendido ni la autorización. Cambiar cada cuánto
+// se consulta no eleva permisos —no guarda credencial ni habilita
+// auto-inscripción—, así que no tiene por qué pasar por el consentimiento que
+// exige encender el watcher.
+app.patch('/api/watch', (req, res) => {
+  try {
+    const tickMs = scheduler.setWatcherTickMs(req.body?.intervalMs);
+    res.json({ ok: true, intervalMs: tickMs, state: scheduler.getState(req.userId) });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

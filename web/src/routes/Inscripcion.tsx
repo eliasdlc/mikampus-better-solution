@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ClipboardList, LayoutGrid, ShoppingCart, Zap, type LucideIcon } from 'lucide-react';
+import { ClipboardList, LayoutGrid, ShoppingCart, Trash2, Zap, type LucideIcon } from 'lucide-react';
 import {
   fetchCart,
   syncCart,
@@ -11,6 +11,9 @@ import {
   fetchPensum,
   fetchSeatTrends,
   fetchMySchedule,
+  fetchEnrollmentWindows,
+  fetchHolds,
+  removeCartRow,
 } from '../lib/api.ts';
 import type { CartRow, CatalogCourse, TermInfo } from '../../../src/shared/schemas.ts';
 import { sectionToBlocks, hasCollisions, type Block } from '../lib/grid.ts';
@@ -47,6 +50,75 @@ const STAGES: { id: Stage; label: string; short: string; icon: LucideIcon; hint:
 
 function isStage(value: string | null): value is Stage {
   return value === 'plan' || value === 'grupos' || value === 'carrito';
+}
+
+// ── Cuándo se puede someter ─────────────────────────────────────────────────
+//
+// Inscribir es la acción más importante de la app y hasta ahora el botón
+// simplemente NO SE RENDERIZABA cuando algo no cuadraba: la pantalla más
+// crítica no tenía su acción principal y no decía por qué. Un botón ausente no
+// enseña nada; uno deshabilitado que dice qué falta, sí.
+//
+// La distinción que importa es entre lo que PeopleSoft va a rechazar (no tiene
+// sentido gastar la navegación) y lo que solo es un mal resultado previsible
+// (se avisa, se confirma, y se somete igual: la decisión es del estudiante).
+type Gate =
+  | { can: false; reason: string; detail: string | null }
+  | { can: true; warn: string | null };
+
+function enrollmentGate(input: {
+  rows: number;
+  holds: number;
+  windowStartsAt: string | null;
+  windowEndsAt: string | null;
+  windowPrecision: 'date' | 'datetime' | null;
+  hasWindowData: boolean;
+  hasCollision: boolean;
+  hasClosedSection: boolean;
+  now: number;
+}): Gate {
+  if (input.rows === 0) {
+    return { can: false, reason: 'El carrito está vacío', detail: 'Agregá al menos una materia antes de someter.' };
+  }
+  if (input.holds > 0) {
+    return {
+      can: false,
+      reason: `Tenés ${input.holds} hold(s) activos`,
+      detail: 'PeopleSoft bloquea la inscripción con holds abiertos. Resolvelos primero.',
+    };
+  }
+
+  // Una ventana con precisión de día abre a una hora que el portal no publica:
+  // no se puede afirmar que ya cerró el primer día ni que abrió a medianoche.
+  // Por eso el borde de apertura solo bloquea con precisión de hora.
+  if (input.windowStartsAt && input.windowEndsAt) {
+    const opens = new Date(input.windowStartsAt).getTime();
+    const closes = new Date(input.windowEndsAt).getTime();
+    if (input.windowPrecision === 'datetime' && input.now < opens) {
+      return {
+        can: false,
+        reason: 'Todavía no abre el período de inscripción',
+        detail: `Abre el ${new Date(opens).toLocaleString('es-DO')}.`,
+      };
+    }
+    if (input.now > closes) {
+      return {
+        can: false,
+        reason: 'El período de inscripción cerró',
+        detail: `Cerró el ${new Date(closes).toLocaleDateString('es-DO')}. PeopleSoft ya no acepta cambios de este ciclo.`,
+      };
+    }
+  }
+
+  const avisos = [
+    !input.hasWindowData
+      ? 'Todavía no leíste el período de inscripción de este ciclo: si no es tu fecha, PeopleSoft va a rechazar el envío.'
+      : null,
+    input.hasCollision ? 'Hay secciones que chocan en el horario: el portal va a rechazar al menos una.' : null,
+    input.hasClosedSection ? 'Hay secciones llenas: se someten igual y el portal responde materia por materia.' : null,
+  ].filter(Boolean);
+
+  return { can: true, warn: avisos.length ? avisos.join(' ') : null };
 }
 
 // El carrito enriquecido trae horario por fila: se proyecta en el WeeklyGrid
@@ -102,11 +174,38 @@ export function Inscripcion() {
     enabled: Boolean(termId),
   });
 
+  // Las dos señales que deciden si someter tiene sentido. Comparten queryKey
+  // con la columna contextual, así que esto no agrega ni una consulta: React
+  // Query sirve la misma respuesta a los dos.
+  const holds = useQuery({ queryKey: ['holds'], queryFn: fetchHolds });
+  const windows = useQuery({
+    queryKey: ['enrollment-windows', termId],
+    queryFn: () => fetchEnrollmentWindows(termId),
+    enabled: Boolean(termId),
+  });
+
   const discovery = useTermDiscovery();
-  const enroll = useMutation({ mutationFn: enrollNow });
+  const enroll = useMutation({
+    mutationFn: enrollNow,
+    // Someter cambia tu matrícula: el horario inscrito y el carrito dejan de
+    // ser lo que esta pantalla tiene cacheado en el mismo instante.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cart'] });
+      qc.invalidateQueries({ queryKey: ['my-schedule'] });
+      qc.invalidateQueries({ queryKey: ['state'] });
+    },
+  });
   const refresh = useMutation({
     mutationFn: syncCart,
     onSuccess: (fresh) => qc.setQueryData(['cart'], fresh),
+  });
+
+  // Qué fila se está quitando: el spinner va en SU botón, no en toda la lista.
+  const [removing, setRemoving] = useState<string | null>(null);
+  const remove = useMutation({
+    mutationFn: removeCartRow,
+    onSuccess: (fresh) => qc.setQueryData(['cart'], fresh),
+    onSettled: () => setRemoving(null),
   });
 
   const patchParams = (changes: Record<string, string | null>) => {
@@ -140,8 +239,36 @@ export function Inscripcion() {
   const blocks = useMemo(() => cartBlocks(rows), [rows]);
   const hasClosedSection = rows.some((row) => row.status === 'closed');
   const hasCollision = hasCollisions(blocks);
-  const isLive = enroll.isPending || refresh.isPending;
-  const readyToSubmit = rows.length > 0 && !hasClosedSection && !hasCollision;
+  const isLive = enroll.isPending || refresh.isPending || remove.isPending;
+
+  const enrollmentWindow = windows.data?.windows[0] ?? null;
+  const gate = enrollmentGate({
+    rows: rows.length,
+    holds: holds.data?.holds.length ?? 0,
+    windowStartsAt: enrollmentWindow?.startsAt ?? null,
+    windowEndsAt: enrollmentWindow?.endsAt ?? null,
+    windowPrecision: enrollmentWindow?.precision ?? null,
+    hasWindowData: Boolean(enrollmentWindow),
+    hasCollision,
+    hasClosedSection,
+    now: Date.now(),
+  });
+
+  // Someter con un problema conocido se puede, pero no por accidente: el aviso
+  // se lee y se acepta. Sin problemas, el click somete directo — pedir confirmar
+  // lo que ya está bien solo entrena a confirmar sin leer.
+  const submit = () => {
+    if (!gate.can || enroll.isPending) return;
+    if (gate.warn && !window.confirm(`${gate.warn}\n\n¿Someter el carrito igual?`)) return;
+    enroll.mutate();
+  };
+
+  const removeRow = (row: CartRow) => {
+    const name = row.courseCode ?? row.classLabel;
+    if (!window.confirm(`Quitar ${name}${row.classNbr ? ` (NRC ${row.classNbr})` : ''} del carrito en PeopleSoft?`)) return;
+    setRemoving(String(row.index));
+    remove.mutate({ classNbr: row.classNbr, courseCode: row.courseCode });
+  };
 
   // El ritmo de cupo de MIS secciones. Sale de la serie que la app ya venía
   // guardando: el portal dice cuántos asientos hay ahora, esto dice cuántos
@@ -243,7 +370,13 @@ export function Inscripcion() {
 
       <LiveOpBanner
         active={isLive}
-        message={enroll.isPending ? 'Ejecutando inscripción del carrito en PeopleSoft…' : 'Leyendo el carrito en PeopleSoft…'}
+        message={
+          enroll.isPending
+            ? 'Ejecutando inscripción del carrito en PeopleSoft…'
+            : remove.isPending
+              ? 'Quitando la materia del carrito en PeopleSoft…'
+              : 'Leyendo el carrito en PeopleSoft…'
+        }
       />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -283,20 +416,31 @@ export function Inscripcion() {
               )}
 
               <section className="border-line bg-surface rounded-[var(--radius)] border">
+                {/* El botón vive acá y SIEMPRE está: es la acción principal de
+                    la pantalla. Cuando no se puede someter se muestra apagado
+                    con el motivo debajo, en vez de desaparecer y dejar la
+                    pantalla más importante sin su acción. */}
                 <header className="border-line flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
-                  <h2 className="text-sm font-medium">Carrito</h2>
-                  {readyToSubmit && (
-                    <button
-                      type="button"
-                      disabled={enroll.isPending}
-                      onClick={() => enroll.mutate()}
-                      className="bg-accent text-accent-fg flex min-h-9 items-center gap-2 rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:opacity-50"
-                    >
-                      <Zap className="size-4" aria-hidden />
-                      Inscribir ahora
-                    </button>
-                  )}
+                  <div>
+                    <h2 className="text-sm font-medium">Carrito</h2>
+                    {!gate.can && <p className="text-waitlist mt-0.5 text-xs">{gate.reason}</p>}
+                    {gate.can && gate.warn && <p className="text-waitlist mt-0.5 text-xs">Se puede someter, con reparos</p>}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!gate.can || enroll.isPending}
+                    onClick={submit}
+                    title={gate.can ? (gate.warn ?? 'Somete el carrito a PeopleSoft') : `${gate.reason}. ${gate.detail ?? ''}`}
+                    className="bg-accent text-accent-fg flex min-h-9 items-center gap-2 rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Zap className={`size-4 ${enroll.isPending ? 'animate-pulse' : ''}`} aria-hidden />
+                    {enroll.isPending ? 'Sometiendo…' : 'Inscribir ahora'}
+                  </button>
                 </header>
+
+                {!gate.can && gate.detail && (
+                  <p className="text-muted border-line border-b px-4 py-2 text-xs">{gate.detail}</p>
+                )}
 
                 {cart.isPending ? (
                   <p className="text-muted p-4 text-sm">Leyendo el carrito…</p>
@@ -335,6 +479,23 @@ export function Inscripcion() {
                               'Sin horario'}
                           </span>
                           {row.status && <SeatBadge status={row.status} />}
+                          {/* Quitar del carrito no es darse de baja: el carrito
+                              es una lista de intenciones, no matrícula. Por eso
+                              alcanza con una confirmación y no con el ritual de
+                              escribir el código que exige soltar un cupo. */}
+                          <button
+                            type="button"
+                            onClick={() => removeRow(row)}
+                            disabled={remove.isPending}
+                            aria-label={`Quitar ${row.courseCode ?? row.classLabel} del carrito`}
+                            title="Quitar del carrito"
+                            className="tap text-muted hover:text-closed disabled:opacity-40"
+                          >
+                            <Trash2
+                              className={`size-4 ${removing === String(row.index) ? 'animate-pulse' : ''}`}
+                              aria-hidden
+                            />
+                          </button>
                         </span>
                         {/* Lo que el portal no puede decirte: cómo venía este
                             cupo. mikampus lo sabe porque lo viene anotando. */}
@@ -377,6 +538,9 @@ export function Inscripcion() {
               {blocks.length > 0 && <WeeklyGrid blocks={blocks} />}
 
               {enroll.error && <p className="text-closed text-sm">{(enroll.error as Error).message}</p>}
+              {remove.error && (
+                <p className="text-closed text-sm">No se pudo quitar del carrito: {(remove.error as Error).message}</p>
+              )}
             </>
           )}
 
