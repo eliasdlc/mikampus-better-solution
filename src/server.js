@@ -8,7 +8,7 @@ import { readCatalog } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
 import { readTerms, reconcileTerms, planningTerm } from './terms.js';
-import { fetchGrades, saveGrades, readGrades, termSummaries, diffPublishedGrades } from './peoplesoft/grades.js';
+import { fetchGrades, saveGrades, readGrades, termSummaries, diffPublishedGrades, readOfficialTotals } from './peoplesoft/grades.js';
 import {
   fetchAdvisement,
   readPensum,
@@ -21,6 +21,7 @@ import {
 import { fetchHolds, saveHolds, readHolds } from './peoplesoft/holds.js';
 import { summarizeGrades, projectFinalGpa } from './shared/gpa.ts';
 import { computeInsights } from './shared/insights.ts';
+import { buildProjection, creditsInProgressFor } from './shared/projection.ts';
 import { db, lastSync, deleteAllUserData, logAction, readActions } from './db.js';
 import { getUser, LOCAL_USER_ID } from './users.js';
 import * as auth from './auth.js';
@@ -746,9 +747,26 @@ function goalsContext(userId) {
 function goalsResponse(userId) {
   const ctx = goalsContext(userId);
   const hasBasis = ctx.summary.unitsTowardGpa > 0 || ctx.remainingCredits > 0;
+
+  // Los dos horizontes de P5. "Al cerrar este ciclo" solo cuenta los créditos en
+  // curso DEL CICLO ACTUAL: sumar todo lo en curso mezclaba cuatrimestres y era
+  // lo que inflaba el mejor caso. Y si el acumulado reconstruido no reconcilia
+  // con el que publica PeopleSoft, `horizons` vuelve sin números — la UI no
+  // tiene que acordarse de esconderlos.
+  const current = readTerms().current;
+  const courses = readGrades(userId);
+  const horizons = buildProjection({
+    official: readOfficialTotals(userId),
+    reconstructed: ctx.summary,
+    currentTermCredits: creditsInProgressFor(courses, current?.label ?? null),
+    remainingCredits: ctx.remainingCredits,
+    currentTermLabel: current?.label ?? null,
+  });
+
   return {
     goals: goals.evaluateGoals(goals.listGoals(userId), ctx),
     projection: hasBasis ? projectFinalGpa(ctx.summary, ctx.remainingCredits) : null,
+    horizons,
     basedOn: {
       gpa: ctx.summary.gpa,
       unitsTowardGpa: ctx.summary.unitsTowardGpa,

@@ -3,7 +3,8 @@
 
 import assert from 'node:assert/strict';
 import {
-  gpaTrend,
+  recentChange,
+  rollingTrend,
   areaPerformance,
   loadVsResult,
   repeatedCourses,
@@ -20,20 +21,25 @@ const subiendo = [
   term('Abril 2025', '2025-04', 2.8, 15),
   term('Septiembre 2025', '2025-09', 3.2, 15),
 ];
-const t = gpaTrend(subiendo);
-assert.equal(t.kind, 'gpa-trend');
+const t = rollingTrend(subiendo);
+assert.equal(t.kind, 'rolling-trend');
 assert.equal(t.direction, 'rising');
 assert.ok(Math.abs(t.delta - 0.7) < 1e-9, 'delta = 3.2 − 2.5');
 assert.equal(t.points.length, 3);
 
-assert.equal(gpaTrend(subiendo.slice(0, 2)), null, 'dos términos no son tendencia');
+assert.equal(rollingTrend(subiendo.slice(0, 2)), null, 'dos términos no son tendencia');
+
+// El cambio reciente es otra señal y tiene su propio umbral: dos ciclos bastan.
+const cambio = recentChange(subiendo.slice(0, 2));
+assert.ok(cambio, 'con dos ciclos ya hay cambio reciente');
+assert.equal(cambio.kind, 'recent-change');
 assert.equal(
-  gpaTrend([term('a', '2025-01', 3.0, 15), term('b', '2025-04', 3.05, 15), term('c', '2025-09', 3.02, 15)]).direction,
+  rollingTrend([term('a', '2025-01', 3.0, 15), term('b', '2025-04', 3.05, 15), term('c', '2025-09', 3.02, 15)]).direction,
   'flat',
   'un movimiento menor a un decimal es plano'
 );
 // Un término en curso (gpa null) no cuenta y no dispara la señal por sí solo.
-assert.equal(gpaTrend([...subiendo.slice(0, 2), term('curso', '2026-01', null, 0)]), null);
+assert.equal(rollingTrend([...subiendo.slice(0, 2), term('curso', '2026-01', null, 0)]), null);
 
 // ── Rendimiento por área ─────────────────────────────────────────────────────
 const areas = [
@@ -119,6 +125,6 @@ assert.deepEqual(pocas, [], 'sin datos suficientes, cero señales (nada de conse
 
 const varias = computeInsights(subiendo, [...areas, ...historial]);
 const kinds = varias.map((s) => s.kind);
-assert.ok(kinds.includes('gpa-trend') && kinds.includes('area-performance') && kinds.includes('repeated-courses'));
+assert.ok(kinds.includes('rolling-trend') && kinds.includes('area-performance') && kinds.includes('repeated-courses'));
 
 console.log('✓ señales: tendencia/área/carga/repetidas/retiradas, cada una respeta su umbral de datos');

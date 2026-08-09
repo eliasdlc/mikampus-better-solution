@@ -595,9 +595,45 @@ export type GoalEvaluation = z.infer<typeof goalEvaluationSchema>;
 // Metas + proyección viajan juntas: la UI las muestra en el mismo panel y una
 // mutación de meta refresca ambas. basedOn dice sobre cuántos créditos al índice
 // se calcula todo, para que el número no salga sin su base.
+// Los dos horizontes de P5, con su reconciliación. `currentTerm` y `graduation`
+// vienen en null cuando el acumulado reconstruido no cuadra con el que publica
+// PeopleSoft: la UI no esconde el número, es que no existe.
+const horizonSchema = z.object({
+  id: z.enum(['current-term', 'graduation']),
+  label: z.string(),
+  baseline: z.number().nullable(),
+  baselineUnits: z.number(),
+  futureCredits: z.number(),
+  assumedAverage: z.number(),
+  exact: z.number().nullable(),
+  asPublished: z.number().nullable(),
+});
+
+const horizonScenariosSchema = z.object({
+  best: horizonSchema,
+  maintain: horizonSchema,
+  floor: horizonSchema,
+});
+
+export const projectionReportSchema = z.object({
+  reconciliation: z.object({
+    status: z.enum(['match', 'mismatch', 'unknown']),
+    official: z.number().nullable(),
+    reconstructed: z.number().nullable(),
+    difference: z.number().nullable(),
+    precision: z.number(),
+    explanation: z.string(),
+  }),
+  currentTerm: horizonScenariosSchema.nullable(),
+  graduation: horizonScenariosSchema.nullable(),
+  formula: z.string(),
+});
+export type ProjectionReport = z.infer<typeof projectionReportSchema>;
+
 export const goalsResponseSchema = z.object({
   goals: z.array(goalEvaluationSchema),
   projection: gpaProjectionSchema.nullable(),
+  horizons: projectionReportSchema,
   basedOn: z.object({
     gpa: z.number().nullable(),
     unitsTowardGpa: z.number(),
@@ -612,15 +648,37 @@ export type GoalsResponse = z.infer<typeof goalsResponseSchema>;
 const areaStatSchema = z.object({ subject: z.string(), gpa: z.number(), count: z.number().int() });
 const loadStatSchema = z.object({ avgGpa: z.number(), avgCredits: z.number(), terms: z.number().int() });
 
+// Los metadatos que ordenan las señales (P5 §7) viajan con cada una: la UI
+// pinta por severidad y agrupa por prioridad sin recalcular nada.
+const insightMetaShape = {
+  severity: z.enum(['risk', 'watch', 'info']),
+  recency: z.enum(['current', 'recent', 'historical']),
+  actionability: z.enum(['act', 'consider', 'context']),
+  confidence: z.enum(['high', 'medium', 'low']),
+};
+
+const termPointSchema = z.object({ term: z.string(), gpa: z.number() });
+
 export const insightSchema = z.discriminatedUnion('kind', [
+  // El cambio reciente y la tendencia son señales distintas a propósito: se
+  // puede venir subiendo tres ciclos y haber caído el último.
   z.object({
-    kind: z.literal('gpa-trend'),
+    kind: z.literal('recent-change'),
+    direction: z.enum(['up', 'down', 'flat']),
+    delta: z.number(),
+    from: termPointSchema,
+    to: termPointSchema,
+    ...insightMetaShape,
+  }),
+  z.object({
+    kind: z.literal('rolling-trend'),
     direction: z.enum(['rising', 'falling', 'flat']),
     delta: z.number(),
-    points: z.array(z.object({ term: z.string(), gpa: z.number() })),
+    points: z.array(termPointSchema),
+    ...insightMetaShape,
   }),
-  z.object({ kind: z.literal('area-performance'), best: areaStatSchema, worst: areaStatSchema }),
-  z.object({ kind: z.literal('load-vs-result'), heavy: loadStatSchema, light: loadStatSchema }),
+  z.object({ kind: z.literal('area-performance'), best: areaStatSchema, worst: areaStatSchema, ...insightMetaShape }),
+  z.object({ kind: z.literal('load-vs-result'), heavy: loadStatSchema, light: loadStatSchema, ...insightMetaShape }),
   z.object({
     kind: z.literal('repeated-courses'),
     courses: z.array(
@@ -629,8 +687,14 @@ export const insightSchema = z.discriminatedUnion('kind', [
         attempts: z.array(z.object({ term: z.string().nullable(), grade: z.string().nullable() })),
       })
     ),
+    ...insightMetaShape,
   }),
-  z.object({ kind: z.literal('withdrawn-courses'), count: z.number().int(), codes: z.array(z.string()) }),
+  z.object({
+    kind: z.literal('withdrawn-courses'),
+    count: z.number().int(),
+    codes: z.array(z.string()),
+    ...insightMetaShape,
+  }),
 ]);
 export type Insight = z.infer<typeof insightSchema>;
 

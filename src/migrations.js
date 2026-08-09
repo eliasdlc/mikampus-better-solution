@@ -189,6 +189,28 @@ export const MIGRATIONS = [
       if (!columns.includes('meetings_source')) db.exec('ALTER TABLE sections ADD COLUMN meetings_source TEXT');
     },
   },
+  {
+    version: 9,
+    name: 'official-gpa',
+    // El acumulado que PUBLICA PeopleSoft se leía en cada sync y se tiraba: solo
+    // sobrevivía como texto en un mensaje de error si no cuadraba. Sin él
+    // guardado no se puede usar como baseline de una proyección ni mostrar la
+    // reconciliación, que es justo lo que P5 exige antes de proyectar nada.
+    minCompatibleVersion: 1,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS gpa_official (
+          user_id          INTEGER PRIMARY KEY,
+          gpa              REAL,
+          units_toward_gpa REAL,
+          grade_points     REAL,
+          units_passed     REAL,
+          term_label       TEXT,
+          captured_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
 
 // Las columnas que guardan el IDENTIFICADOR resuelto de un ciclo (STRM si se
