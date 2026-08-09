@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   CalendarDays,
-  CalendarRange,
   ChartLine,
   GraduationCap,
   House,
@@ -16,11 +15,13 @@ import { CommandPalette } from './CommandPalette.tsx';
 import { AgentStatusBar } from './AgentStatus.tsx';
 import { SyncControl } from './SyncControl.tsx';
 
-// La navegación nombra las seis tareas, no las pantallas que el proyecto fue
+// La navegación nombra las tareas, no las pantallas que el proyecto fue
 // acumulando. Buscar, holds y elegir grupos siguen existiendo donde se usan.
+// Planear salió de la navegación primaria: planificar e inscribirse eran el
+// mismo trabajo partido en dos, y mantenerlos separados obligaba a llevar dos
+// contextos de ciclo en la cabeza. Ahora es la primera etapa de /inscripcion.
 const NAV: Array<{ to: string; label: string; icon: LucideIcon; end?: boolean }> = [
   { to: '/', label: 'Inicio', icon: House, end: true },
-  { to: '/planear', label: 'Planear', icon: CalendarRange },
   { to: '/horario', label: 'Mi horario', icon: CalendarDays },
   { to: '/inscripcion', label: 'Inscripción', icon: GraduationCap },
   { to: '/academico', label: 'Notas y avance', icon: ChartLine },

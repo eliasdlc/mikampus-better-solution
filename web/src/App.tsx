@@ -1,8 +1,7 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Layout } from './components/Layout.tsx';
 import { Dashboard } from './routes/Dashboard.tsx';
-import { Planear } from './routes/Planear.tsx';
 import { Horario } from './routes/Horario.tsx';
 import { Inscripcion } from './routes/Inscripcion.tsx';
 import { Academico } from './routes/Academico.tsx';
@@ -14,6 +13,14 @@ import { Docs } from './routes/Docs.tsx';
 import { Onboarding } from './routes/Onboarding.tsx';
 import { useAuth } from './lib/auth.tsx';
 import { fetchOnboarding } from './lib/api.ts';
+import { legacyPlanTarget } from './lib/legacyRoutes.ts';
+
+// El mapeo vive en lib/legacyRoutes.ts para poder probarlo sin montar router.
+function LegacyPlanRedirect() {
+  const { pathname } = useLocation();
+  const [params] = useSearchParams();
+  return <Navigate to={legacyPlanTarget(pathname, params)} replace />;
+}
 
 export function App() {
   const { loading, authenticated } = useAuth();
@@ -59,9 +66,12 @@ export function App() {
           <Layout>
             <Routes>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/planear" element={<Planear />} />
-              <Route path="/planner" element={<Navigate to="/planear?tab=materias" replace />} />
-              <Route path="/builder" element={<Navigate to="/planear?tab=horario" replace />} />
+              {/* Planear se fusionó dentro del workspace de Inscripción (P2).
+                  Los redirects conservan el plan abierto y mandan a la etapa
+                  equivalente: un bookmark viejo no puede caer en un 404. */}
+              <Route path="/planear" element={<LegacyPlanRedirect />} />
+              <Route path="/planner" element={<LegacyPlanRedirect />} />
+              <Route path="/builder" element={<LegacyPlanRedirect />} />
               <Route path="/buscar" element={<Navigate to="/" replace />} />
               <Route path="/horario" element={<Horario />} />
               <Route path="/inscripcion" element={<Inscripcion />} />

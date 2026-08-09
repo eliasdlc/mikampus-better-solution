@@ -132,7 +132,7 @@ export function Planner({
     setSearchParams(next, { replace: true });
   };
 
-  // El plan elegido es contexto de /planear, no una selección efímera de la
+  // El plan elegido es contexto de /inscripcion, no una selección efímera de la
   // pestaña de materias. Al cargar el primero lo publicamos para que Horario
   // abra exactamente ese mismo plan.
   useEffect(() => {

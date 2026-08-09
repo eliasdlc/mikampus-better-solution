@@ -178,10 +178,10 @@ function Hero({
                   : 'Armá tu ciclo en el planner y mandá las materias al carrito antes de la hora de inscripción.'}
         </p>
         <Link
-          to={current != null ? '/horario' : '/planear'}
+          to={current != null ? '/horario' : '/inscripcion'}
           className="bg-accent text-accent-fg mt-4 inline-block rounded-[var(--radius)] px-3 py-2 text-sm font-medium"
         >
-          {current != null ? 'Ir a mi horario' : planes > 0 ? 'Ir a planear' : 'Planear mi ciclo'}
+          {current != null ? 'Ir a mi horario' : planes > 0 ? 'Seguir mi plan' : 'Planear mi ciclo'}
         </Link>
       </section>
     );
@@ -309,7 +309,7 @@ function NextCycleCard({
   const ofrecerRecomendacion = term != null && planes === 0;
 
   return (
-    <Card to={ofrecerRecomendacion ? '/planear?recomendado=1' : '/inscripcion'} title="Próximo ciclo">
+    <Card to={ofrecerRecomendacion ? '/inscripcion?recomendado=1' : '/inscripcion'} title="Próximo ciclo">
       <div className="mt-1 flex items-center justify-between gap-2">
         <TermBadge label={term?.label ?? null} />
       </div>

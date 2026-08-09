@@ -11,8 +11,8 @@
 
 - **Fecha del diagnóstico:** 2026-07-22.
 - **Rama designada:** `feat/single-user-secure`, preservada como rama histórica de la fase.
-- **Estado:** P0 y P1 cerradas (identidad de ciclos e integridad; sincronización
-  universal); P2–P6 pendientes.
+- **Estado:** P0, P1 y P2 cerradas (identidad de ciclos e integridad;
+  sincronización universal; inscripción unificada); P3–P6 pendientes.
 - **Dependencia de release:** las fases de distribución y CI pueden seguir validándose en
   source, pero no se publica npm, GitHub Release, tag estable ni landing de descarga hasta
   cerrar P0–P6.
@@ -454,7 +454,7 @@ Al terminar cada fase:
 |---|---|---|
 | P0 — Ciclos e integridad | ✅ Hecho | `cycleLabel` deriva por mes de inicio (abril→Abril); `reconcileTerms` respeta la frontera STRM/etiqueta (`isStrmCode`) + telemetría a diagnostics; migración v3 `term-identity` (saneo label-as-code, fusión de duplicados, aborto ante STRM en conflicto, backup+transacción); convergencia de identificador al aparecer el STRM; Dashboard y `readSchedule` derivan "sincronizado" del registro de sync, no de `rows.length`. Tests: `test-terms`, `test-term-identity`, `test-schedule-identity` + suite completa, typecheck y lint en verde. |
 | P1 — Sync universal | ✅ Hecho | Registro de fuentes en `src/syncOrchestrator.js` (key, dependencias, TTL, portal sí/no, relevancia, invalidaciones) con orden topológico determinista: ciclos antes de horario/carrito/ventanas, notas antes de avance. Una sola promesa en vuelo por usuario — diez pedidos simultáneos producen una consulta por fuente. `GET/POST /api/sync` reemplazan `/api/refresh`; `REFRESH_POLICY` y el refresh-al-montar de `Layout.tsx` se retiraron. Tick de 60s en el agente con detección de hueco (>3 ticks = reanudación, una sola pasada, sin replay). Prioridad: `scheduler.portalPriorityHold()` cuenta operaciones de inscripción vivas y la ventana T-16min, y el refresh cede sin encolarse delante de un submit. Sin sesión la fuente queda `paused` con su dato cacheado y no se persiste credencial nueva. Estado por fuente durable en `sync_sources` (migración 5, `minCompatibleVersion: 1`). Invalidación por evento vía SSE `sync-source`. Tests: `test-sync-orchestrator` (orden, colapso de concurrencia, relevancia, dependencia caída, prioridad, reanudación) + suite completa, typecheck y lint en verde. |
-| P2 — Inscripción unificada | ⬜ Pendiente | — |
+| P2 — Inscripción unificada | ✅ Hecho | `/inscripcion` es el workspace canónico con tres etapas reales (Plan · Grupos y horario · Carrito y ejecución) en `?etapa=`, componiendo `Planner` y `Builder` embebidos sin duplicar su lógica. Planear salió de la navegación primaria y `Planear.tsx` se eliminó; `/planear`, `/planner` y `/builder` redirigen conservando etapa, `plan` y `ciclo` (`web/src/lib/legacyRoutes.ts`, función pura). Selector de ciclo en el header persistido en `?ciclo=`, del que cuelgan plan, catálogo, carrito, ventana y watcher; cambiar de ciclo con un plan abierto explica el impacto y permite cancelar. Un ciclo sin STRM ofrece «Buscar ciclos en PeopleSoft», que fuerza las fuentes del orquestador P1 en vez de mandar un término implícito. Columna contextual reescrita en `EnrollmentContext.tsx` con los cuatro bloques separados: Período general (rango + fuente + último sync, dice explícitamente que no es tu hora), Tu hora de inscripción (confirmada por el portal o entrada manual marcada como tuya, nunca inferida del período), Validación previa (holds, choques, cerradas, carrito vacío, y por qué los prerrequisitos no aparecen) y Watcher, que nunca responde «elegí un ciclo» a secas sino que nombra qué falta y ofrece la acción. Tests: `test-legacy-routes` (etapas, plan y ciclo preservados, basura al default) + suite completa, typecheck y lint en verde. |
 | P3 — Inicio y calendario | ⬜ Pendiente | — |
 | P4 — Horario enriquecido | ⬜ Pendiente | — |
 | P5 — Notas y señales | ⬜ Pendiente | — |

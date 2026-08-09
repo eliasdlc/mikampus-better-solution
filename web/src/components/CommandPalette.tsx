@@ -14,7 +14,7 @@ import { courseColor } from '../lib/color.ts';
 
 const NAV = [
   { to: '/', label: 'Inicio' },
-  { to: '/planear', label: 'Planear' },
+  { to: '/inscripcion', label: 'Inscripción' },
   { to: '/horario', label: 'Mi horario' },
   { to: '/inscripcion', label: 'Carrito e inscripción' },
   { to: '/academico', label: 'Notas y avance' },

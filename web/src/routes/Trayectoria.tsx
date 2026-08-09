@@ -178,7 +178,7 @@ function ProximoNodo({
         : planes > 0
           ? `${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}`
           : 'sin materias todavía';
-  const destino = enrolled > 0 || cartCount > 0 ? '/inscripcion' : '/planear';
+  const destino = enrolled > 0 || cartCount > 0 ? '/inscripcion' : '/inscripcion?etapa=plan';
 
   return (
     <Nodo tono="proximo" ultimo={ultimo}>
