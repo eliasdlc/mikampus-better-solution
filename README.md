@@ -25,9 +25,35 @@ y la [guía de contribución](./CONTRIBUTING.md) antes de instalar o aportar.
 
 Hoy funciona:
 
-1. **Buscar materias** — un input, resultados instantáneos del catálogo cacheado (índice MiniSearch en el cliente, insensible a acentos).
-2. **Carrito e inscripción** — carrito en vivo, hora fija de pre-matrícula, watcher de cupos e inscripción manual.
-3. **Actividad en vivo** — cada operación Playwright reporta su progreso por SSE.
+1. **Inicio** — la clase en curso o la próxima con su aula, la agenda del día y
+   las próximas fechas del calendario académico oficial de PUCMM.
+2. **Mi horario** — lista en móvil, grilla semanal en desktop, detalle por clase
+   accesible con teclado y touch, impresión apaisada y export ICS.
+3. **Inscripción** — un solo recorrido de tres etapas (plan → grupos → carrito y
+   ejecución) sobre un ciclo elegido una vez. Watcher de cupos, hora fija de
+   pre-matrícula e inscripción manual.
+4. **Notas y avance** — histórico, pénsum, trayectoria del índice acumulado y
+   proyecciones que se suspenden si no reconcilian con el acumulado oficial.
+5. **Buscar materias** — ⌘K, resultados instantáneos del catálogo cacheado
+   (índice MiniSearch en el cliente, insensible a acentos).
+6. **Actividad en vivo** — cada operación Playwright reporta su progreso por SSE.
+
+Dos cosas que el portal no puede hacer, porque no corre en tu máquina y no
+recuerda:
+
+- **El ritmo de un cupo.** mikampus anota cada observación de cupo, así que
+  puede decirte que una sección perdió nueve asientos en las últimas cuatro
+  horas. micampus solo sabe cuántos hay ahora. Son hechos observados, nunca una
+  predicción de cuándo se va a llenar.
+- **El aviso antes de clase.** El agente conoce tu horario y sobrevive al
+  navegador cerrado: te avisa unos minutos antes con el aula. Nace apagado y no
+  avisa de una clase que ya empezó.
+
+**Frescura.** Un solo orquestador decide qué está viejo: cada fuente declara sus
+dependencias, su TTL y cuándo aplica, y el control global explica qué actualizó,
+qué omitió y por qué. Una inscripción en curso manda sobre todo lo demás — un
+refresh nunca se encola delante de un submit. Sin sesión, las fuentes quedan en
+pausa con su último dato bueno en vez de ampliar la custodia de la credencial.
 
 Todo corre sobre una única sesión de Playwright (headless) del operador. Si la
 sesión expira puede re-login solo mientras exista una autorización de
@@ -176,7 +202,7 @@ npm run lint                                      # errores estáticos de JavaSc
 npm run audit:public                              # secretos/PII conocidos en HEAD
 npm run build && node scripts/check-budget.mjs   # bundle inicial < 250KB gz
 node scripts/bench-search.mjs                    # keystroke → resultados < 16ms
-npm run smoke                                    # screenshots a 390/768/1440px + falla si hay desborde horizontal
+npm run smoke                                    # 7 rutas × 390/768/1440px, ⌘K por teclado, PWA e impresión; falla si algo desborda
 npm run smoke:lifecycle                          # agente real: primer uso sin terminal, origen ajeno rechazado, datos en app-data
 npm run smoke:package                            # artifact compilado: SPA, SQLite en app-data, payload mínimo
 npm run test:release-manifest                    # contrato del manifiesto que consume la landing
