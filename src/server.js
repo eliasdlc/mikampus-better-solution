@@ -36,7 +36,7 @@ import { recommendationForTerm, DEFAULT_MAX_CREDITS } from './recommendations.js
 import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
 import { acquireAgentLock, agentHealthAuthorized, recordRuntimeStart, recordRuntimeStop, releaseAgentLock } from './runtime.js';
 import { resourcePath } from './paths.js';
-import { chooseMode, markOnboardingComplete, onboardingState, startBrowserInstall } from './onboarding.js';
+import { chooseMode, markOnboardingComplete, onboardingState, publishRuntimeMode, startBrowserInstall } from './onboarding.js';
 import { fullStatus } from './status.js';
 import { clearNotifications, markFeedRead, readFeed, unreadCount } from './notifications.js';
 import { availableAdapters, deleteChannel, listChannels, saveChannel, setChannelEnabled, testChannel } from './channels.js';
@@ -1197,6 +1197,9 @@ const HOST = '127.0.0.1';
 // grades) al arrancar, para que el modelo de tiempo esté al día sin esperar a
 // una sync. Es barato: son pocas filas y upserts idempotentes.
 reconcileTerms();
+// Antes de cualquier evento notificable: el modo guardado gobierna el proceso.
+const bootMode = publishRuntimeMode();
+if (bootMode) console.log(`[agent] modo de runtime: ${bootMode}`);
 const runtimeStart = recordRuntimeStart();
 // Higiene al arrancar: sesiones vencidas fuera, credenciales vencidas fuera.
 auth.purgeExpiredSessions();
