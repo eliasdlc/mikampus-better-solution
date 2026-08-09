@@ -1,4 +1,6 @@
 import 'dotenv/config';
+// Antes que cualquier módulo que lea rutas: fija la base y el browser de la app.
+import '../src/bootstrapPaths.js';
 import { loginToPeopleSoft } from '../src/login.js';
 import { fetchSubjects, syncSubjectTitles, knownSubjects } from '../src/peoplesoft/browseCatalog.js';
 import { syncCatalogSubject } from '../src/peoplesoft/catalog.js';
