@@ -20,27 +20,60 @@ import { SyncControl } from './SyncControl.tsx';
 // Planear salió de la navegación primaria: planificar e inscribirse eran el
 // mismo trabajo partido en dos, y mantenerlos separados obligaba a llevar dos
 // contextos de ciclo en la cabeza. Ahora es la primera etapa de /inscripcion.
-const NAV: Array<{ to: string; label: string; icon: LucideIcon; end?: boolean }> = [
-  { to: '/', label: 'Inicio', icon: House, end: true },
-  { to: '/horario', label: 'Mi horario', icon: CalendarDays },
-  { to: '/inscripcion', label: 'Inscripción', icon: GraduationCap },
-  { to: '/academico', label: 'Notas y avance', icon: ChartLine },
-  { to: '/ajustes', label: 'Ajustes', icon: Settings },
+const NAV: Array<{ to: string; label: string; short: string; icon: LucideIcon; end?: boolean }> = [
+  { to: '/', label: 'Inicio', short: 'Inicio', icon: House, end: true },
+  { to: '/horario', label: 'Mi horario', short: 'Horario', icon: CalendarDays },
+  { to: '/inscripcion', label: 'Inscripción', short: 'Inscribir', icon: GraduationCap },
+  { to: '/academico', label: 'Notas y avance', short: 'Notas', icon: ChartLine },
+  { to: '/ajustes', label: 'Ajustes', short: 'Ajustes', icon: Settings },
 ];
 
-function NavItem({ to, label, icon: Icon, end }: { to: string; label: string; icon: LucideIcon; end?: boolean }) {
+function SidebarItem({ to, label, icon: Icon, end }: { to: string; label: string; icon: LucideIcon; end?: boolean }) {
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
-        `flex items-center gap-2 rounded-[var(--radius)] px-3 py-2 text-sm transition-colors duration-100 ${
+        `tap flex items-center gap-2 rounded-[var(--radius)] px-3 py-2 text-sm transition-colors duration-100 ${
           isActive ? 'bg-accent text-accent-fg font-medium' : 'text-muted hover:bg-surface-2 hover:text-fg'
         }`
       }
     >
       <Icon className="size-4 shrink-0" aria-hidden />
       {label}
+    </NavLink>
+  );
+}
+
+// La barra inferior es lo que separa "una web abierta en el teléfono" de "una
+// app". Los cinco destinos quedan bajo el pulgar, siempre visibles, y no se van
+// con el scroll. Antes la navegación era una fila que envolvía arriba: se
+// perdía al bajar y obligaba a estirar el dedo hasta el borde superior.
+function TabBarItem({ to, short, icon: Icon, end }: { to: string; short: string; icon: LucideIcon; end?: boolean }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        `tap relative flex flex-1 flex-col items-center justify-center gap-0.5 px-1 pt-1.5 pb-1 text-[11px] transition-colors duration-100 ${
+          isActive ? 'text-accent font-medium' : 'text-muted'
+        }`
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {/* El indicador es una barra corta sobre el icono y no un fondo
+              pintado: en una barra de cinco, cinco cápsulas compiten entre sí. */}
+          <span
+            className={`absolute top-0 h-0.5 w-8 rounded-full transition-opacity duration-100 ${
+              isActive ? 'bg-accent opacity-100' : 'opacity-0'
+            }`}
+            aria-hidden
+          />
+          <Icon className="size-5 shrink-0" aria-hidden />
+          <span className="leading-none">{short}</span>
+        </>
+      )}
     </NavLink>
   );
 }
@@ -52,7 +85,7 @@ export function Layout({ children }: { children: ReactNode }) {
   // El refresh al montar murió con P1. Montar una pantalla no es una razón para
   // salir al portal, y hacerlo desde acá creaba una segunda política de
   // frescura que competía con la del backend. Ahora el tick del agente decide
-  // qué está vencido y el control global de abajo es el gesto explícito.
+  // qué está vencido y el control global es el gesto explícito.
 
   // El atajo se escucha en la ventana y no en un componente: ⌘K es global
   // (plan §5.2), tiene que abrir estés donde estés. Ctrl+K para el mismo gesto
@@ -73,33 +106,55 @@ export function Layout({ children }: { children: ReactNode }) {
   // columna y desbordaba la página entera en tablet.
   return (
     <div className="app-shell min-h-full md:grid md:grid-cols-[220px_minmax(0,1fr)]">
-      {/* En mobile esto es una barra superior. El nav baja a su propia línea
-          para que cada destino siga siendo tocable a 390px. */}
-      {/* print:hidden — la navegación no existe en papel (plan §5.5). */}
-      <aside className="border-line bg-surface flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b px-4 py-3 print:hidden md:h-screen md:flex-nowrap md:flex-col md:items-stretch md:justify-start md:border-r md:border-b-0 md:px-4 md:py-5">
-        <div className="flex items-center gap-2 md:mb-4">
+      {/* ── Teléfono: barra superior compacta ──────────────────────────────
+          Solo la marca y los controles de estado; los destinos viven abajo,
+          bajo el pulgar. Sticky para que el contexto no se pierda al bajar por
+          una lista larga. */}
+      <header
+        className="border-line bg-surface/95 sticky top-0 z-30 flex items-center justify-between gap-3 border-b px-4 backdrop-blur print:hidden md:hidden"
+        style={{ paddingTop: 'calc(0.625rem + var(--safe-top))', paddingBottom: '0.625rem' }}
+      >
+        <span className="font-display text-lg font-semibold tracking-tight">mikampus</span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            aria-label="Buscar"
+            className="tap text-muted hover:text-fg flex items-center justify-center rounded-[var(--radius)]"
+          >
+            <Search className="size-5" aria-hidden />
+          </button>
+          <ThemeToggle />
+        </div>
+      </header>
+
+      {/* ── Desktop: la barra lateral de siempre ───────────────────────────
+          print:hidden — la navegación no existe en papel (plan §5.5). */}
+      <aside className="border-line bg-surface hidden print:hidden md:flex md:h-screen md:flex-col md:items-stretch md:border-r md:px-4 md:py-5">
+        <div className="mb-4 flex items-center gap-2">
           <span className="font-display text-lg font-semibold tracking-tight">mikampus</span>
         </div>
 
-        {/* El atajo no se descubre solo, y en mobile no hay ⌘K que apretar: el
-            botón es la misma puerta, tocable. */}
+        {/* El atajo no se descubre solo: el botón es la misma puerta. */}
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}
-          className="border-line text-muted hover:bg-surface-2 hover:text-fg order-4 flex w-full items-center justify-between gap-2 rounded-[var(--radius)] border px-3 py-2 text-sm transition-colors duration-100 md:order-none md:mb-6"
+          className="border-line text-muted hover:bg-surface-2 hover:text-fg tap mb-6 flex w-full items-center justify-between gap-2 rounded-[var(--radius)] border px-3 text-sm transition-colors duration-100"
         >
-          <span className="flex items-center gap-2"><Search className="size-4" aria-hidden />Buscar…</span>
+          <span className="flex items-center gap-2">
+            <Search className="size-4" aria-hidden />
+            Buscar…
+          </span>
           <kbd className="border-line bg-surface-2 tabular rounded border px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd>
         </button>
 
-        {/* En mobile puede envolver sin desbordar; en desktop es una columna. */}
-        <nav className="order-3 flex w-full flex-wrap gap-1 md:order-none md:w-auto md:flex-col md:flex-nowrap md:gap-0">
+        <nav className="flex flex-col gap-0.5" aria-label="Secciones">
           {NAV.map((item) => (
-            <NavItem key={item.to} {...item} />
+            <SidebarItem key={item.to} {...item} />
           ))}
         </nav>
 
-        <div className="order-2 flex w-full flex-col gap-2 md:order-none md:mt-auto">
+        <div className="mt-auto flex w-full flex-col gap-2">
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted flex items-center gap-1.5 text-xs" title="Conexión de actividad en vivo">
               <span className={`size-2 rounded-full ${connected ? 'bg-open' : 'bg-closed'}`} />
@@ -113,8 +168,33 @@ export function Layout({ children }: { children: ReactNode }) {
 
       <div className="min-w-0">
         <AgentStatusBar />
-        <main className="mx-auto w-full max-w-5xl px-4 py-6 print:max-w-none print:p-0 md:px-8 md:py-8">{children}</main>
+        <main className="mx-auto w-full max-w-5xl px-4 py-5 print:max-w-none print:p-0 md:px-8 md:py-8">
+          {children}
+        </main>
+
+        {/* El control de sincronización vive en el sidebar en desktop; en
+            teléfono va al final del contenido, donde no compite con la
+            navegación por el mismo espacio del pulgar. */}
+        {/* Este bloque además reserva el alto de la barra: sin él, el último
+            elemento de una lista larga queda tapado por la navegación. */}
+        <div
+          className="mx-auto w-full max-w-5xl px-4 print:hidden md:hidden"
+          style={{ paddingBottom: 'calc(1rem + var(--tabbar-h))' }}
+        >
+          <SyncControl />
+        </div>
       </div>
+
+      {/* ── Teléfono: la barra de destinos ─────────────────────────────── */}
+      <nav
+        aria-label="Secciones"
+        className="border-line bg-surface/95 fixed inset-x-0 bottom-0 z-30 flex border-t backdrop-blur print:hidden md:hidden"
+        style={{ paddingBottom: 'var(--safe-bottom)' }}
+      >
+        {NAV.map((item) => (
+          <TabBarItem key={item.to} {...item} />
+        ))}
+      </nav>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>

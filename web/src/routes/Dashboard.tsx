@@ -81,14 +81,14 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* El título es el día, no la marca: la marca ya está en el shell (barra
+          superior en teléfono, sidebar en desktop) y repetirla gastaba la línea
+          más visible de la pantalla en decir algo que ya se sabe. */}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <h1 className="font-display text-3xl font-semibold tracking-tight">mikampus</h1>
-          <TermBadge label={current?.label} />
-        </div>
-        <p className="text-muted text-sm">
+        <h1 className="font-display text-2xl font-semibold tracking-tight first-letter:uppercase sm:text-3xl">
           {now.toLocaleDateString('es-DO', { weekday: 'long', day: 'numeric', month: 'long' })}
-        </p>
+        </h1>
+        <TermBadge label={current?.label} />
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -180,7 +180,7 @@ function Hero({
           {loading
             ? 'Un momento.'
             : !current
-              ? 'No hay un ciclo corriendo ahora mismo. Mirá el próximo en la card de la derecha.'
+              ? 'No hay un ciclo corriendo ahora mismo. Abajo está lo que viene y cómo prepararlo.'
               : !synced
                 ? 'Todavía no trajimos el horario de este ciclo. Traelo desde Mi horario.'
                 : planes > 0

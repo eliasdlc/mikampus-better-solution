@@ -26,10 +26,13 @@ import { Builder } from './Builder.tsx';
 
 type Stage = 'plan' | 'grupos' | 'carrito';
 
-const STAGES: { id: Stage; label: string; icon: LucideIcon; hint: string }[] = [
-  { id: 'plan', label: 'Plan', icon: ClipboardList, hint: 'Qué materias querés cursar' },
-  { id: 'grupos', label: 'Grupos y horario', icon: LayoutGrid, hint: 'Qué grupo de cada una' },
-  { id: 'carrito', label: 'Carrito y ejecución', icon: ShoppingCart, hint: 'Someterlo a PeopleSoft' },
+// `short` es para el teléfono: con los tres nombres largos, la tercera etapa
+// quedaba cortada a media palabra y el recorrido dejaba de leerse como tres
+// pasos. El nombre completo sigue en desktop y en el title.
+const STAGES: { id: Stage; label: string; short: string; icon: LucideIcon; hint: string }[] = [
+  { id: 'plan', label: 'Plan', short: 'Plan', icon: ClipboardList, hint: 'Qué materias querés cursar' },
+  { id: 'grupos', label: 'Grupos y horario', short: 'Grupos', icon: LayoutGrid, hint: 'Qué grupo de cada una' },
+  { id: 'carrito', label: 'Carrito y ejecución', short: 'Carrito', icon: ShoppingCart, hint: 'Someterlo a PeopleSoft' },
 ];
 
 function isStage(value: string | null): value is Stage {
@@ -195,12 +198,13 @@ export function Inscripcion() {
               aria-current={stage === item.id ? 'step' : undefined}
               onClick={() => setStage(item.id)}
               title={item.hint}
-              className={`flex min-h-9 shrink-0 items-center gap-2 rounded-[calc(var(--radius)-2px)] px-3 py-1.5 text-sm transition-colors duration-100 ${
+              className={`tap flex flex-1 shrink-0 items-center justify-center gap-2 rounded-[calc(var(--radius)-2px)] px-3 py-1.5 text-sm transition-colors duration-100 sm:flex-none sm:justify-start ${
                 stage === item.id ? 'bg-accent text-accent-fg font-medium' : 'text-muted hover:bg-surface-2 hover:text-fg'
               }`}
             >
               <item.icon className="size-4" aria-hidden />
-              {item.label}
+              <span className="sm:hidden">{item.short}</span>
+              <span className="hidden sm:inline">{item.label}</span>
             </button>
           ))}
         </nav>

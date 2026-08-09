@@ -117,6 +117,36 @@ body {
   animation: block-land 180ms ease-out;
 }
 
+/* ── Ergonomía de app en el teléfono ──────────────────────────────────────
+   mikampus se abre corriendo entre dos aulas, con una mano. Estas reglas no
+   cambian la identidad visual: cambian dónde caen los dedos.
+
+   Las áreas seguras del dispositivo (notch arriba, barra de gestos abajo) se
+   respetan como variables para que la barra inferior no quede debajo del
+   indicador de home. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Alto de la barra de navegación inferior + su área segura. El main reserva
+     este espacio para que el último elemento de una lista no quede tapado. */
+  --tabbar-h: calc(3.75rem + var(--safe-bottom));
+}
+
+/* Un objetivo táctil de menos de 44px se falla con el pulgar. Se aplica a la
+   navegación y a los controles primarios, no a todo enlace de texto. */
+.tap {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* El toque en móvil no tiene hover: el feedback es el estado activo. Sin esto,
+   tocar un destino de la barra inferior no se siente como que respondió. */
+@media (hover: none) {
+  .tap:active {
+    background-color: var(--surface-2);
+  }
+}
+
 /* Vista de impresión (plan §5.5): el horario en papel, sin el cromo de la app.
    Es una hoja para pegar en la nevera, no una captura de pantalla. */
 @media print {
