@@ -7,12 +7,18 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-erase-'));
+// Toda ruta que `dataPaths()` sabe resolver tiene que apuntar al temporal. La
+// que falte no se aísla: la hereda del entorno y este test la BORRA de verdad.
+// PLAYWRIGHT_BROWSERS_PATH es la trampa, porque es la única que un equipo de
+// desarrollo suele tener exportada por su cuenta, y ahí `npm test` se lleva
+// puesto el Chromium del que dependen los demás tests.
 const env = {
   MIKAMPUS_DATA_DIR: dir,
   MIKAMPUS_DB: path.join(dir, 'mikampus.db'),
   MIKAMPUS_CRED_DB: path.join(dir, 'credentials.db'),
   MIKAMPUS_BACKUP_DIR: path.join(dir, 'backups'),
   MIKAMPUS_RUNTIME_DIR: path.join(dir, 'runtime'),
+  PLAYWRIGHT_BROWSERS_PATH: path.join(dir, 'browsers'),
 };
 Object.assign(process.env, env);
 
@@ -33,6 +39,15 @@ try {
   fs.writeFileSync(path.join(env.MIKAMPUS_RUNTIME_DIR, 'agent.token'), 'token');
 
   const preview = erasePreview();
+  // Antes de borrar nada: ningún objetivo puede caer fuera del temporal. Este
+  // test ejecuta un borrado real, así que una ruta heredada del entorno no
+  // falla — destruye. Se verifica que el aislamiento existe, no que se quiso.
+  for (const target of preview.targets) {
+    assert.ok(
+      target.path.startsWith(dir + path.sep),
+      `el objetivo ${target.id} apunta fuera del temporal (${target.path}); abortá antes de borrarlo`
+    );
+  }
   const ids = preview.targets.map((target) => target.id);
   for (const required of ['db', 'db-wal', 'db-shm', 'vault', 'backups', 'diagnostics', 'runtime', 'browsers']) {
     assert.ok(ids.includes(required), `el preview enumera ${required}`);
