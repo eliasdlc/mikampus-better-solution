@@ -151,14 +151,27 @@ const fillCreditsStmt = db.prepare(`
   WHERE code = ? AND credits IS NULL
 `);
 
-export function applyPlanCredits(plan) {
-  if (!plan?.courses) return 0;
-  let filled = 0;
+// Lo mismo pasa con los títulos, por otra vía: el Class Search deja el nombre
+// vacío y resolveTitle (arriba) pone el código como marcador hasta que el
+// Browse Catalog lo complete. Mientras eso no corra, el plan recomendado dice
+// "ICC-471" donde debería decir "Gestión de Proyectos". La condición
+// `title = code` es exactamente ese marcador: nunca pisa un nombre real.
+const fillTitleStmt = db.prepare(`
+  UPDATE courses SET title = ?, updated_at = datetime('now')
+  WHERE code = ? AND title = code
+`);
+
+export function applyPlanFacts(plan) {
+  if (!plan?.courses) return { credits: 0, titles: 0 };
+  let credits = 0;
+  let titles = 0;
   for (const rule of Object.values(plan.courses)) {
-    if (rule.units == null || !Number.isFinite(rule.units)) continue;
-    filled += fillCreditsStmt.run(rule.units, rule.code).changes;
+    if (rule.units != null && Number.isFinite(rule.units)) {
+      credits += fillCreditsStmt.run(rule.units, rule.code).changes;
+    }
+    if (rule.title) titles += fillTitleStmt.run(rule.title, rule.code).changes;
   }
-  return filled;
+  return { credits, titles };
 }
 
 // ── Historia de cupo ───────────────────────────────────────────────────────

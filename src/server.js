@@ -4,7 +4,7 @@ import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { readCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
-import { readCatalog, seatHistory, syncCatalogCourse, applyPlanCredits } from './peoplesoft/catalog.js';
+import { readCatalog, seatHistory, syncCatalogCourse, applyPlanFacts } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
 import { readTerms, reconcileTerms, planningTerm } from './terms.js';
@@ -1348,13 +1348,16 @@ try {
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`mikampus en http://localhost:${PORT}`);
-  // El catálogo del portal llega sin créditos; el plan académico oficial los
-  // tiene. Se completan al arrancar para que todo lo que se mide en créditos
-  // deje de valer cero.
+  // El catálogo del portal llega sin créditos y, hasta que corra el sync de
+  // títulos, con el código en lugar del nombre. El plan académico oficial tiene
+  // los dos. Se completan al arrancar para que el plan recomendado no diga
+  // "ICC-471, 0 créditos" donde debería decir "Gestión de Proyectos, 4".
   const plan = planForUser(LOCAL_USER_ID);
   if (plan) {
-    const filled = applyPlanCredits(plan);
-    if (filled) console.log(`[catálogo] créditos completados desde el plan ${plan.plan}: ${filled} materia(s)`);
+    const { credits, titles } = applyPlanFacts(plan);
+    if (credits || titles) {
+      console.log(`[catálogo] desde el plan ${plan.plan}: ${credits} crédito(s) y ${titles} título(s) completados`);
+    }
   }
   // Apagado salvo que CATALOG_CRON_AT diga a qué hora (ver src/cron.js).
   startCatalogCron();
