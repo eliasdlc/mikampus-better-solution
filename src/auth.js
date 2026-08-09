@@ -179,12 +179,37 @@ const PUBLIC_API = new Set([
 ]);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-// El agente Desktop solo sirve loopback. Validamos Host en todas las requests
-// y Origin en las mutaciones, incluso antes del login: así una página ajena no
-// puede usar localhost como puente hacia PeopleSoft ni intentar fijar sesión.
+// Hosts que este agente acepta ADEMÁS de loopback, separados por coma. Vacío
+// por defecto, y esa es la postura: dejar de ser solo-loopback es una decisión
+// explícita del operador, nunca un default que se hereda sin querer.
+//
+// Está pensado para un proxy de identidad en el mismo equipo —`tailscale serve`
+// es el caso— que termina TLS, autentica el dispositivo contra el tailnet y
+// reenvía a 127.0.0.1. La diferencia con abrir el puerto es real: el agente
+// nunca deja de escuchar solo en loopback, así que no hay superficie nueva en
+// la red; lo único que cambia es qué `Host` se considera legítimo.
+//
+// Se lee por request y no una sola vez, para que el operador pueda corregir un
+// hostname mal escrito reiniciando el servicio y no rebuildeando nada.
+function trustedHosts() {
+  return new Set(
+    String(process.env.MIKAMPUS_TRUSTED_HOSTS ?? '')
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+// El agente sirve loopback y, si el operador lo declaró, los hosts de confianza.
+// Validamos Host en todas las requests y Origin en las mutaciones, incluso antes
+// del login: así una página ajena no puede usar localhost como puente hacia
+// PeopleSoft ni intentar fijar sesión.
 export function localRequestGuard(req, res, next) {
   const host = String(req.headers.host ?? '').toLowerCase();
-  if (!/^((localhost|127\.0\.0\.1)(:\d+)?)$/.test(host)) {
+  const loopback = /^((localhost|127\.0\.0\.1)(:\d+)?)$/.test(host);
+  // El puerto no distingue confianza: el proxy llega sin él o con el suyo.
+  const hostname = host.replace(/:\d+$/, '');
+  if (!loopback && !trustedHosts().has(hostname)) {
     return res.status(421).json({ error: 'mikampus solo acepta requests desde localhost' });
   }
   if (!SAFE_METHODS.has(req.method)) {
@@ -192,7 +217,12 @@ export function localRequestGuard(req, res, next) {
     // Las mutaciones de la SPA siempre llevan Origin. Exigirlo evita que un
     // form/navegación cross-site use localhost como puente, incluso en rutas
     // públicas como el login que todavía no tienen token CSRF.
-    if (origin !== `http://${host}`) {
+    //
+    // Sigue siendo igualdad estricta contra el Host de ESTA request: un sitio
+    // ajeno no puede fabricar Origin, así que agregar un host de confianza no
+    // afloja la protección CSRF. Los dos esquemas se aceptan porque loopback es
+    // http y el proxy de identidad es https.
+    if (origin !== `http://${host}` && origin !== `https://${host}`) {
       return res.status(403).json({ error: 'El origen de esta operación no está autorizado' });
     }
   }

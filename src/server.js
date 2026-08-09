@@ -57,7 +57,15 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, pid: process.pid, url: `http://127.0.0.1:${PORT}` });
 });
 
-const SECURE_COOKIES = false;
+// Se decide por request y no por build. En loopback la UI viaja por http y
+// marcar Secure dejaría la cookie inservible; detrás de un proxy que termina
+// TLS, no marcarla la dejaría viajar en claro el día que ese proxy se caiga a
+// http. El único que puede mentir en esta cabecera es algo que ya está en
+// loopback, y lo peor que consigue es que la cookie no se envíe: molesta, no
+// escala privilegios.
+function secureCookies(req) {
+  return String(req.headers['x-forwarded-proto'] ?? '').toLowerCase() === 'https';
+}
 
 // El portal solo publicó fechas en el recon actual. Para que la credencial no
 // sobreviva al período de inscripción, convertimos el cierre publicado en el
@@ -172,7 +180,7 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { user, token, csrfToken, expiresAt } = await auth.loginWithPortal(req.body ?? {});
     scheduler.emitEvent({ type: 'log', message: `Sesión iniciada: ${user.portalUsername}` });
-    res.set('Set-Cookie', auth.sessionCookieHeader(token, { secure: SECURE_COOKIES }));
+    res.set('Set-Cookie', auth.sessionCookieHeader(token, { secure: secureCookies(req) }));
     res.json({ ok: true, user: { id: user.id, username: user.portalUsername }, csrfToken, expiresAt });
   } catch (err) {
     res.status(err.status ?? 500).json({ error: err.message });
@@ -182,7 +190,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/logout', async (req, res) => {
   try {
     await auth.logout(auth.cookieValue(req.headers.cookie, auth.SESSION_COOKIE));
-    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: SECURE_COOKIES }));
+    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: secureCookies(req) }));
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -392,7 +400,7 @@ app.delete('/api/account/data', async (req, res) => {
     const removed = req.body?.keepBackups
       ? eraseLocalArtifacts({ onlyRuntimeSafe: true, keep: ['backups'] })
       : eraseLocalArtifacts({ onlyRuntimeSafe: true });
-    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: SECURE_COOKIES }));
+    res.set('Set-Cookie', auth.clearedSessionCookieHeader({ secure: secureCookies(req) }));
     res.json({ ok: true, removed, note: 'Para borrar también la base, el vault y el browser descargado, ejecutá `mikampus erase-data --yes`.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
