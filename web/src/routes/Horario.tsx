@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchMySchedule, syncMySchedule, fetchTermContext, dropScheduleCourse } from '../lib/api.ts';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
+import { ClassDetail } from '../components/ClassDetail.tsx';
+import { MapPin } from 'lucide-react';
+import type { Block } from '../lib/grid.ts';
 import { CourseChip } from '../components/CourseChip.tsx';
+import { courseColor } from '../lib/color.ts';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import { TermBadge } from '../components/TermBadge.tsx';
 import { LiveOpBanner } from '../components/LiveOpBanner.tsx';
@@ -14,7 +18,11 @@ import type { ScheduleCourse, ScheduleResponse } from '../../../src/shared/schem
 // Mi horario (plan §5.5): el WeeklyGrid a pantalla completa, con toggle a vista
 // de lista (la default en mobile) y exportar ICS.
 
-function Agenda({ data }: { data: ScheduleResponse }) {
+// La lista lee cada clase en el orden en que se necesita saberla (P4 §4):
+// materia primero, después cuándo, después DÓNDE —que es lo que se busca
+// corriendo entre dos aulas— después con quién, y el código y el NRC al final
+// como lo que son: identificadores, no el nombre de la cosa.
+function Agenda({ data, onSelect }: { data: ScheduleResponse; onSelect: (block: Block) => void }) {
   const blocks = toBlocks(data.courses);
   const byDay = new Map<DayCode, typeof blocks>(WEEK_DAYS.map((d) => [d, []]));
   for (const b of blocks) byDay.get(b.day)?.push(b);
@@ -32,14 +40,36 @@ function Agenda({ data }: { data: ScheduleResponse }) {
               .get(day)!
               .sort((a, b) => toMinutes(a.start) - toMinutes(b.start))
               .map((b) => (
-                <li key={b.id} className="flex min-h-11 items-center justify-between gap-3 px-3 py-2">
-                  <CourseChip code={b.code} title={b.title} classNbr={b.classNbr} size="sm" />
-                  <div className="text-right">
-                    <div className="tabular font-mono text-xs">
-                      {b.start}–{b.end}
-                    </div>
-                    <div className="text-muted text-xs">{b.room ?? 'Aula por definir'}</div>
-                  </div>
+                <li key={b.id}>
+                  <button
+                    type="button"
+                    onClick={() => onSelect(b)}
+                    className="hover:bg-surface-2 focus-visible:outline-accent flex w-full min-h-11 items-start gap-3 px-3 py-2.5 text-left transition-colors duration-100 focus-visible:outline-2 focus-visible:-outline-offset-2"
+                  >
+                    <span className="tabular w-14 shrink-0 pt-0.5 font-mono text-xs">
+                      <span className="block">{b.start}</span>
+                      <span className="text-muted block">{b.end}</span>
+                    </span>
+                    <span
+                      className="mt-0.5 h-10 w-1 shrink-0 rounded-full"
+                      style={{ background: courseColor(b.code) }}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium">{b.title}</span>
+                      <span className="mt-0.5 flex items-center gap-1 text-sm">
+                        <MapPin className="text-muted size-3.5 shrink-0" aria-hidden />
+                        <span className="font-medium">{b.room ?? 'Aula por definir'}</span>
+                      </span>
+                      <span className="text-muted mt-0.5 block text-xs">
+                        {b.instructor ?? 'Profesor no publicado'}
+                      </span>
+                      <span className="text-muted tabular mt-0.5 block font-mono text-[11px]">
+                        {b.code} · NRC {b.classNbr}
+                        {b.component ? ` · ${b.component}` : ''}
+                      </span>
+                    </span>
+                  </button>
                 </li>
               ))}
           </ul>
@@ -56,6 +86,7 @@ export function Horario() {
     typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches ? 'list' : 'grid'
   );
   const [dropTarget, setDropTarget] = useState<ScheduleCourse | null>(null);
+  const [detail, setDetail] = useState<Block | null>(null);
   const [confirmCode, setConfirmCode] = useState('');
   const queryClient = useQueryClient();
 
@@ -245,9 +276,9 @@ export function Horario() {
           </button>
         </div>
       ) : view === 'grid' ? (
-        <WeeklyGrid blocks={toBlocks(courses)} />
+        <WeeklyGrid blocks={toBlocks(courses)} onSelect={setDetail} />
       ) : (
-        <Agenda data={data} />
+        <Agenda data={data} onSelect={setDetail} />
       )}
 
       {canDrop && courses.some((course) => course.status === 'enrolled') && (
@@ -338,6 +369,10 @@ export function Horario() {
           </section>
         </div>
       )}
+
+      {/* El detalle de una clase: mismo contenido que el tooltip del grid, pero
+          alcanzable con teclado y con el dedo (P4 §5). */}
+      <ClassDetail block={detail} onClose={() => setDetail(null)} syncedAt={data?.syncedAt ?? null} />
     </div>
   );
 }

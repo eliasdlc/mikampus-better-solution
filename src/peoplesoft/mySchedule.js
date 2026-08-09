@@ -107,7 +107,11 @@ export function saveSchedule(userId, { term, termLabel = null, courses }) {
             component: s.component,
             instructor: s.instructor,
             meetings: s.meetings,
-          })
+          }),
+          // View My Classes es autoritativo para tu horario y tu aula, pero NO
+          // publica profesor: manda null. Sin declarar la procedencia, ese null
+          // borraba en cada sync el profesor que el catálogo había enriquecido.
+          { source: 'my-classes' }
         );
         const courseId = db.prepare('SELECT course_id FROM sections WHERE id = ?').get(sectionId).course_id;
         upsertEnrollmentStmt.run(

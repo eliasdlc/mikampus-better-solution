@@ -21,15 +21,27 @@ const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR
 
 const hourRow = (i: number) => `${i * 4 + 2} / span 4`;
 
-function BlockCard({ block, column, animate }: { block: PlacedBlock; column: number; animate: boolean }) {
+function BlockCard({
+  block,
+  column,
+  animate,
+  onSelect,
+}: {
+  block: PlacedBlock;
+  column: number;
+  animate: boolean;
+  onSelect?: (block: PlacedBlock) => void;
+}) {
   const color = courseColor(block.code);
   const clash = block.conflictsWith.length > 0;
 
   return (
     <div
-      className={`z-10 m-px overflow-hidden rounded-[var(--radius)] px-1.5 py-1 text-[11px] leading-tight ${
+      className={`z-10 m-px overflow-hidden rounded-[var(--radius)] px-1.5 py-1 text-left text-[11px] leading-tight ${
         block.ghost ? 'opacity-45' : ''
-      } ${animate && !block.ghost ? 'block-land' : ''}`}
+      } ${animate && !block.ghost ? 'block-land' : ''} ${
+        onSelect ? 'focus-visible:outline-accent cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-1' : ''
+      }`}
       style={{
         gridColumn: column,
         gridRow: `${toGridLine(block.start, START_HOUR, SLOT_MINUTES)} / ${toGridLine(block.end, START_HOUR, SLOT_MINUTES)}`,
@@ -50,11 +62,28 @@ function BlockCard({ block, column, animate }: { block: PlacedBlock; column: num
           : undefined,
         outline: clash ? '1px solid var(--closed)' : undefined,
       }}
+      // El title nativo se conserva como atajo con mouse, pero ya no es el
+      // ÚNICO camino a esta información: cuando hay onSelect, el bloque es un
+      // botón real y el detalle abre con Enter, con tap y con click (P4 §5).
       title={
         clash
           ? `${block.title} · ${block.start}–${block.end} — choca con ${block.conflictsWith.join(', ')}`
           : [block.title, `${block.start}–${block.end}`, block.room, block.instructor].filter(Boolean).join('\n')
       }
+      {...(onSelect
+        ? {
+            role: 'button' as const,
+            tabIndex: 0,
+            'aria-label': `${block.title}, ${block.start} a ${block.end}, ${block.room ?? 'aula por definir'}, ${block.instructor ?? 'profesor no publicado'}`,
+            onClick: () => onSelect(block),
+            onKeyDown: (event: React.KeyboardEvent) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onSelect(block);
+              }
+            },
+          }
+        : {})}
     >
       <div className="truncate font-medium">{block.title}</div>
       <div className="tabular truncate font-mono text-[10px] opacity-70">
@@ -69,7 +98,16 @@ function BlockCard({ block, column, animate }: { block: PlacedBlock; column: num
 // "aterrizando" al elegir una sección en planner/builder. La animación corre
 // al montar; como la key de cada bloque incluye el classNbr, un swap de
 // sección remonta el bloque y la repite. Off por defecto (horario, carrito).
-export function WeeklyGrid({ blocks, animate = false }: { blocks: Block[]; animate?: boolean }) {
+export function WeeklyGrid({
+  blocks,
+  animate = false,
+  onSelect,
+}: {
+  blocks: Block[];
+  animate?: boolean;
+  /** Cuando se pasa, cada bloque es accionable por click, tap y teclado. */
+  onSelect?: (block: Block) => void;
+}) {
   const byDay = new Map<DayCode, Block[]>(WEEK_DAYS.map((d) => [d, []]));
   for (const block of blocks) byDay.get(block.day)?.push(block);
 
@@ -140,7 +178,7 @@ export function WeeklyGrid({ blocks, animate = false }: { blocks: Block[]; anima
 
           {days.flatMap((day, i) =>
             layoutDay(byDay.get(day) ?? []).map((block) => (
-              <BlockCard key={block.id} block={block} column={i + 2} animate={animate} />
+              <BlockCard key={block.id} block={block} column={i + 2} animate={animate} onSelect={onSelect} />
             ))
           )}
         </div>

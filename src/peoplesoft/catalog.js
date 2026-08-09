@@ -1,4 +1,6 @@
 import { CLASS_SEARCH_URL } from './constants.js';
+import { mergeSection } from '../shared/sectionMerge.ts';
+import { writeDiagnostic } from '../diagnostics.js';
 import { db, logSync } from '../db.js';
 import { scrapedSectionSchema, normalizeSeatStatus } from '../shared/schemas.ts';
 import { parseMeetings } from '../shared/meetings.ts';
@@ -19,17 +21,37 @@ const upsertCourseStmt = db.prepare(`
     updated_at = datetime('now')
 `);
 
+// Los valores que llegan acá YA pasaron por mergeSection: este statement no
+// decide nada, solo escribe el resultado. La lógica de "lo vacío no pisa lo
+// lleno" vive en shared/sectionMerge.ts, donde se puede probar sola.
 const upsertSectionStmt = db.prepare(`
-  INSERT INTO sections (course_id, term, class_nbr, section, component, instructor, meetings, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  INSERT INTO sections (course_id, term, class_nbr, section, component, instructor, meetings,
+                        instructor_source, meetings_source, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   ON CONFLICT(term, class_nbr) DO UPDATE SET
     course_id = excluded.course_id,
     section = excluded.section,
     component = excluded.component,
     instructor = excluded.instructor,
     meetings = excluded.meetings,
+    instructor_source = excluded.instructor_source,
+    meetings_source = excluded.meetings_source,
     updated_at = datetime('now')
 `);
+
+// Los encuentros ya guardados viven como JSON en una columna de texto. Ojo con
+// el nombre: `parseMeetings` (shared/meetings.ts) parsea el TEXTO del portal
+// ("LuMi 8:00AM - 9:30AM"); esto lee lo que nosotros mismos serializamos. Una
+// fila vieja o corrupta no puede tumbar un sync entero.
+function storedMeetings(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 const recordSeatsStmt = db.prepare(`
   INSERT INTO seats_snapshot (section_id, status, seats_open, seats_cap, wait_total)
@@ -56,19 +78,58 @@ export function coursesMissingTitle() {
 
 // Guarda una sección validada (course + section + snapshot de cupo) en una
 // transacción. `s` ya pasó por scrapedSectionSchema.
-export function saveSection(s) {
+export function saveSection(s, { source = 'class-search' } = {}) {
   const title = resolveTitle(s.courseCode, s.title);
   upsertCourseStmt.run(s.courseCode, s.subject, s.catalogNbr, title, s.career, s.credits);
   const courseId = db.prepare('SELECT id FROM courses WHERE code = ?').get(s.courseCode).id;
+
+  // La correlación es por STRM + class number, que es la UNIQUE de la tabla.
+  // Nunca por código de materia ni por sección: dos grupos de la misma materia
+  // se intercambiarían profesor y aula.
+  const existing = db
+    .prepare(
+      `SELECT section, component, instructor, meetings,
+              instructor_source AS instructorSource, meetings_source AS meetingsSource
+       FROM sections WHERE term = ? AND class_nbr = ?`
+    )
+    .get(s.term, s.classNbr);
+
+  const { fields, conflicts } = mergeSection(
+    existing
+      ? {
+          section: existing.section,
+          component: existing.component,
+          instructor: existing.instructor,
+          meetings: storedMeetings(existing.meetings),
+          instructorSource: existing.instructorSource,
+          meetingsSource: existing.meetingsSource,
+        }
+      : null,
+    { section: s.section, component: s.component, instructor: s.instructor, meetings: s.meetings ?? [] },
+    source
+  );
+
   upsertSectionStmt.run(
     courseId,
     s.term,
     s.classNbr,
-    s.section,
-    s.component,
-    s.instructor,
-    JSON.stringify(s.meetings)
+    fields.section,
+    fields.component,
+    fields.instructor,
+    JSON.stringify(fields.meetings),
+    fields.instructorSource,
+    fields.meetingsSource
   );
+
+  // Una discrepancia no se resuelve en silencio ni rompe el sync: queda escrita
+  // para que se pueda ver por qué dos pantallas del portal dicen cosas distintas.
+  for (const conflict of conflicts) {
+    writeDiagnostic(
+      'section-merge',
+      `${s.term}/${s.classNbr} ${conflict.field}: se conservó "${conflict.kept}" (${conflict.from}) sobre "${conflict.rejected}" (${conflict.over})`
+    );
+  }
+
   const sectionId = db.prepare('SELECT id FROM sections WHERE term = ? AND class_nbr = ?').get(s.term, s.classNbr).id;
   if (s.seats) {
     recordSeatsStmt.run(sectionId, s.seats.status, s.seats.open, s.seats.capacity, s.seats.waitTotal);

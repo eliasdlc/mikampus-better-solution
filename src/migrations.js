@@ -170,6 +170,25 @@ export const MIGRATIONS = [
       db.exec("UPDATE sync_sources SET last_success_at = last_run_at WHERE last_status = 'ok'");
     },
   },
+  {
+    version: 8,
+    name: 'section-field-provenance',
+    // Dos pantallas del portal describen la misma sección y ninguna la describe
+    // completa: View My Classes trae aula y horario pero no profesor, Class
+    // Search trae profesor pero no sabe si estás inscrito. Sin recordar de dónde
+    // salió cada campo, el último scrape en llegar pisaba al anterior y el
+    // profesor desaparecía en cada sync de horario.
+    //
+    // Columnas nuevas y opcionales: una app v1..v7 las ignora y sigue leyendo
+    // secciones igual, así que el rollback es seguro.
+    minCompatibleVersion: 1,
+    up(db) {
+      if (!tableExists(db, 'sections')) return;
+      const columns = db.prepare('PRAGMA table_info(sections)').all().map((column) => column.name);
+      if (!columns.includes('instructor_source')) db.exec('ALTER TABLE sections ADD COLUMN instructor_source TEXT');
+      if (!columns.includes('meetings_source')) db.exec('ALTER TABLE sections ADD COLUMN meetings_source TEXT');
+    },
+  },
 ];
 
 // Las columnas que guardan el IDENTIFICADOR resuelto de un ciclo (STRM si se
