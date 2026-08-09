@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import { fetchSyncState, runSync, type SyncResult, type SyncState } from '../lib/api.ts';
+import { fetchSyncState, runSync, setSyncInterval, type SyncResult, type SyncState } from '../lib/api.ts';
 import { ago } from '../lib/time.ts';
 
 // El control global de sincronización (P1). Antes "actualizar" era un botón que
@@ -30,6 +30,20 @@ function dotClass(status: string | null, expired: boolean, relevant: boolean) {
   return 'bg-open';
 }
 
+// El techo de frescura. Una hora es el default porque es el ritmo al que la
+// información de PeopleSoft deja de servir para decidir algo sin dejar de ser
+// razonable con el portal. "Natural" no es apagar la sincronización: es dejar
+// que cada fuente use su propia frescura (el carrito diez minutos, el avance una
+// semana) en vez de imponerles un techo común.
+const INTERVAL_OPTIONS: { ms: number; label: string }[] = [
+  { ms: 900_000, label: '15 min' },
+  { ms: 1_800_000, label: '30 min' },
+  { ms: 3_600_000, label: '1 h' },
+  { ms: 21_600_000, label: '6 h' },
+  { ms: 86_400_000, label: '24 h' },
+  { ms: 0, label: 'natural' },
+];
+
 function sourceNote(source: SyncState['sources'][number]) {
   if (source.error) return source.error;
   if (!source.relevant) return 'no aplica en este momento del ciclo';
@@ -55,6 +69,11 @@ export function SyncControl() {
       // el caso de una respuesta que llega antes que su evento.
       queryClient.invalidateQueries({ queryKey: ['account-overview'] });
     },
+  });
+
+  const interval = useMutation({
+    mutationFn: setSyncInterval,
+    onSuccess: (state) => queryClient.setQueryData(['sync'], state),
   });
 
   const sources = data?.sources ?? [];
@@ -95,6 +114,36 @@ export function SyncControl() {
           >
             Actualizar todo ahora
           </button>
+        </div>
+
+        {/* Cada cuánto se releen los datos de PeopleSoft. No dispara nada: mueve
+            la línea a partir de la cual el tick del agente sí lo hará. */}
+        <div>
+          <p className="text-muted mb-1 text-xs">Refrescar lo scrapeado cada</p>
+          <div className="flex flex-wrap gap-1">
+            {INTERVAL_OPTIONS.map((option) => (
+              <button
+                key={option.ms}
+                type="button"
+                aria-pressed={(data?.interval.ms ?? 3_600_000) === option.ms}
+                disabled={interval.isPending}
+                onClick={() => interval.mutate(option.ms)}
+                title={
+                  option.ms === 0
+                    ? 'Cada fuente conserva su propia frescura: el carrito 10 min, el avance una semana.'
+                    : `Nada scrapeado se queda más viejo que ${option.label}.`
+                }
+                className={`tabular min-h-7 rounded-full px-2 py-0.5 font-mono text-[11px] transition-colors duration-100 disabled:opacity-50 ${
+                  (data?.interval.ms ?? 3_600_000) === option.ms
+                    ? 'bg-accent text-accent-fg font-medium'
+                    : 'border-line text-muted hover:text-fg border'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {interval.error && <p className="text-closed mt-1 text-xs">{(interval.error as Error).message}</p>}
         </div>
 
         {/* Una pausa no es un fallo: el dato cacheado sigue sirviendo y acá se

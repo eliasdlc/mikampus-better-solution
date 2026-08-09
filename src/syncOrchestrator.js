@@ -1,4 +1,5 @@
 import { db, lastSync } from './db.js';
+import { readMeta, writeMeta } from './appMeta.js';
 import { hasLiveCredentials, withPage } from './session.js';
 import { readTerms, reconcileTerms, planningTerm } from './terms.js';
 import { syncCart } from './peoplesoft/cart.js';
@@ -267,6 +268,53 @@ function writeRow(userId, key, { status, error = null }) {
   ).run(userId, key, successAt, status, error);
 }
 
+// ── Cada cuánto se refresca lo que se scrapea ───────────────────────────────
+//
+// Cada fuente declara su frescura NATURAL: cada cuánto cambia el dato allá
+// afuera. El avance académico no se mueve en una semana; el carrito sí cambia
+// mientras mirás la pantalla.
+//
+// Encima de eso hay un techo global configurable: nada se queda más viejo que
+// este intervalo. Es lo que hace verdadera la frase "los datos se actualizan
+// cada hora" sin tener que tocar siete TTLs a mano, y es un techo y no un piso
+// —el carrito sigue en diez minutos, porque el mínimo de los dos manda.
+const SYNC_INTERVAL_KEY = 'sync.intervalMs';
+export const DEFAULT_SYNC_INTERVAL_MS = HOUR;
+export const MIN_SYNC_INTERVAL_MS = 15 * 60_000;
+export const MAX_SYNC_INTERVAL_MS = 24 * HOUR;
+
+export function syncIntervalMs() {
+  // Contra null explícito: Number(null) es 0, y 0 acá significa "sin techo".
+  // Sin esta guarda, no haber configurado nunca el intervalo desactivaba el
+  // techo de una hora en vez de aplicarlo.
+  const raw = readMeta(SYNC_INTERVAL_KEY);
+  if (raw == null || raw === '') return DEFAULT_SYNC_INTERVAL_MS;
+  const stored = Number(raw);
+  if (!Number.isFinite(stored)) return DEFAULT_SYNC_INTERVAL_MS;
+  // Cero es "sin techo": cada fuente se queda con su frescura natural. Existe
+  // porque hay quien prefiere que el avance no se releva siete veces por semana
+  // solo para cumplir una regla global.
+  if (stored === 0) return 0;
+  return Math.min(Math.max(Math.floor(stored), MIN_SYNC_INTERVAL_MS), MAX_SYNC_INTERVAL_MS);
+}
+
+export function setSyncIntervalMs(ms) {
+  const value = Number(ms);
+  const valid = value === 0 || (Number.isFinite(value) && value >= MIN_SYNC_INTERVAL_MS && value <= MAX_SYNC_INTERVAL_MS);
+  if (!valid) {
+    throw new Error(
+      `El intervalo tiene que ser 0 (sin techo) o estar entre ${MIN_SYNC_INTERVAL_MS / 60_000} min y ${MAX_SYNC_INTERVAL_MS / HOUR} h`
+    );
+  }
+  writeMeta(SYNC_INTERVAL_KEY, String(Math.floor(value)));
+  return syncIntervalMs();
+}
+
+export function effectiveTtlMs(source) {
+  const cap = syncIntervalMs();
+  return cap > 0 ? Math.min(source.ttlMs, cap) : source.ttlMs;
+}
+
 function freshness(userId, source, now) {
   // El éxito vive en sync_log (la misma fila que alimenta el StalenessTag), no
   // en una segunda verdad que pueda desincronizarse. Las fuentes que no
@@ -276,7 +324,7 @@ function freshness(userId, source, now) {
   const syncedAt =
     lastSync(source.key, source.shared ? {} : { userId }) ?? readRow(userId, source.key)?.lastSuccessAt ?? null;
   const ageMs = syncedAt ? now - new Date(`${syncedAt.replace(' ', 'T')}${syncedAt.endsWith('Z') ? '' : 'Z'}`).getTime() : null;
-  const expired = ageMs == null || ageMs >= source.ttlMs;
+  const expired = ageMs == null || ageMs >= effectiveTtlMs(source);
   return { syncedAt, ageMs, expired };
 }
 
@@ -290,6 +338,12 @@ export function syncState(userId, { now = Date.now() } = {}) {
     now: new Date(now).toISOString(),
     running: inFlight.has(userId),
     hold,
+    interval: {
+      ms: syncIntervalMs(),
+      defaultMs: DEFAULT_SYNC_INTERVAL_MS,
+      minMs: MIN_SYNC_INTERVAL_MS,
+      maxMs: MAX_SYNC_INTERVAL_MS,
+    },
     sources: SOURCES.map((source) => {
       const { syncedAt, ageMs, expired } = freshness(userId, source, now);
       const row = readRow(userId, source.key);
@@ -298,7 +352,10 @@ export function syncState(userId, { now = Date.now() } = {}) {
         key: source.key,
         label: source.label,
         dependsOn: source.dependsOn,
-        ttlMs: source.ttlMs,
+        // El TTL que de verdad rige, no el declarado: si el techo global lo
+        // acorta, la UI tiene que mostrar el que se está aplicando.
+        ttlMs: effectiveTtlMs(source),
+        naturalTtlMs: source.ttlMs,
         needsPortal: source.needsPortal,
         syncedAt,
         ageMs,
