@@ -45,6 +45,16 @@ import {
   type GradesResponse,
   type PensumResponse,
   type HoldsResponse,
+  mesaResponseSchema,
+  mesaSolveResponseSchema,
+  termPhaseResponseSchema,
+  termEventsResponseSchema,
+  type TermEventInput,
+  type TermEventsResponse,
+  type MesaResponse,
+  type MesaSolveResponse,
+  type ScheduleConstraintsInput,
+  type TermPhaseResponse,
 } from '../../../src/shared/schemas.ts';
 import { z } from 'zod';
 
@@ -856,4 +866,59 @@ export async function runSync(input: { force?: boolean; keys?: string[] } = {}) 
   return z
     .object({ results: z.array(syncResultSchema), state: syncStateSchema })
     .parse(await send('/api/sync', 'POST', input));
+}
+
+
+// ── Mesa de inscripción ─────────────────────────────────────────────────────
+// Una sola llamada trae lo inscrito, lo pendiente que se oferta, la selección,
+// la fase del ciclo y la antigüedad del cupo. Las tres mutaciones devuelven la
+// mesa entera y no un fragmento: así la pantalla nunca queda con la selección
+// nueva y los totales viejos.
+
+export async function fetchMesa(term?: string): Promise<MesaResponse> {
+  const query = term ? `?term=${encodeURIComponent(term)}` : '';
+  return mesaResponseSchema.parse(await getJSON(`/api/mesa${query}`));
+}
+
+export async function setMesaSelection(input: {
+  term: string;
+  courseId: number;
+  sectionId: number | null;
+  relatedSectionId?: number | null;
+}): Promise<MesaResponse> {
+  return mesaResponseSchema.parse(await send('/api/mesa/seleccion', 'PUT', input));
+}
+
+export async function clearMesaSelection(input: { term: string; courseId: number }): Promise<MesaResponse> {
+  const query = `?term=${encodeURIComponent(input.term)}`;
+  return mesaResponseSchema.parse(await send(`/api/mesa/seleccion/${input.courseId}${query}`, 'DELETE'));
+}
+
+export async function solveMesa(input: {
+  term: string;
+  courseIds?: number[];
+  constraints?: Partial<ScheduleConstraintsInput>;
+}): Promise<MesaSolveResponse> {
+  return mesaSolveResponseSchema.parse(await send('/api/mesa/armar', 'POST', input));
+}
+
+// ── Fase del ciclo ──────────────────────────────────────────────────────────
+// El único lugar desde el que la app gatea capacidades. Que venga resuelto del
+// backend es el punto: si cada pantalla comparara fechas por su cuenta, en dos
+// semanas habría tres reglas distintas.
+export async function fetchTermPhase(term?: string): Promise<TermPhaseResponse> {
+  const query = term ? `?term=${encodeURIComponent(term)}` : '';
+  return termPhaseResponseSchema.parse(await getJSON(`/api/term-phase${query}`));
+}
+
+export async function fetchTermEvents(term?: string): Promise<TermEventsResponse> {
+  const query = term ? `?term=${encodeURIComponent(term)}` : '';
+  return termEventsResponseSchema.parse(await getJSON(`/api/term-events${query}`));
+}
+
+// Reemplaza el calendario cargado a mano de un ciclo: borrar una fecha es no
+// mandarla. Devuelve la fase ya recalculada para que la pantalla no tenga que
+// pedirla aparte y quedar un instante con la fecha nueva y la etapa vieja.
+export async function saveTermEvents(term: string, events: TermEventInput[]): Promise<TermPhaseResponse> {
+  return termPhaseResponseSchema.parse(await send('/api/term-events', 'PUT', { term, events }));
 }

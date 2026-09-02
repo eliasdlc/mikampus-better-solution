@@ -18,6 +18,8 @@ const ROUTES = [
   '/inscripcion',
   '/inscripcion?etapa=grupos',
   '/inscripcion?etapa=carrito',
+  '/mesa',
+  '/ciclo',
   '/academico',
   '/ajustes',
 ];

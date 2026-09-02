@@ -274,6 +274,81 @@ function blockerText(eligibility: Eligibility, plan: PensumPlan | null): string 
   return 'No cumple los requisitos del plan académico.';
 }
 
+// Una materia que te falta y que ESTE ciclo se oferta. Es lo mismo que el
+// recomendador usa por dentro para armar su propuesta, pero sin recortar por
+// carga: la mesa las muestra todas y el estudiante decide cuáles se lleva.
+//
+// Los créditos ya vienen resueltos por creditsOf, que mira primero el plan
+// oficial: el Class Search deja `credits` en null en 900 de 907 materias, así
+// que sumar desde el catálogo daría cero.
+// Ya cursada, cursando o convalidada: las tres cuentan como hecha y sacan la
+// materia de lo pendiente. Vive en una función porque la usan el recomendador y
+// la mesa, y que las dos discrepen sobre qué es "hecha" sería el peor bug
+// posible de esa pantalla.
+function completedCodes(history: RecommendationHistoryItem[]): Set<string> {
+  return new Set(
+    history
+      .filter((item) => item.courseCode && ['taken', 'in_progress', 'transferred'].includes(item.status))
+      .map((item) => item.courseCode as string)
+  );
+}
+
+export type PendingCourse = {
+  courseId: number;
+  code: string;
+  title: string;
+  credits: number;
+  kind: 'obligatoria' | 'electiva';
+  groupId: number;
+  groupLabel: string;
+  periodLabel: string;
+  // Posición del período dentro del pénsum: lo que hace que "lo más atrasado
+  // primero" sea un orden y no una opinión.
+  position: number;
+};
+
+export function pendingOfferedCourses({
+  requirements,
+  history = [],
+  catalog,
+  plan = null,
+  exclude = [],
+}: {
+  requirements: RequirementGroup | null;
+  history?: RecommendationHistoryItem[];
+  catalog: CatalogCourse[];
+  plan?: PensumPlan | null;
+  exclude?: string[];
+}): PendingCourse[] {
+  if (!requirements) return [];
+  const catalogByCode = new Map(catalog.map((course) => [course.code, course]));
+  const tasks = buildTasks(requirements, catalogByCode, completedCodes(history), plan, new Set(exclude));
+
+  const seen = new Set<number>();
+  const out: PendingCourse[] = [];
+  for (const task of tasks) {
+    for (const option of task.options) {
+      // Una materia puede aparecer en dos grupos (una electiva que también
+      // cuenta en otro bloque). Se muestra una vez, atribuida al primero, que
+      // por el orden de buildTasks es el período más atrasado.
+      if (seen.has(option.course.id)) continue;
+      seen.add(option.course.id);
+      out.push({
+        courseId: option.course.id,
+        code: option.course.code,
+        title: option.course.title,
+        credits: option.credits,
+        kind: task.kind,
+        groupId: task.group.id,
+        groupLabel: task.group.label,
+        periodLabel: periodLabel(task.period),
+        position: task.period.position,
+      });
+    }
+  }
+  return out;
+}
+
 export function recommendCourses({
   requirements,
   plan = null,
