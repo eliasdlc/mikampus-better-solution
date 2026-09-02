@@ -5,6 +5,9 @@ import { persistRamCredential, withPage, resetSession, shutdown } from './sessio
 import { readCart, removeFromCart, saveCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readCatalog, seatHistory, syncCatalogCourse, applyPlanFacts, readHomeCampus, setHomeCampus } from './peoplesoft/catalog.js';
+import { readTermEvents, saveTermEvents, termPhase } from './termEvents.js';
+import { readMesa, mesaPlan } from './mesa.js';
+import { solveCombinations, NO_CONSTRAINTS } from './shared/solver.ts';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
 import { readTerms, reconcileTerms, planningTerm } from './terms.js';

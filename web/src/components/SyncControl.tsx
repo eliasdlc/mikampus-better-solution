@@ -92,7 +92,7 @@ export function SyncControl() {
   return (
     <details className="group order-5 w-full md:order-none">
       <summary className="text-muted hover:text-fg flex cursor-pointer list-none items-center gap-1.5 text-xs marker:content-none">
-        <RefreshCw className={`size-3 shrink-0 ${busy ? 'animate-spin' : ''}`} aria-hidden />
+        <RefreshCw className="size-3 shrink-0" aria-hidden />
         <span className="truncate">{busy ? 'actualizando…' : summary}</span>
       </summary>
 

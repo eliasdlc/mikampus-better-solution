@@ -5,7 +5,7 @@ import { clearMesaSelection, fetchMesa, sendPlanToCart, setMesaSelection } from 
 import { hasCollisions, sectionToBlocks, type Block } from '../lib/grid.ts';
 import { meetingsOverlap } from '../../../src/shared/meetings.ts';
 import type { MesaCandidate, MesaResponse, MesaSection } from '../../../src/shared/schemas.ts';
-import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
+import { WeeklyGrid, type BloqueDetalle } from '../components/WeeklyGrid.tsx';
 import { Capacidad, capabilityOf } from '../components/Capacidad.tsx';
 import { HojaSecretaria } from '../components/HojaSecretaria.tsx';
 import { Condiciones, type CondicionesValue, SIN_CONDICIONES } from '../components/Condiciones.tsx';
@@ -221,6 +221,7 @@ export function Mesa() {
   const queryClient = useQueryClient();
   const [ghost, setGhost] = useState<{ course: MesaCandidate; section: MesaSection } | null>(null);
   const [hoja, setHoja] = useState(false);
+  const [detalle, setDetalle] = useState<BloqueDetalle | null>(null);
   const [condiciones, setCondiciones] = useState<CondicionesValue>(SIN_CONDICIONES);
 
   const mesa = useQuery({ queryKey: ['mesa'], queryFn: () => fetchMesa() });
@@ -282,6 +283,11 @@ export function Mesa() {
   }
 
   const choque = hasCollisions(blocks);
+  const elegidas = new Set(
+    (data.plan?.items ?? []).flatMap((item) =>
+      [item.section?.classNbr, item.relatedSection?.classNbr].filter((n): n is string => !!n)
+    )
+  );
   const puedeCarrito = capabilityOf(data.phase, 'mandar-al-carrito');
   const porPeriodo = new Map<string, MesaCandidate[]>();
   for (const course of data.candidates) {
@@ -334,7 +340,50 @@ export function Mesa() {
         </p>
       )}
 
-      <WeeklyGrid blocks={conFantasma} animate />
+      {/* Lo elegido se marca con anillo y punto, no volviéndose acento: acá el
+          color ES la materia, y si al elegir se vuelve azul se pierde la única
+          pista de qué bloque pertenece a cuál justo mientras se comparan. */}
+      <WeeklyGrid blocks={conFantasma} animate selectedIds={elegidas} onSelect={setDetalle} />
+
+      {/* El detalle de un bloque. El profesor y el aula vivían solo en el
+          atributo title, que en teléfono no existe y con teclado tampoco. */}
+      {detalle && (
+        <div className="border-line bg-surface-2 rounded-[var(--radius)] border px-3 py-2.5 text-sm">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">
+                {detalle.code} <span className="text-muted font-normal">{detalle.title}</span>
+              </p>
+              <dl className="text-muted mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+                <dt>Cuándo</dt>
+                <dd className="tabular text-fg font-mono">
+                  {detalle.start}–{detalle.end}
+                </dd>
+                <dt>Grupo</dt>
+                <dd className="text-fg">
+                  {detalle.section ?? `NRC ${detalle.classNbr}`} {detalle.component ?? ''}
+                </dd>
+                <dt>Profesor</dt>
+                <dd className="text-fg">{detalle.instructor ?? 'no asignado'}</dd>
+                <dt>Aula</dt>
+                {/* Ausente explícito: el portal la publica en 34 de 1427
+                    secciones del ciclo, así que decirlo vale más que un vacío. */}
+                <dd className="text-fg">{detalle.room ?? 'no publicada'}</dd>
+              </dl>
+              {detalle.conflictsWith.length > 0 && (
+                <p className="text-closed mt-2 text-xs">Choca con {detalle.conflictsWith.join(', ')}</p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setDetalle(null)}
+              className="text-muted hover:text-fg shrink-0 rounded px-2 py-1 text-xs"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
 
       <Condiciones
         term={data.term}
@@ -363,7 +412,15 @@ export function Mesa() {
                 <span className="font-medium">{course.code}</span>
                 <span className="text-muted">{course.title}</span>
                 <span className="tabular text-muted ml-auto font-mono text-xs">
-                  {course.sections.map((section) => `${section.section ?? '?'} ${section.component ?? ''}`).join(' · ')}
+                  {/* View My Classes no publica el número de grupo, así que en
+                      lo ya inscrito suele faltar. Un "?" se lee como un dato
+                      roto; el NRC sí existe siempre y es lo que la oficina
+                      teclea, así que es lo que se muestra cuando no hay grupo. */}
+                  {course.sections
+                    .map((section) =>
+                      [section.section ?? `NRC ${section.classNbr}`, section.component].filter(Boolean).join(' ')
+                    )
+                    .join(' · ')}
                 </span>
               </li>
             ))}
@@ -444,7 +501,7 @@ export function Mesa() {
             <button
               type="button"
               onClick={() => window.print()}
-              className="bg-accent text-accent-fg rounded-full px-3 py-1.5 text-sm font-medium"
+              className="border-line hover:bg-surface-2 rounded-full border px-3 py-1.5 text-sm"
             >
               Imprimir
             </button>

@@ -412,7 +412,7 @@ function HoldsCard({
     <section className="border-line bg-surface rounded-[var(--radius)] border p-4">
       <div className="text-muted text-xs">Holds y pendientes</div>
       {loading ? (
-        <div className="mt-2 h-10 animate-pulse rounded bg-surface-2" />
+        <div className="bg-surface-2 text-muted mt-2 grid h-10 place-items-center rounded text-xs">Cargando…</div>
       ) : !syncedAt ? (
         <>
           <p className="mt-2 text-sm font-medium">Todavía no los consultaste.</p>

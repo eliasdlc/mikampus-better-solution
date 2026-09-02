@@ -12,7 +12,12 @@ import {
   paletteFor,
   timeWindow,
   toBlocks,
-  toGridLine,
+  foldBands,
+  bandLine,
+  bandRows,
+  visibleDays,
+  MIN_HORAS_PLEGABLES,
+  FILAS_POR_HORA,
 } from '../web/src/lib/grid.ts';
 
 const block = (id, start, end, title = id) => ({
@@ -43,13 +48,25 @@ const block = (id, start, end, title = id) => ({
   assert.deepEqual(placed.map((p) => p.conflictsWith), [[], []]);
 }
 
-// Choque real: dos carriles, y cada uno sabe contra qué choca.
+// Choque real: dos carriles, y cada uno sabe contra qué choca. Se nombra por
+// código y sección porque dos secciones de la MISMA materia se leían idénticas,
+// que es justo el caso en que saber contra qué chocás importa.
 {
-  const placed = layoutDay([block('a', '10:00', '13:00', 'Estructuras'), block('b', '12:00', '14:00', 'Bases')]);
+  const a = { ...block('a', '10:00', '13:00', 'Estructuras'), code: 'ICC-303', section: '101' };
+  const b = { ...block('b', '12:00', '14:00', 'Bases'), code: 'ICC-303', section: '102' };
+  const placed = layoutDay([a, b]);
   assert.deepEqual(placed.map((p) => p.lane), [0, 1], 'se reparten la columna');
   assert.deepEqual(placed.map((p) => p.lanes), [2, 2]);
-  assert.deepEqual(placed[0].conflictsWith, ['Bases']);
-  assert.deepEqual(placed[1].conflictsWith, ['Estructuras']);
+  assert.deepEqual(placed[0].conflictsWith, ['ICC-303 102']);
+  assert.deepEqual(placed[1].conflictsWith, ['ICC-303 101']);
+}
+
+// Sin número de sección se cae al NRC, que siempre existe.
+{
+  const a = { ...block('a', '10:00', '12:00'), code: 'ICC-303', section: null, classNbr: '5822' };
+  const b = { ...block('b', '11:00', '13:00'), code: 'MAT-241', section: null, classNbr: '6100' };
+  const placed = layoutDay([a, b]);
+  assert.deepEqual(placed[0].conflictsWith, ['MAT-241 NRC 6100']);
 }
 
 // Un choque a la mañana no puede adelgazar un bloque suelto de la tarde.
@@ -129,13 +146,6 @@ const block = (id, start, end, title = id) => ({
   assert.equal(blocks.length, 2, 'MoWe → dos bloques; la TBA no genera bloque');
   assert.deepEqual(blocks.map((b) => b.day), ['Mo', 'We']);
   assert.equal(blocks[0].room, 'A-201');
-}
-
-// El grid arranca a las 7:00 en la fila 2 (la 1 es la cabecera de días).
-{
-  assert.equal(toGridLine('07:00', 7, 15), 2, '7:00 es la primera fila del cuerpo');
-  assert.equal(toGridLine('08:00', 7, 15), 6, 'una hora = 4 slots de 15min');
-  assert.equal(toGridLine('22:00', 7, 15), 62, '22:00 es la línea de cierre');
 }
 
 // hasCollisions: la señal sí/no que usa /inscripcion, sobre Block[] sin colocar.
@@ -264,11 +274,14 @@ const conCodigo = (code, id, start, end) => ({ ...block(id, start, end, code), c
   assert.deepEqual(directo, alReves, 'el mismo conjunto en otro orden da el mismo mapa');
 }
 
-// Una sola materia: no hay división por cero ni tono fuera de rango.
+// Una sola materia: no hay división por cero ni tono fuera de rango, y el tono
+// cae en el punto opuesto al acento, que es lo más lejos que puede estar.
 {
   const palette = paletteFor([conCodigo('ICC-104', 'a', '08:00', '10:00')]);
   assert.equal(palette.size, 1);
-  assert.equal(palette.get('ICC-104'), 0, 'la única materia arranca el círculo');
+  const hue = palette.get('ICC-104');
+  assert.ok(hue >= 0 && hue < 360, `tono dentro del círculo: ${hue}`);
+  assert.equal(Math.round(Math.abs(hue - 264)), 180, 'con una sola materia, el tono opuesto al acento');
 }
 
 // Sin bloques, mapa vacío (el caso del carrito recién abierto).
@@ -285,6 +298,124 @@ const conCodigo = (code, id, start, end) => ({ ...block(id, start, end, code), c
   assert.equal(new Set(palette.values()).size, 20, '20 materias visibles, 20 tonos');
 }
 
+// Ningún tono de materia cae encima del acento: si lo hiciera, el color dejaría
+// de distinguir "esto es una materia" de "esto es una acción".
+{
+  const distanciaAlAcento = (hue) => Math.min(Math.abs(hue - 264), 360 - Math.abs(hue - 264));
+  for (const n of [1, 2, 3, 4, 6, 14]) {
+    const bloques = Array.from({ length: n }, (_, i) => conCodigo(`MAT-${100 + i}`, `b${i}`, '08:00', '10:00'));
+    const paleta = paletteFor(bloques);
+    const minima = Math.min(...[...paleta.values()].map(distanciaAlAcento));
+    const separacion = 360 / n;
+    assert.ok(
+      minima >= separacion / 2 - 0.01,
+      `con ${n} materias el tono más cercano al acento está a ${minima.toFixed(1)} grados, y el máximo posible es ${(separacion / 2).toFixed(1)}`
+    );
+  }
+}
+
+// Un fantasma no toma carril: se pinta encima y con inset, así que ocupar uno
+// partía la columna en dos justo mientras se compara una candidata.
+{
+  const real = block('r', '10:00', '12:00');
+  const fantasma = { ...block('f', '10:00', '12:00'), ghost: true };
+  const colocados = layoutDay([real, fantasma]);
+  const puesto = (id) => colocados.find((b) => b.id === id);
+  assert.equal(puesto('r').lanes, 1, 'el bloque real se queda con la columna entera');
+  assert.equal(puesto('r').lane, 0);
+  assert.equal(puesto('f').lanes, 1, 'el fantasma no divide nada');
+  assert.deepEqual(puesto('r').conflictsWith, [], 'un fantasma tampoco es un choque real');
+}
+
+// ── Bandas plegadas ────────────────────────────────────────────────────────
+// La ventana dinámica sola no alcanza: un horario de 10:00 a 21:00 con seis
+// horas de clase sigue costando once filas. Plegar lo que ningún día usa es lo
+// que baja la grilla a la mitad.
+
+const enDia = (day, id, start, end) => ({ ...block(id, start, end), day });
+
+// El caso real: clase de mañana, clase de noche, tarde libre de cinco horas.
+{
+  const bands = foldBands([enDia('Th', 'a', '10:00', '13:00'), enDia('Th', 'b', '18:00', '21:00')], {
+    startHour: 10,
+    endHour: 21,
+  });
+  const plegadas = bands.filter((b) => b.kind === 'plegada');
+  assert.equal(plegadas.length, 1, 'la tarde libre se pliega en una sola tira');
+  assert.deepEqual(
+    { desde: plegadas[0].fromHour, hasta: plegadas[0].toHour, horas: plegadas[0].hours },
+    { desde: 13, hasta: 18, horas: 5 }
+  );
+  assert.equal(bands.filter((b) => b.kind === 'hora').length, 6, 'quedan las seis horas con clase');
+  // Once horas costaban 22 filas de media hora; ahora son 12 más la tira.
+  assert.equal(bandRows(bands), 6 * FILAS_POR_HORA + 1);
+}
+
+// Dos horas vacías YA se pliegan: cada hora son dos filas de media hora, así
+// que plegar dos cambia cuatro filas por una tira. Es el umbral del mock.
+{
+  const bands = foldBands([enDia('Mo', 'a', '10:00', '11:00'), enDia('Mo', 'b', '13:00', '14:00')], {
+    startHour: 10,
+    endHour: 14,
+  });
+  assert.equal(MIN_HORAS_PLEGABLES, 2);
+  const plegadas = bands.filter((x) => x.kind === 'plegada');
+  assert.equal(plegadas.length, 1, 'las dos horas de hueco se pliegan');
+  assert.equal(plegadas[0].hours, 2);
+}
+
+// Una sola hora vacía no se pliega: cambiar dos filas por una tira no gana nada
+// y parte la lectura del día.
+{
+  const bands = foldBands([enDia('Mo', 'a', '10:00', '11:00'), enDia('Mo', 'b', '12:00', '13:00')], {
+    startHour: 10,
+    endHour: 13,
+  });
+  assert.equal(bands.filter((x) => x.kind === 'plegada').length, 0, 'una hora sola no se pliega');
+  assert.equal(bands.length, 3);
+}
+
+// Una hora que un día usa NO se pliega aunque otro día la tenga libre: la
+// grilla es una sola y la banda es compartida.
+{
+  const bands = foldBands([enDia('Mo', 'a', '10:00', '11:00'), enDia('Fr', 'b', '14:00', '15:00')], {
+    startHour: 10,
+    endHour: 15,
+  });
+  assert.deepEqual(bands.map((b) => b.kind), ['hora', 'plegada', 'hora']);
+  assert.equal(bands[1].hours, 3, 'de 11 a 14 nadie tiene clase');
+}
+
+// bandLine ubica una hora en su fila, y una que cayó dentro de la tira se ancla
+// al borde: no tiene fila propia.
+{
+  const bands = [
+    { kind: 'hora', hour: 10 },
+    { kind: 'plegada', fromHour: 11, toHour: 14, hours: 3 },
+    { kind: 'hora', hour: 14 },
+  ];
+  assert.equal(bandLine(bands, '10:00'), 2, 'la primera banda arranca en la fila 2');
+  assert.equal(bandLine(bands, '10:30'), 3, 'la media hora tiene su propia fila');
+  assert.equal(bandLine(bands, '11:00'), 4, 'el inicio de la tira');
+  assert.equal(bandLine(bands, '12:30'), 4, 'una hora plegada se ancla al borde de la tira');
+  assert.equal(bandLine(bands, '14:00'), 5, 'después de la tira');
+  assert.equal(bandLine(bands, '15:00'), 7, 'el final de la última banda');
+}
+
+// ── Días visibles ──────────────────────────────────────────────────────────
+// Salen de los bloques y no de una lista fija: un bloque en domingo dejaba de
+// dibujarse en silencio porque la lista de días no tenía la clave.
+{
+  assert.deepEqual(
+    visibleDays([enDia('Th', 'a', '10:00', '13:00'), enDia('Sa', 'b', '08:00', '10:00')]),
+    ['Th', 'Sa'],
+    'solo los días con clase, en orden de semana'
+  );
+  assert.deepEqual(visibleDays([enDia('Su', 'a', '08:00', '10:00')]), ['Su'], 'domingo se dibuja si aparece');
+  assert.equal(visibleDays([enDia('Th', 'a', '10:00', '13:00')], { all: true }).length, 6, 'el botón de ver los seis');
+  assert.deepEqual(visibleDays([]), ['Mo', 'Tu', 'We', 'Th', 'Fr'], 'sin bloques, la semana laboral');
+}
+
 console.log(
-  '✓ Layout del WeeklyGrid OK (carriles, choques, bordes, TBA, hasCollisions, ventana horaria, paleta por conjunto visible).'
+  '✓ Layout del WeeklyGrid OK (carriles, choques, bordes, TBA, ventana horaria, paleta por conjunto, bandas plegadas y días visibles).'
 );

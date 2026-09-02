@@ -48,7 +48,7 @@ export function MoreSectionsButton({
         title="Consulta el portal en vivo y guarda todos los grupos de esta materia"
         className="border-line hover:bg-surface-2 inline-flex min-h-8 items-center gap-1.5 rounded-[var(--radius)] border px-2.5 py-1 text-xs disabled:opacity-50"
       >
-        <RefreshCw className={`size-3.5 ${sync.isPending ? 'animate-spin' : ''}`} aria-hidden />
+        <RefreshCw className="size-3.5" aria-hidden />
         {sync.isPending ? 'Consultando el portal…' : 'Ver más grupos'}
       </button>
       {/* Que la consulta no haya traído nada nuevo es información, no un

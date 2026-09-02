@@ -1,187 +1,408 @@
-import { DAY_LABELS, WEEK_DAYS, type DayCode } from '../../../src/shared/meetings.ts';
-import { courseColor } from '../lib/color.ts';
-import { layoutDay, toGridLine, type Block, type PlacedBlock } from '../lib/grid.ts';
+import { useMemo, useRef, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
+import { DAY_LABELS, type DayCode } from '../../../src/shared/meetings.ts';
+import { hueColor } from '../lib/color.ts';
+import {
+  FILAS_POR_HORA,
+  bandLine,
+  bandRows,
+  foldBands,
+  layoutDay,
+  paletteFor,
+  timeWindow,
+  visibleDays,
+  type Band,
+  type Block,
+  type PlacedBlock,
+} from '../lib/grid.ts';
 
-// El corazón visual de la app (plan §2): CSS Grid propio en vez de una librería
-// de calendario. El dominio es fijo — Lun–Sáb, 7:00–22:00, slots de 15min — así
-// que son 60 filas y control total del color, los choques y el responsive, a
-// cambio de ~200 líneas y 0KB de dependencias.
+// El corazón visual de la app: CSS Grid propio en vez de una librería de
+// calendario. Control total del color, los choques y el responsive a cambio de
+// unas 350 líneas y 0KB de dependencias.
 //
-// Todo se coloca como item del mismo grid (nada de posicionamiento absoluto):
-// la fila sale de la hora y la columna del día. Los bloques que chocan comparten
-// celda y se reparten el ancho con margin/width en %.
-const START_HOUR = 7;
-const END_HOUR = 22;
-const SLOT_MINUTES = 15;
-// Ancho de la canaleta de horas. Se usa en dos lugares que tienen que coincidir
-// sí o sí: el ancho de la columna y el scroll-padding que la compensa.
+// Lo que lo separa de la versión anterior, y por qué:
+//
+//   1. VENTANA DERIVADA Y BANDAS PLEGADAS. Era 7:00 a 22:00 fijo: quince horas
+//      de grilla para mostrar seis. La ventana ahora sale de los bloques, y
+//      además las horas que ningún día usa se pliegan en una tira con su
+//      cuenta. Un hueco de cinco horas es tu tarde libre: es información, así
+//      que la tira lo dice y se despliega, no se borra.
+//   2. FILA FIJA DE MEDIA HORA en vez de 1fr. Las 1319 reuniones del catálogo
+//      empiezan y terminan en hora en punto: no existe el bloque de 45 minutos,
+//      así que los slots de 15 eran sesenta filas para quince posiciones. Y con
+//      1fr el bloque más corto de la pantalla decidía el alto de toda la grilla.
+//   3. DÍAS QUE SALEN DE LOS BLOQUES. Con el horario real quedan dos columnas y
+//      a 393px son anchas de verdad. Un bloque en domingo dejaba de dibujarse
+//      en silencio porque la lista de días no tenía la clave.
+//   4. EL CHOQUE SE LEE SIN LEER: contorno, glifo y la palabra dentro del
+//      bloque, más un panel que lo dice en prosa. El motivo vivía solo en un
+//      atributo title, que en teléfono no existe y con teclado tampoco.
+//   5. EL COMPONENTE SE DISTINGUE POR FORMA, no por tono: la barra de una
+//      teórica es sólida y la de una práctica segmentada. Hace falta porque el
+//      color ahora se reparte sobre las materias visibles y puede cambiar entre
+//      pantallas; por eso el código va SIEMPRE escrito en el bloque.
+//   6. LA GRILLA ES UNA SOLA PARADA DE TABULACIÓN con foco rotativo por
+//      flechas, no doce paradas que hay que atravesar para llegar al botón de
+//      abajo.
+
+// Alto de una fila de media hora. Fijo y no 1fr: así la grilla mide lo que
+// tiene que medir y el bloque más corto deja de decidir el alto de todo.
+const FILA = '1.75em';
+// La tira de una banda plegada. Más baja que una hora real para que se lea como
+// lo que es: un salto, no tiempo.
+const FILA_PLEGADA = '2.9em';
 const GUTTER = '3.25rem';
-const SLOTS = ((END_HOUR - START_HOUR) * 60) / SLOT_MINUTES;
-const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
 
-const hourRow = (i: number) => `${i * 4 + 2} / span 4`;
+export type BloqueDetalle = PlacedBlock & { hue: number };
 
-function BlockCard({
+// La barra de color dice el componente por FORMA. Una teórica es sólida, una
+// práctica segmentada. El tono dice la materia; la forma dice qué parte de esa
+// materia es, así que ninguna de las dos cosas depende de distinguir dos tonos.
+function barra(color: string, component: string | null): string {
+  return `3px ${component === 'PRA' ? 'dashed' : 'solid'} ${color}`;
+}
+
+function Bloque({
   block,
   column,
+  hue,
+  bands,
   animate,
+  selected,
+  focused,
   onSelect,
 }: {
   block: PlacedBlock;
   column: number;
+  hue: number;
+  bands: Band[];
   animate: boolean;
-  onSelect?: (block: PlacedBlock) => void;
+  selected: boolean;
+  focused: boolean;
+  onSelect?: (block: BloqueDetalle) => void;
 }) {
-  const color = courseColor(block.code);
-  const clash = block.conflictsWith.length > 0;
+  const color = hueColor(hue);
+  const choca = block.conflictsWith.length > 0;
+  const etiqueta = [
+    `${block.code} ${block.title}`,
+    `${block.start} a ${block.end}`,
+    block.room ?? 'aula no publicada',
+    block.instructor ?? 'profesor no asignado',
+    choca ? `choca con ${block.conflictsWith.join(', ')}` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
 
   return (
-    <div
-      className={`z-10 m-px overflow-hidden rounded-[var(--radius)] px-1.5 py-1 text-left text-[11px] leading-tight ${
-        block.ghost ? 'opacity-45' : ''
+    <button
+      type="button"
+      disabled={!onSelect}
+      tabIndex={onSelect && focused ? 0 : -1}
+      aria-label={onSelect ? etiqueta : undefined}
+      aria-pressed={onSelect && selected ? true : undefined}
+      // El click sincroniza el índice de foco: sin esto, tocar un bloque y
+      // después apretar Enter abría el detalle del que tuviera el índice.
+      onClick={onSelect ? () => onSelect({ ...block, hue }) : undefined}
+      className={`overflow-hidden rounded-[var(--radius)] py-1 pr-1.5 pl-1.5 text-left text-[11px] leading-tight ${
+        block.ghost ? 'pointer-events-none z-20' : 'z-10'
       } ${animate && !block.ghost ? 'block-land' : ''} ${
-        onSelect ? 'focus-visible:outline-accent cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-1' : ''
+        onSelect ? 'cursor-pointer hover:brightness-95 dark:hover:brightness-110' : ''
+      } ${
+        focused ? 'outline-accent outline-2 outline-offset-1' : ''
       }`}
       style={{
         gridColumn: column,
-        gridRow: `${toGridLine(block.start, START_HOUR, SLOT_MINUTES)} / ${toGridLine(block.end, START_HOUR, SLOT_MINUTES)}`,
-        // Carriles: dos clases a la misma hora se reparten la columna en vez
-        // de taparse. Con una sola, esto es 0% / 100%.
-        marginLeft: `${(block.lane * 100) / block.lanes}%`,
-        width: `calc(${100 / block.lanes}% - 2px)`,
-        // El color de la materia tiñe el bloque; la barra va a color pleno para
-        // que el hue se lea aun en bloques cortos.
-        background: `color-mix(in oklch, ${color} 22%, var(--surface))`,
-        borderLeft: `3px solid ${color}`,
-        // El fantasma (preview de hover en el builder) se distingue también
-        // por forma, no solo por opacidad: borde punteado alrededor.
+        gridRow: `${bandLine(bands, block.start)} / ${bandLine(bands, block.end)}`,
+        // El fantasma va ENCIMA y con inset, fuera del reparto de carriles: no
+        // parte la columna en dos justo cuando estás comparando, y el inset
+        // deja ver la barra y el contorno del bloque real que está pisando.
+        marginLeft: block.ghost ? '0.3em' : `${(block.lane * 100) / block.lanes}%`,
+        marginRight: block.ghost ? '0.3em' : undefined,
+        width: block.ghost ? undefined : `calc(${100 / block.lanes}% - 2px)`,
+        background: `color-mix(in oklch, ${color} ${block.ghost ? 12 : 22}%, var(--surface))`,
+        // El fantasma se distingue también por forma, no solo por opacidad.
         border: block.ghost ? `1px dashed ${color}` : undefined,
-        // Un choque se raya en rojo: se ve que algo está mal sin leer nada.
-        backgroundImage: clash
-          ? 'repeating-linear-gradient(45deg, transparent, transparent 5px, color-mix(in oklch, var(--closed) 30%, transparent) 5px, color-mix(in oklch, var(--closed) 30%, transparent) 10px)'
-          : undefined,
-        outline: clash ? '1px solid var(--closed)' : undefined,
+        borderLeft: barra(color, block.component),
+        outline: choca ? '1.5px solid var(--closed)' : undefined,
+        // Seleccionado NO se vuelve acento. Acá el color ES la materia: si al
+        // elegir se vuelve azul, se pierde la única pista de qué bloque es de
+        // qué materia justo mientras se comparan. Anillo y punto.
+        boxShadow: selected ? 'inset 0 0 0 1.5px var(--accent)' : undefined,
       }}
-      // El title nativo se conserva como atajo con mouse, pero ya no es el
-      // ÚNICO camino a esta información: cuando hay onSelect, el bloque es un
-      // botón real y el detalle abre con Enter, con tap y con click (P4 §5).
-      title={
-        clash
-          ? `${block.title} · ${block.start}–${block.end} — choca con ${block.conflictsWith.join(', ')}`
-          : [block.title, `${block.start}–${block.end}`, block.room, block.instructor].filter(Boolean).join('\n')
-      }
-      {...(onSelect
-        ? {
-            role: 'button' as const,
-            tabIndex: 0,
-            'aria-label': `${block.title}, ${block.start} a ${block.end}, ${block.room ?? 'aula por definir'}, ${block.instructor ?? 'profesor no publicado'}`,
-            onClick: () => onSelect(block),
-            onKeyDown: (event: React.KeyboardEvent) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                onSelect(block);
-              }
-            },
-          }
-        : {})}
     >
-      <div className="truncate font-medium">{block.title}</div>
+      <div className="flex items-baseline gap-1">
+        <span className="min-w-0 flex-1 truncate font-medium">{block.code}</span>
+        {/* El componente se dice con palabra además de con la forma de la
+            barra: una forma es una pista, la palabra es el dato. */}
+        {block.component && <span className="shrink-0 text-[9px] opacity-70">{block.component}</span>}
+        {selected && <span className="bg-accent size-1.5 shrink-0 rounded-full" aria-hidden />}
+      </div>
+      <div className="truncate opacity-80">{block.title}</div>
       <div className="tabular truncate font-mono text-[10px] opacity-70">
         {block.start}–{block.end}
       </div>
-      {block.room && <div className="truncate text-[10px] opacity-70">{block.room}</div>}
-    </div>
+      {choca && (
+        <div className="text-closed flex items-center gap-1 text-[10px] font-medium">
+          <AlertTriangle className="size-3 shrink-0" aria-hidden />
+          choca
+        </div>
+      )}
+    </button>
   );
 }
 
-// `animate` prende el único momento orquestado de la app (plan §3): el bloque
-// "aterrizando" al elegir una sección en planner/builder. La animación corre
-// al montar; como la key de cada bloque incluye el classNbr, un swap de
-// sección remonta el bloque y la repite. Off por defecto (horario, carrito).
+// La tira de una banda plegada. Dice cuánto se comió y se despliega: un hueco
+// de cinco horas es información sobre tu semana, no ruido que haya que borrar.
+function Plegada({
+  band,
+  columnas,
+  fila,
+  onDesplegar,
+}: {
+  band: Extract<Band, { kind: 'plegada' }>;
+  columnas: number;
+  fila: number;
+  onDesplegar: () => void;
+}) {
+  const hh = (h: number) => `${String(h).padStart(2, '0')}:00`;
+  return (
+    <button
+      type="button"
+      onClick={onDesplegar}
+      className="border-line/60 text-muted hover:bg-surface-2 hover:text-fg z-10 flex items-center justify-center gap-2 border-y border-dashed text-[10px]"
+      style={{ gridColumn: `1 / span ${columnas + 1}`, gridRow: fila }}
+    >
+      <span className="tabular font-mono">
+        {hh(band.fromHour)} a {hh(band.toHour)}
+      </span>
+      <span>· {band.hours} h sin clases · desplegar</span>
+    </button>
+  );
+}
+
+/**
+ * `animate` prende el único momento orquestado de la app: el bloque aterrizando
+ * al elegir una sección. `selectedIds` marca lo elegido con anillo y punto.
+ */
 export function WeeklyGrid({
   blocks,
   animate = false,
   onSelect,
+  selectedIds,
 }: {
   blocks: Block[];
   animate?: boolean;
   /** Cuando se pasa, cada bloque es accionable por click, tap y teclado. */
-  onSelect?: (block: Block) => void;
+  onSelect?: (block: BloqueDetalle) => void;
+  /** classNbr de las secciones elegidas: anillo de acento más punto. */
+  selectedIds?: ReadonlySet<string>;
 }) {
-  const byDay = new Map<DayCode, Block[]>(WEEK_DAYS.map((d) => [d, []]));
-  for (const block of blocks) byDay.get(block.day)?.push(block);
+  const [verTodos, setVerTodos] = useState(false);
+  const [desplegadas, setDesplegadas] = useState<ReadonlySet<number>>(new Set<number>());
+  const [foco, setFoco] = useState(0);
+  const scroller = useRef<HTMLDivElement>(null);
 
-  // El sábado solo ocupa una columna si alguien tiene clases ahí.
-  const days = WEEK_DAYS.filter((d, i) => i < 5 || (byDay.get(d)?.length ?? 0) > 0);
+  // La ventana, los días y las bandas salen de TODOS los bloques, fantasma
+  // incluido. Derivarlas solo de los reales hacía que una vista previa fuera de
+  // la ventana, o en un día sin clases, se descartara en silencio: justo el
+  // caso de comparar una candidata de la noche contra un horario de mañana.
+  const days = useMemo(() => visibleDays(blocks, { all: verTodos }), [blocks, verTodos]);
+
+  const byDay = useMemo(() => {
+    const map = new Map<DayCode, Block[]>(days.map((d) => [d, []]));
+    for (const block of blocks) map.get(block.day)?.push(block);
+    return map;
+  }, [blocks, days]);
+
+  const { startHour, endHour } = useMemo(() => timeWindow(blocks), [blocks]);
+
+  const bands = useMemo(() => {
+    const plegadas = foldBands(blocks, { startHour, endHour });
+    // Una tira desplegada vuelve a ser sus horas: el estado vive acá y no en la
+    // función pura, que no tiene por qué saber qué abrió el usuario.
+    return plegadas.flatMap<Band>((band) =>
+      band.kind === 'plegada' && desplegadas.has(band.fromHour)
+        ? Array.from({ length: band.hours }, (_, i) => ({ kind: 'hora' as const, hour: band.fromHour + i }))
+        : [band]
+    );
+  }, [blocks, startHour, endHour, desplegadas]);
+
+  const palette = useMemo(() => paletteFor(blocks), [blocks]);
+  const colocados = useMemo(() => days.map((day) => layoutDay(byDay.get(day) ?? [])), [days, byDay]);
+  // El orden de tabulación es el de lectura: día por día, de arriba abajo.
+  const navegables = useMemo(() => colocados.flat().filter((block) => !block.ghost), [colocados]);
+  const choques = useMemo(() => navegables.filter((block) => block.conflictsWith.length > 0), [navegables]);
+
+  const filas = bands.map((band) => (band.kind === 'hora' ? `${FILA} ${FILA}` : FILA_PLEGADA)).join(' ');
+  const filaDe = (i: number) =>
+    bands.slice(0, i).reduce((n, b) => n + (b.kind === 'hora' ? FILAS_POR_HORA : 1), 0) + 2;
+
+  // La grilla es UNA parada de tabulación con foco rotativo. Doce paradas
+  // obligan a atravesar el horario entero para llegar al botón de abajo.
+  const teclas = (event: React.KeyboardEvent) => {
+    if (!onSelect || navegables.length === 0) return;
+    const paso: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    if (event.key in paso) {
+      event.preventDefault();
+      setFoco((i) => (i + paso[event.key] + navegables.length) % navegables.length);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      const block = navegables[foco];
+      if (block) onSelect({ ...block, hue: palette.get(block.code) ?? 0 });
+    }
+  };
+
+  const irAlDia = (indice: number) => {
+    const caja = scroller.current;
+    if (!caja) return;
+    const paso = (caja.scrollWidth - caja.clientWidth) / Math.max(1, days.length - 1);
+    caja.scrollTo({ left: paso * indice, behavior: 'smooth' });
+  };
 
   return (
-    <div className="border-line bg-surface overflow-hidden rounded-[var(--radius)] border">
-      {/* En mobile cada día ocupa ~68vw y esto scrollea con snap (el "carrusel
-          de días" del plan); en desktop las columnas entran juntas.
-          scrollPaddingLeft compensa la canaleta sticky: sin esto, el snap alinea
-          el día contra el borde del contenedor y la canaleta se lo come. */}
-      <div className="weekly-grid-scroll snap-x snap-mandatory overflow-x-auto" style={{ scrollPaddingLeft: GUTTER }}>
+    <div className="border-line bg-surface weekly-grid-host overflow-hidden rounded-[var(--radius)] border">
+      {/* Los chips desplazan la grilla al día tocado. Existen solo cuando hay
+          más días de los que entran; con dos columnas no hay nada que navegar. */}
+      {days.length > 2 && (
+        <div className="weekly-day-chips border-line flex gap-1 overflow-x-auto border-b px-2 py-1.5">
+          {days.map((day, i) => (
+            <button
+              key={day}
+              type="button"
+              onClick={() => irAlDia(i)}
+              className="border-line text-muted hover:bg-surface-2 hover:text-fg min-w-11 shrink-0 rounded-full border px-2 py-1 text-[11px]"
+            >
+              {DAY_LABELS[day]}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div ref={scroller} className="weekly-grid-scroll overflow-x-auto" style={{ scrollPaddingLeft: GUTTER }}>
         <div
-          className="weekly-grid grid"
+          role={onSelect ? 'grid' : undefined}
+          tabIndex={onSelect ? 0 : undefined}
+          onKeyDown={teclas}
+          aria-label={onSelect ? 'Horario semanal, movete con las flechas' : undefined}
+          className="weekly-grid focus-visible:outline-accent grid focus-visible:outline-2"
           style={{
             gridTemplateColumns: `${GUTTER} repeat(${days.length}, minmax(var(--day-min), 1fr))`,
-            gridTemplateRows: `auto repeat(${SLOTS}, minmax(0.5rem, 1fr))`,
+            gridTemplateRows: `auto ${filas}`,
           }}
         >
-          {/* Cabecera. La esquina y la canaleta quedan sticky a la izquierda
-              para no perder la referencia horaria al scrollear los días.
-              La esquina va por DEBAJO de las etiquetas de hora (z-10 < z-20):
-              la primera, 07:00, sobresale hacia arriba de su fila y si no,
-              la esquina la taparía. */}
-          <div className="bg-surface border-line sticky left-0 z-10 border-b" style={{ gridColumn: 1, gridRow: 1 }} />
+          <div className="bg-surface border-line sticky left-0 z-30 border-b" style={{ gridColumn: 1, gridRow: 1 }} />
           {days.map((day, i) => (
             <div
               key={day}
-              className="bg-surface border-line text-muted snap-start border-b border-l px-2 py-1.5 text-center text-xs font-medium"
+              className="bg-surface border-line text-muted border-b border-l px-2 py-1.5 text-center text-xs font-medium"
               style={{ gridColumn: i + 2, gridRow: 1 }}
             >
               {DAY_LABELS[day]}
             </div>
           ))}
 
-          {/* Canaleta de horas. */}
-          {HOURS.map((h, i) => (
-            <div
-              key={h}
-              className="bg-surface border-line/60 text-muted tabular sticky left-0 z-20 flex translate-y-1/2 items-end justify-end border-t pr-2 text-right font-mono text-[10px]"
-              style={{ gridColumn: 1, gridRow: hourRow(i) }}
-            >
-              <span>{String(h).padStart(2, '0')}:00</span>
-            </div>
-          ))}
+          {/* Canaleta y hairlines. La etiqueta se monta SOBRE la línea que abre
+              su banda: centrada en la banda, "10:00" se leía a las 10:30. */}
+          {bands.map((band, i) =>
+            band.kind === 'plegada' ? (
+              <Plegada
+                key={`p${band.fromHour}`}
+                band={band}
+                columnas={days.length}
+                fila={filaDe(i)}
+                onDesplegar={() => setDesplegadas((s) => new Set(s).add(band.fromHour))}
+              />
+            ) : (
+              <div key={`h${band.hour}`} className="contents">
+                <div
+                  className="bg-surface border-line/60 text-muted tabular sticky left-0 z-20 flex items-start justify-end border-t pr-2 text-right font-mono text-[10px]"
+                  style={{ gridColumn: 1, gridRow: `${filaDe(i)} / span ${FILAS_POR_HORA}` }}
+                >
+                  {/* La etiqueta se monta sobre la línea que abre su banda,
+                      salvo la primera: ahí la línea ES el borde de la grilla y
+                      subirla la mete debajo de la cabecera, que la recorta. */}
+                  <span className={i === 0 ? '' : '-translate-y-1/2'}>
+                    {String(band.hour).padStart(2, '0')}:00
+                  </span>
+                </div>
+                <div
+                  className="border-line/60 pointer-events-none border-t"
+                  style={{ gridColumn: `2 / span ${days.length}`, gridRow: `${filaDe(i)} / span ${FILAS_POR_HORA}` }}
+                  aria-hidden
+                />
+              </div>
+            )
+          )}
 
-          {/* Hairlines de hora a lo ancho de los días (sin sombras: regla de
-              composición del sistema de diseño). */}
-          {HOURS.map((h, i) => (
-            <div
-              key={h}
-              className="border-line/60 pointer-events-none border-t"
-              style={{ gridColumn: `2 / span ${days.length}`, gridRow: hourRow(i) }}
-              aria-hidden
-            />
-          ))}
-
-          {/* Separadores de columna. */}
           {days.map((day, i) => (
             <div
-              key={day}
+              key={`sep${day}`}
               className="border-line pointer-events-none border-l"
-              style={{ gridColumn: i + 2, gridRow: `2 / span ${SLOTS}` }}
+              style={{ gridColumn: i + 2, gridRow: `2 / span ${bandRows(bands)}` }}
               aria-hidden
             />
           ))}
 
-          {days.flatMap((day, i) =>
-            layoutDay(byDay.get(day) ?? []).map((block) => (
-              <BlockCard key={block.id} block={block} column={i + 2} animate={animate} onSelect={onSelect} />
+          {colocados.flatMap((delDia, i) =>
+            delDia.map((block) => (
+              <Bloque
+                key={block.id}
+                block={block}
+                column={i + 2}
+                hue={palette.get(block.code) ?? 0}
+                bands={bands}
+                animate={animate}
+                selected={selectedIds?.has(block.classNbr) ?? false}
+                focused={!!onSelect && !block.ghost && navegables[foco]?.id === block.id}
+                onSelect={onSelect}
+              />
             ))
           )}
         </div>
+      </div>
+
+      {/* El choque dicho en prosa, no solo pintado. Quien no distingue el rojo
+          o no ve la trama necesita la frase. */}
+      {choques.length > 0 && (
+        <div className="border-closed/40 bg-closed/10 text-closed border-t px-3 py-2 text-xs" role="status">
+          <p className="flex items-start gap-1.5 font-medium">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            {choques.length === 1 ? 'Hay un choque' : `Hay ${choques.length} choques`} en este horario.
+          </p>
+          <ul className="mt-1 flex flex-col gap-0.5 pl-5">
+            {[...new Map(choques.map((b) => [`${b.code}-${b.day}-${b.start}`, b])).values()].map((block) => (
+              <li key={block.id}>
+                {block.code} el {DAY_LABELS[block.day]} de {block.start} a {block.end} se cruza con{' '}
+                {block.conflictsWith.join(', ')}.
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Ver los seis días es siempre posible: ocultar un día vacío no puede
+          significar que dejes de poder mirarlo. */}
+      <div className="border-line flex justify-end gap-3 border-t px-2 py-1">
+        {/* Desplegar era un viaje de ida: una tira abierta volvía a costar
+            todas sus filas y no había forma de recuperarlas. */}
+        {desplegadas.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setDesplegadas(new Set<number>())}
+            className="text-muted hover:text-fg min-h-11 text-[11px]"
+          >
+            Plegar las horas vacías
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setVerTodos((v) => !v)}
+          className="text-muted hover:text-fg min-h-11 text-[11px]"
+        >
+          {verTodos ? 'Ver solo los días con clase' : 'Ver los seis días'}
+        </button>
       </div>
     </div>
   );

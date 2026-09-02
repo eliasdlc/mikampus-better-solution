@@ -41,7 +41,7 @@ export function DegreePath({
   });
 
   if (path.isPending) {
-    return <div className="border-line h-52 animate-pulse rounded-[var(--radius)] border" />;
+    return <div className="border-line text-muted grid h-52 place-items-center rounded-[var(--radius)] border text-sm">Cargando…</div>;
   }
   if (path.error) {
     return (

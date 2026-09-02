@@ -82,20 +82,21 @@ body {
   container-type: inline-size;
 }
 
+/* El ancho mínimo de una columna de día baja de 68vw (267px, un día por
+   pantalla y a arrastrar) a 7.4em (126px): con cinco días se ven dos y medio y
+   los chips llevan al que falte; con dos días entran enteros sin scroll. Desde
+   sm el mínimo desaparece para que las columnas se repartan el ancho. */
 .weekly-grid {
-  --day-min: 0px;
+  --day-min: 7.4em;
 }
 
-.weekly-agenda {
-  display: none;
-}
-
-@container (max-width: 34rem) {
-  .weekly-agenda {
-    display: block;
+@container (min-width: 34rem) {
+  .weekly-grid {
+    --day-min: 0px;
   }
 
-  .weekly-grid-scroll {
+  /* Con la semana entera a la vista no hay nada que navegar. */
+  .weekly-day-chips {
     display: none;
   }
 }
