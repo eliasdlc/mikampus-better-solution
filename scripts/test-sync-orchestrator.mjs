@@ -222,8 +222,40 @@ try {
   const seguido = await orchestrator.syncTick(USER, { emit: () => {} });
   assert.equal(seguido.ran, false, 'el tick liviano no sale al portal cuando no hay nada vencido');
 
+  // ── Una fuente rota espera antes de volver a molestar al portal ──────────
+  //
+  // Vencida y rota no es lo mismo que "reintentar ya". Sin esta espera, una
+  // fuente cuyo scraper dejó de encajar con PeopleSoft sale en cada tick para
+  // siempre, porque la frescura mide el último éxito y ese nunca llega. Se
+  // prueba con mySchedule: nadie depende de ella, así que si vuelve a salir es
+  // por el tick y no arrastrada como dependencia de otra.
+  while (restores.length) restores.pop()();
+  db.prepare('DELETE FROM sync_sources').run();
+  db.prepare('DELETE FROM sync_log').run();
+  restores.push(orchestrator.setSessionProbe(() => true));
+  stubAll({ failing: new Set(['mySchedule']) });
+  await orchestrator.runSync(USER, { force: true, emit: () => {} });
+
+  const rota = orchestrator.syncState(USER).sources.find((source) => source.key === 'mySchedule');
+  assert.equal(rota.expired, true, 'sigue vencida: la UI tiene que poder decirlo');
+  assert.equal(rota.cooling, true, 'pero no se reintenta de inmediato');
+  assert.ok(rota.retryAt, 'el estado dice cuándo se vuelve a intentar');
+
+  calls.length = 0;
+  await orchestrator.syncTick(USER, { emit: () => {} });
+  assert.ok(!calls.includes('mySchedule'), 'el tick no saca al portal una fuente que acaba de fallar');
+
+  calls.length = 0;
+  const pasadaLaEspera = Date.parse(rota.retryAt) + 1_000;
+  const yaNoEspera = orchestrator
+    .syncState(USER, { now: pasadaLaEspera })
+    .sources.find((source) => source.key === 'mySchedule');
+  assert.equal(yaNoEspera.cooling, false, 'cumplida la espera, vuelve a ser candidata');
+  await orchestrator.syncTick(USER, { now: pasadaLaEspera, emit: () => {} });
+  assert.ok(calls.includes('mySchedule'), 'y el tick la reintenta');
+
   console.log(
-    '✓ sync: orden por dependencias, una sola operación por fuente, relevancia por ciclo, prioridad de inscripción y reanudación sin replay'
+    '✓ sync: orden por dependencias, una sola operación por fuente, relevancia por ciclo, prioridad de inscripción, reanudación sin replay y espera tras un fallo'
   );
 } finally {
   while (restores.length) restores.pop()();

@@ -36,6 +36,23 @@ import * as scheduler from './scheduler.js';
 
 const HOUR = 60 * 60_000;
 
+// Una fuente rota no vuelve a estar fresca nunca —la frescura mide el último
+// ÉXITO— así que sin esta espera queda vencida para siempre y el tick la
+// reintenta cada dos minutos indefinidamente. Con el parser de Enrollment Dates
+// roto eso significó 734 consultas al portal de la universidad en ocho días,
+// todas idénticas y todas fallidas. El error sigue visible en la UI: lo único
+// que cambia es cada cuánto se vuelve a molestar a PeopleSoft.
+const FAILURE_COOLDOWN_MS = 30 * 60_000;
+
+// last_run_at se guarda con datetime('now'), que es UTC sin sufijo; last_success_at
+// ya viene en ISO. Las dos formas pasan por acá para no repetir el parseo.
+function toMillis(stamp) {
+  if (!stamp) return null;
+  const iso = stamp.includes('T') ? stamp : `${stamp.replace(' ', 'T')}Z`;
+  const ms = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
 export const SOURCES = [
   {
     key: 'terms',
@@ -348,6 +365,11 @@ export function syncState(userId, { now = Date.now() } = {}) {
       const { syncedAt, ageMs, expired } = freshness(userId, source, now);
       const row = readRow(userId, source.key);
       const relevant = source.relevant ? source.relevant() : true;
+      // El último intento falló: se respeta una espera antes de volver a salir
+      // al portal. `expired` no se toca —la fuente SÍ está vencida y la UI tiene
+      // que decirlo—; lo que se retrasa es el próximo intento automático.
+      const lastRunMs = toMillis(row?.lastRunAt);
+      const retryAt = row?.lastStatus === 'error' && lastRunMs != null ? lastRunMs + FAILURE_COOLDOWN_MS : null;
       return {
         key: source.key,
         label: source.label,
@@ -365,6 +387,8 @@ export function syncState(userId, { now = Date.now() } = {}) {
         lastSuccessAt: syncedAt,
         lastStatus: row?.lastStatus ?? null,
         error: row?.lastError ?? null,
+        retryAt: retryAt ? new Date(retryAt).toISOString() : null,
+        cooling: retryAt != null && retryAt > now,
       };
     }),
   };
@@ -517,7 +541,9 @@ export async function syncTick(userId, { now = Date.now(), emit = scheduler.emit
   }
 
   const state = syncState(userId, { now });
-  const due = state.sources.filter((source) => source.expired && source.relevant);
+  // `cooling` deja fuera lo que acaba de fallar. Un refresco pedido a mano no
+  // pasa por acá: llama a runSync con sus keys y sale al portal igual.
+  const due = state.sources.filter((source) => source.expired && source.relevant && !source.cooling);
   if (!due.length) return { ran: false, resumed, gapMs };
   // Reanudar no dispara el replay de los ticks perdidos: es la misma pasada
   // normal, que ya colapsa todo lo vencido en una sola corrida por fuente.
