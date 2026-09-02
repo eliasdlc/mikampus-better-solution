@@ -71,7 +71,7 @@ function ProgressRing({
       </svg>
       <span className="absolute inset-0 flex items-center justify-center">
         <Radar
-          className={`text-accent size-5 ${scanning ? 'animate-spin [animation-duration:2.4s]' : ''}`}
+          className="text-accent size-5"
           aria-hidden
         />
       </span>
@@ -129,7 +129,7 @@ export function WatcherLive({ state }: { state: AppState }) {
                 live.phase === 'error' || persisted.status === 'backing-off'
                   ? 'bg-closed'
                   : scanning
-                    ? 'bg-accent animate-pulse'
+                    ? 'bg-accent'
                     : 'bg-open'
               }`}
               aria-hidden

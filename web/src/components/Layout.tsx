@@ -1,12 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
+  CalendarClock,
   CalendarDays,
   ChartLine,
   GraduationCap,
   House,
   Search,
   Settings,
+  Table2,
   type LucideIcon,
 } from 'lucide-react';
 import { useSSE } from '../lib/sse.tsx';
@@ -23,7 +25,9 @@ import { SyncControl } from './SyncControl.tsx';
 const NAV: Array<{ to: string; label: string; short: string; icon: LucideIcon; end?: boolean }> = [
   { to: '/', label: 'Inicio', short: 'Inicio', icon: House, end: true },
   { to: '/horario', label: 'Mi horario', short: 'Horario', icon: CalendarDays },
+  { to: '/mesa', label: 'Armar el ciclo', short: 'Armar', icon: Table2 },
   { to: '/inscripcion', label: 'Inscripción', short: 'Inscribir', icon: GraduationCap },
+  { to: '/ciclo', label: 'El ciclo', short: 'Etapa', icon: CalendarClock },
   { to: '/academico', label: 'Notas y avance', short: 'Notas', icon: ChartLine },
   { to: '/ajustes', label: 'Ajustes', short: 'Ajustes', icon: Settings },
 ];
