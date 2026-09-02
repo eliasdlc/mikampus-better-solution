@@ -173,14 +173,18 @@ export function termAliases(term) {
 // futuro. Si el ciclo actual todavía no tiene STRM conocido (solo vive en
 // grades como etiqueta), devuelve null: es más honesto un horario vacío que el
 // de otro término. El siguiente sí sirve de fallback para pantallas de plan.
-export function currentTermCode() {
-  return readTerms().current?.code ?? null;
+// El día entra por parámetro, como en readTerms. Leer el reloj acá adentro
+// hacía que un test con una fecha fija igual quedara a merced del calendario:
+// el 1 de septiembre de 2026 el ciclo 1930 pasó de "siguiente" a "actual" y la
+// suite se rompió sola, sin que nadie tocara una línea.
+export function currentTermCode(today = new Date()) {
+  return readTerms(today).current?.code ?? null;
 }
 
 // Buscar, planner, pénsum y requisitos miran hacia el próximo ciclo. La única
 // excepción es un término explícito en el request. TARGET_TERM dejó de existir:
 // un valor global del proceso no puede gobernar el tiempo de cada pantalla.
-export function planningTerm(requested = null, fallback = null) {
+export function planningTerm(requested = null, fallback = null, today = new Date()) {
   if (requested) return String(requested);
-  return readTerms().next?.term ?? fallback ?? null;
+  return readTerms(today).next?.term ?? fallback ?? null;
 }

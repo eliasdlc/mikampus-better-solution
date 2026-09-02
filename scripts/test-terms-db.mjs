@@ -56,7 +56,7 @@ assert.equal(next?.hasSections, true, '1930 tiene secciones en el catálogo');
 
 // currentTermCode devuelve null (no hay STRM del actual): un GET sin término no
 // debe caer en 1930, que es justo el bug que arregla la fase.
-assert.equal(currentTermCode(), null);
+assert.equal(currentTermCode(hoy), null);
 
 // Idempotencia y COALESCE: reconciliar de nuevo no duplica ni borra el STRM/
 // fechas ya conocidos con los nulls que aporta la etiqueta de grades.
