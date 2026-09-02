@@ -170,3 +170,55 @@ export function layoutDay(dayBlocks: Block[]): PlacedBlock[] {
 export function toGridLine(hhmm: string, startHour: number, slotMinutes: number): number {
   return Math.round((toMinutes(hhmm) - startHour * 60) / slotMinutes) + 2;
 }
+
+// ── Ventana horaria ────────────────────────────────────────────────────────
+
+// El rango 7:00 a 22:00 estaba fijo, así que la grilla siempre dibujaba 15
+// horas incluso cuando el horario real ocupaba cuatro, y la fila de las 7 no se
+// usa nunca: en las 1319 reuniones del catálogo la más temprana empieza a las
+// 08:00. Peor, un bloque fuera del rango simplemente no se dibujaba.
+//
+// La ventana se deriva de lo que hay: la hora entera anterior al primer bloque
+// y la posterior al último, con un mínimo de horas para que un horario de una
+// sola clase no quede como una tira. Sin bloques cae a una franja lectiva
+// razonable, que es lo único que se puede hacer sin inventar.
+export const FALLBACK_WINDOW = { startHour: 8, endHour: 18 } as const;
+export const MIN_WINDOW_HOURS = 6;
+
+export function timeWindow(
+  blocks: Block[],
+  { minHours = MIN_WINDOW_HOURS }: { minHours?: number } = {}
+): { startHour: number; endHour: number } {
+  const times = blocks.flatMap((block) => [toMinutes(block.start), toMinutes(block.end)]);
+  if (times.length === 0) return { ...FALLBACK_WINDOW };
+
+  let startHour = Math.floor(Math.min(...times) / 60);
+  // Un bloque que termina en punto no necesita la hora siguiente entera.
+  let endHour = Math.ceil(Math.max(...times) / 60);
+
+  // Crecer hacia abajo primero y hacia arriba después: la mañana temprano se
+  // usa menos que la noche, así que el relleno cae donde estorba menos.
+  while (endHour - startHour < minHours) {
+    if (endHour < 22) endHour += 1;
+    else if (startHour > 6) startHour -= 1;
+    else break;
+  }
+
+  return { startHour, endHour };
+}
+
+// ── Color por conjunto visible ─────────────────────────────────────────────
+
+// El color global por hash reparte 907 materias en 14 tonos, así que en una
+// pantalla con cuatro ICC es normal que dos compartan hue exacto: ICC-104,
+// ICC-331, ICC-342 e ICC-371 lo hacen hoy. Acá el reparto es sobre lo que se
+// ve: N materias en pantalla, N tonos separados lo más posible.
+//
+// El costo, dicho: una materia cambia de tono al cambiar el conjunto. Por eso
+// el código va SIEMPRE escrito en el bloque, y el color no es nunca la única
+// forma de distinguir una materia.
+export function paletteFor(blocks: Block[]): Map<string, number> {
+  const codes = [...new Set(blocks.map((block) => block.code))].sort();
+  const step = 360 / Math.max(1, codes.length);
+  return new Map(codes.map((code, i) => [code, i * step]));
+}

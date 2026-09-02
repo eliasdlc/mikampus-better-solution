@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { extractSearchResults } from '../src/peoplesoft/catalog.js';
@@ -33,6 +34,15 @@ const FIXTURES = {
     const total = r.courses.reduce((n, c) => n + c.sections.length, 0);
     assert.equal(total, 12, '12 secciones sin duplicar por el wrapper $span$');
 
+    // El HTML de resultados NO trae el campus por fila: la etiqueta de campus
+    // solo existe dentro del <select> del formulario. El campus lo pone el
+    // orquestador, según con qué filtro pidió la búsqueda, así que si alguien
+    // alguna vez intenta sacarlo del HTML, esto falla primero.
+    assert.ok(
+      r.courses.every((c) => c.sections.every((s) => !('campus' in s))),
+      'el parser no devuelve campus: el HTML de resultados no lo dice'
+    );
+
     const first = r.courses[0].sections[0];
     assert.equal(first.classNbr, '5227');
     assert.equal(first.classNameCell, '101-LEC Ordinaria');
@@ -60,7 +70,7 @@ const FIXTURES = {
   },
 };
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 let failed = 0;
 

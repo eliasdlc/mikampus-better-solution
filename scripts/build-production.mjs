@@ -20,7 +20,9 @@ await rm(target, { recursive: true, force: true });
 await mkdir(app, { recursive: true });
 await run(process.execPath, [path.join(root, 'node_modules', 'vite', 'bin', 'vite.js'), 'build']);
 await build({
-  entryPoints: [path.join(root, 'src', 'launcher.js')],
+  // Dos entrypoints: el agente y el servidor MCP. El MCP es un proceso aparte
+  // que un cliente lanza por stdio, así que no puede colgar del launcher.
+  entryPoints: [path.join(root, 'src', 'launcher.js'), path.join(root, 'src', 'mcp', 'stdio.js')],
   outdir: app,
   bundle: true,
   splitting: true,

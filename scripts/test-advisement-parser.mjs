@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {
@@ -11,7 +12,7 @@ import {
 // Corre el parser del advisement report contra HTML real volcado del portal,
 // sin tocarlo. Misma red que los otros parsers: si PeopleSoft cambia los IDs,
 // esto falla antes que un sync en vivo.
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 await page.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
 

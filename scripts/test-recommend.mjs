@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { recommendCourses } from '../src/shared/recommend.ts';
 
 const counts = { required: null, taken: null, needed: null };
@@ -302,7 +303,7 @@ process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
 const { extractAdvisementTree, parseAdvisementTree, saveRequirementTree, readRequirementTree } = await import(
   '../src/peoplesoft/advisement.js'
 );
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 await page.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
 const raw = await page.evaluate(extractAdvisementTree);

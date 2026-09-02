@@ -6,6 +6,7 @@
 // el WeeklyGrid, y sin código canónico pierde color y título. Un test del
 // parser solo no ve nada de eso (ver test-grades-db.mjs, mismo motivo).
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -25,7 +26,7 @@ db.exec(`
     ('ICC-321', 'ICC', '321', 'Análisis y Diseño de Algoritmos');
 `);
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 await page.setContent(await readFile('fixtures/recon-cart.html', 'utf8'));
 const raw = await page.evaluate(extractCartRows);

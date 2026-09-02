@@ -1,8 +1,19 @@
-// Verifica el posicionamiento del WeeklyGrid: que dos clases a la misma hora
-// se repartan la columna en vez de taparse, que los choques se detecten, y que
-// un choque temprano no adelgace un bloque de la tarde.
+// Verifica la lógica pura del WeeklyGrid: que dos clases a la misma hora se
+// repartan la columna en vez de taparse, que los choques se detecten, que un
+// choque temprano no adelgace un bloque de la tarde, que la ventana horaria
+// salga de los bloques sin dejar ninguno fuera, y que el color se reparta sobre
+// las materias visibles.
 import assert from 'node:assert/strict';
-import { layoutDay, toBlocks, toGridLine, hasCollisions } from '../web/src/lib/grid.ts';
+import {
+  FALLBACK_WINDOW,
+  MIN_WINDOW_HOURS,
+  hasCollisions,
+  layoutDay,
+  paletteFor,
+  timeWindow,
+  toBlocks,
+  toGridLine,
+} from '../web/src/lib/grid.ts';
 
 const block = (id, start, end, title = id) => ({
   id,
@@ -155,4 +166,125 @@ const block = (id, start, end, title = id) => ({
   );
 }
 
-console.log('✓ Layout del WeeklyGrid OK (carriles, choques, bordes, TBA, hasCollisions).');
+// ── timeWindow ─────────────────────────────────────────────────────────────
+// La ventana ya no es 7:00-22:00 fija: sale de los bloques. Lo que se protege
+// acá es que siga siendo una grilla legible (un mínimo de horas) sin dejar
+// nunca un bloque fuera, que era el modo de fallar de la versión fija.
+
+// Una sola clase corta no puede devolver una tira de una hora.
+{
+  const w = timeWindow([block('a', '10:00', '11:00')]);
+  assert.deepEqual(w, { startHour: 10, endHour: 16 }, 'una clase de una hora rellena hacia abajo');
+  assert.equal(w.endHour - w.startHour, MIN_WINDOW_HOURS, 'la ventana nunca baja del mínimo');
+}
+
+// Una clase de noche tiene que caber: con el rango fijo un bloque fuera de
+// 7:00-22:00 simplemente no se dibujaba.
+{
+  const w = timeWindow([block('noche', '21:00', '22:00')]);
+  assert.ok(w.startHour <= 21 && w.endHour >= 22, 'la clase de las 21:00 cae dentro de la ventana');
+  assert.deepEqual(w, { startHour: 16, endHour: 22 }, 'sin espacio abajo, la ventana crece hacia arriba');
+}
+
+// El relleno tiene topes: no inventa horas después de las 22 ni antes de las 6.
+{
+  const tarde = timeWindow([block('noche', '21:00', '22:00')], { minHours: 20 });
+  assert.deepEqual(tarde, { startHour: 6, endHour: 22 }, 'el relleno se detiene en 6 y en 22');
+  const manana = timeWindow([block('a', '08:00', '09:00')], { minHours: 20 });
+  assert.deepEqual(manana, { startHour: 6, endHour: 22 }, 'crece abajo primero y arriba después');
+  assert.ok(manana.endHour - manana.startHour < 20, 'los topes ganan sobre el mínimo pedido');
+}
+
+// Sin bloques no hay nada de dónde derivar: franja lectiva declarada, no inventada.
+{
+  const w = timeWindow([]);
+  assert.deepEqual(w, FALLBACK_WINDOW, 'sin bloques, la ventana de respaldo');
+  assert.ok(w.endHour - w.startHour >= MIN_WINDOW_HOURS, 'el respaldo ya cumple el mínimo');
+}
+
+// Un bloque que termina en punto no arrastra la hora siguiente entera.
+{
+  assert.deepEqual(
+    timeWindow([block('a', '08:00', '12:00')], { minHours: 4 }),
+    { startHour: 8, endHour: 12 },
+    '12:00 cierra en 12, no en 13'
+  );
+  assert.deepEqual(
+    timeWindow([block('a', '08:00', '12:01')], { minHours: 4 }),
+    { startHour: 8, endHour: 13 },
+    'un minuto pasado sí necesita la hora siguiente'
+  );
+}
+
+// La ventana es del conjunto, no de un día: el primer inicio y el último fin
+// mandan aunque estén en columnas distintas.
+{
+  const w = timeWindow([
+    { ...block('a', '08:00', '10:00'), day: 'Mo' },
+    { ...block('b', '18:00', '20:00'), day: 'Fr' },
+  ]);
+  assert.deepEqual(w, { startHour: 8, endHour: 20 }, 'toma el mínimo y el máximo de toda la semana');
+}
+
+// ── paletteFor ─────────────────────────────────────────────────────────────
+// El reparto es sobre las materias VISIBLES, no sobre las 907 del catálogo en
+// 14 tonos: en pantalla no puede haber dos materias con el mismo hue.
+
+const conCodigo = (code, id, start, end) => ({ ...block(id, start, end, code), code });
+
+// Un tono distinto por materia visible.
+{
+  const palette = paletteFor([
+    conCodigo('ICC-104', 'a', '08:00', '10:00'),
+    conCodigo('ICC-331', 'b', '10:00', '12:00'),
+    conCodigo('ICC-342', 'c', '12:00', '14:00'),
+    conCodigo('ICC-371', 'd', '14:00', '16:00'),
+  ]);
+  assert.equal(palette.size, 4, 'una entrada por materia');
+  assert.equal(new Set(palette.values()).size, 4, 'cuatro materias, cuatro tonos');
+  for (const hue of palette.values()) assert.ok(hue >= 0 && hue < 360, 'el tono es un ángulo válido');
+}
+
+// Dos secciones de la misma materia comparten tono: el color identifica materia.
+{
+  const palette = paletteFor([
+    conCodigo('ICC-233', 'lec', '08:00', '10:00'),
+    conCodigo('ICC-233', 'pra', '10:00', '12:00'),
+    conCodigo('MAT-201', 'mat', '12:00', '14:00'),
+  ]);
+  assert.equal(palette.size, 2, 'teórica y práctica de la misma materia son un solo tono');
+}
+
+// Estable ante el orden de entrada: el mismo conjunto da el mismo mapa venga
+// como venga, para que reordenar el carrito no repinte la semana.
+{
+  const codigos = ['MAT-201', 'ICC-104', 'FIS-110', 'ICC-331'];
+  const directo = paletteFor(codigos.map((code, i) => conCodigo(code, `d${i}`, '08:00', '09:00')));
+  const alReves = paletteFor([...codigos].reverse().map((code, i) => conCodigo(code, `r${i}`, '08:00', '09:00')));
+  assert.deepEqual(directo, alReves, 'el mismo conjunto en otro orden da el mismo mapa');
+}
+
+// Una sola materia: no hay división por cero ni tono fuera de rango.
+{
+  const palette = paletteFor([conCodigo('ICC-104', 'a', '08:00', '10:00')]);
+  assert.equal(palette.size, 1);
+  assert.equal(palette.get('ICC-104'), 0, 'la única materia arranca el círculo');
+}
+
+// Sin bloques, mapa vacío (el caso del carrito recién abierto).
+{
+  assert.equal(paletteFor([]).size, 0, 'sin bloques no hay tonos');
+}
+
+// Más materias que los 14 tonos del hash global: siguen saliendo todas distintas.
+{
+  const blocks = Array.from({ length: 20 }, (_, i) =>
+    conCodigo(`ICC-${100 + i}`, `x${i}`, '08:00', '09:00')
+  );
+  const palette = paletteFor(blocks);
+  assert.equal(new Set(palette.values()).size, 20, '20 materias visibles, 20 tonos');
+}
+
+console.log(
+  '✓ Layout del WeeklyGrid OK (carriles, choques, bordes, TBA, hasCollisions, ventana horaria, paleta por conjunto visible).'
+);

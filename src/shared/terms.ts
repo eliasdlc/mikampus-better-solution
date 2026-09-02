@@ -31,16 +31,25 @@ export type TermResolution = {
 
 // Un día como número entero (días desde epoch, en UTC) para comparar fechas sin
 // que la zona horaria meta un día de diferencia: acá solo importa el calendario.
-function dayNumber(year: number, month: number, day: number): number {
+// Se exportan porque el resolutor de fases (shared/termPhase.ts) compara las
+// mismas fechas: dos aritméticas de días en la misma app terminan discrepando
+// en un día justo el día que importa.
+export function dayNumber(year: number, month: number, day: number): number {
   return Date.UTC(year, month - 1, day) / 86_400_000;
 }
 
 // "2026-09-01" → su número de día. Se parsea el string a mano (no `new Date`)
 // para no arrastrar la hora ni la zona: un término es fechas de calendario.
-function isoToDayNumber(iso: string): number | null {
+export function isoToDayNumber(iso: string): number | null {
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return null;
   return dayNumber(Number(m[1]), Number(m[2]), Number(m[3]));
+}
+
+// El día de calendario de una fecha del sistema, leída en la zona local: lo que
+// para quien mira la pantalla es "hoy".
+export function dayOf(date: Date): number {
+  return dayNumber(date.getFullYear(), date.getMonth() + 1, date.getDate());
 }
 
 // El mes de INICIO de un término → la etiqueta del ciclo al que pertenece. Sirve
@@ -129,7 +138,7 @@ function windowFor(term: Term, sortKey: string | null): [number, number] | null 
 // Un término sin fecha ni etiqueta ubicable (sortKey null) no puede resolverse:
 // queda en la lista pero nunca es current ni next.
 export function resolveTerms(input: Term[], today: Date = new Date()): TermResolution {
-  const todayNum = dayNumber(today.getFullYear(), today.getMonth() + 1, today.getDate());
+  const todayNum = dayOf(today);
 
   const annotated = input.map((term) => {
     const sortKey = sortKeyFor(term);

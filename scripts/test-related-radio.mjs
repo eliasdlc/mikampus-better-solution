@@ -3,11 +3,12 @@
 // que un class number ausente devuelva null (→ fallback a la primera, para
 // que un práctico lleno no deje la materia fuera del carrito).
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { findRelatedSectionRadio } from '../src/peoplesoft/classSearch.js';
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 await page.setContent(await readFile('fixtures/recon-related-sections.html', 'utf8'));
 

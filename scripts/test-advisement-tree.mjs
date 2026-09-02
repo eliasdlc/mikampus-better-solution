@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { extractAdvisementTree, parseAdvisementTree } from '../src/peoplesoft/advisement.js';
@@ -6,7 +7,7 @@ import { extractAdvisementTree, parseAdvisementTree } from '../src/peoplesoft/ad
 // El gate de la Fase 7: el parser v2 reconstruye el árbol de requisitos del
 // informe real (fixtures/recon-advisement.html) sin recon nuevo. Si PeopleSoft
 // cambia la estructura del informe, esto falla antes que un sync en vivo.
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 await page.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
 

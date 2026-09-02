@@ -52,3 +52,23 @@ export const DROP_URL =
   'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SSR_SSENRL_DROP.GBL?FolderPath=PORTAL_ROOT_OBJECT.CO_EMPLOYEE_SELF_SERVICE.HCCC_ENROLLMENT.HC_SSR_SSENRL_DROP_GBL&IsFolder=false&IgnoreParamTempl=FolderPath%2cIsFolder';
 
 export const CONTENT_FRAME_NAME = 'TargetContent';
+
+// Plazos POR CLASE del calendario académico (enrollmentDeadlines.js). No tienen
+// URL propia: son una pantalla a la que solo se llega desde una clase inscrita.
+// Hay dos entradas, y las dos llevan al mismo componente de PeopleSoft
+// (DERIVED_SSR_FL_SSR_ENRL_DL):
+//   1. el enlace "Enrollment Deadlines" que View My Classes Fluid pone debajo de
+//      cada materia, presente en fixtures/recon-my-classes-view.html;
+//   2. el icono de deadlines por fila del Student Center clásico
+//      (PS_ACADEMIC_DEADLINES_ICN), del que la leyenda sí está en
+//      fixtures/recon-student-center.html pero no una fila real que lo use,
+//      porque ese volcado se tomó sin materias inscritas.
+// Se usa la primera: es la única cuyo markup está confirmado.
+export const ENROLLMENT_DEADLINES_LINK = 'a[id^="DERIVED_SSR_FL_SSR_ENRL_DL$"]';
+
+// PENDIENTE DE FIXTURE: el panel que abre ese enlace no está capturado, así que
+// este selector es una apuesta sobre las dos formas en que PeopleSoft muestra
+// una pantalla secundaria (modal Fluid o grilla clásica). El scraper no depende
+// de que acierte: si no encuentra el panel, lee el frame donde estaba el enlace.
+export const ENROLLMENT_DEADLINES_PANEL =
+  '[id*="SSR_ENRL_DL"] table, div[id^="win0divPT_MODAL"] table.PSLEVEL1GRID, table.PSLEVEL1GRID';

@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { extractSubjects, extractCourses, parseCourseRows, cleanTitle } from '../src/peoplesoft/browseCatalog.js';
@@ -6,7 +7,7 @@ import { extractSubjects, extractCourses, parseCourseRows, cleanTitle } from '..
 // Corre los parsers del Browse Catalog contra HTML real volcado por el recon,
 // sin tocar el portal. Misma red de seguridad que test-catalog-parser.mjs: si
 // PeopleSoft cambia los IDs, esto falla antes que un sync en vivo.
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 
 async function load(file) {

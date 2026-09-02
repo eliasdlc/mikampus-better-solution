@@ -23,3 +23,11 @@ export function courseColor(code: string): string {
   const hue = courseHue(code).toFixed(1);
   return `light-dark(oklch(0.72 0.11 ${hue}), oklch(0.68 0.13 ${hue}))`;
 }
+
+// El mismo par de tonos que courseColor, pero con el hue dado en vez de
+// hasheado: lo usa el WeeklyGrid cuando reparte tonos sobre las materias
+// visibles (ver paletteFor en lib/grid.ts).
+export function hueColor(hue: number): string {
+  const h = hue.toFixed(1);
+  return `light-dark(oklch(0.72 0.11 ${h}), oklch(0.68 0.13 ${h}))`;
+}

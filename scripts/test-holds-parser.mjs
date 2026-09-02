@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { extractHolds, parseHolds, HOLDS_PANEL, TODO_PANEL } from '../src/peoplesoft/holds.js';
@@ -6,7 +7,7 @@ import { extractHolds, parseHolds, HOLDS_PANEL, TODO_PANEL } from '../src/people
 // Corre el parser de holds contra el Centro del Alumnado real, sin tocarlo.
 // El estudiante no tiene holds: lo que este test fija es que el estado vacío
 // se lea como vacío y que un selector roto no se disfrace de "todo bien".
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 await page.setContent(await readFile('fixtures/recon-student-center.html', 'utf8'));
 

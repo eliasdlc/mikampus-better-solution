@@ -224,7 +224,7 @@ export function Horario() {
       )}
 
       {isPending ? (
-        <div className="border-line h-96 animate-pulse rounded-[var(--radius)] border" />
+        <div className="border-line text-muted grid h-96 place-items-center rounded-[var(--radius)] border text-sm">Cargando…</div>
       ) : error ? (
         <p className="text-closed text-sm">No se pudo leer el horario guardado: {error.message}</p>
       ) : !courses.length ? (
