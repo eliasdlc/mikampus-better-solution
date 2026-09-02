@@ -5,6 +5,8 @@ import { db, logSync } from '../db.js';
 import { scrapedSectionSchema, normalizeSeatStatus } from '../shared/schemas.ts';
 import { parseMeetings } from '../shared/meetings.ts';
 import { splitCourseCode, courseCodeToString, portalCatalogNbr } from '../shared/courseCode.ts';
+import { CAMPUS_CODES, campusCodeSchema, campusFromSectionNumber, groupByCampus, orderByCampus } from '../shared/campus.ts';
+import { LOCAL_USER_ID } from '../users.js';
 import { knownSubjects } from './browseCatalog.js';
 
 // ── Capa de escritura en DB ────────────────────────────────────────────────
@@ -24,10 +26,17 @@ const upsertCourseStmt = db.prepare(`
 // Los valores que llegan acá YA pasaron por mergeSection: este statement no
 // decide nada, solo escribe el resultado. La lógica de "lo vacío no pisa lo
 // lleno" vive en shared/sectionMerge.ts, donde se puede probar sola.
+//
+// El campus es la excepción, y por eso su precedencia sí vive en el SQL: no es
+// "lo lleno gana sobre lo vacío" sino una jerarquía de fuentes. Lo que dijo el
+// portal ('portal') pisa cualquier cosa, una inferencia por número de sección
+// nunca pisa lo que dijo el portal, y una escritura sin campus (una búsqueda
+// sin filtrar, o el scraper de Mi Horario, que no sabe de campus) jamás borra
+// lo que ya se sabía.
 const upsertSectionStmt = db.prepare(`
   INSERT INTO sections (course_id, term, class_nbr, section, component, instructor, meetings,
-                        instructor_source, meetings_source, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        instructor_source, meetings_source, campus, campus_source, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   ON CONFLICT(term, class_nbr) DO UPDATE SET
     course_id = excluded.course_id,
     section = excluded.section,
@@ -36,6 +45,14 @@ const upsertSectionStmt = db.prepare(`
     meetings = excluded.meetings,
     instructor_source = excluded.instructor_source,
     meetings_source = excluded.meetings_source,
+    campus = CASE
+      WHEN excluded.campus IS NULL THEN sections.campus
+      WHEN sections.campus_source = 'portal' AND excluded.campus_source IS NOT 'portal' THEN sections.campus
+      ELSE excluded.campus END,
+    campus_source = CASE
+      WHEN excluded.campus IS NULL THEN sections.campus_source
+      WHEN sections.campus_source = 'portal' AND excluded.campus_source IS NOT 'portal' THEN sections.campus_source
+      ELSE excluded.campus_source END,
     updated_at = datetime('now')
 `);
 
@@ -54,8 +71,8 @@ function storedMeetings(raw) {
 }
 
 const recordSeatsStmt = db.prepare(`
-  INSERT INTO seats_snapshot (section_id, status, seats_open, seats_cap, wait_total)
-  VALUES (?, ?, ?, ?, ?)
+  INSERT INTO seats_snapshot (section_id, status, seats_open, seats_cap, wait_total, captured_at)
+  VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))
 `);
 
 // El class search NO devuelve el título de la materia (el recon lo confirmó:
@@ -118,7 +135,12 @@ export function saveSection(s, { source = 'class-search' } = {}) {
     fields.instructor,
     JSON.stringify(fields.meetings),
     fields.instructorSource,
-    fields.meetingsSource
+    fields.meetingsSource,
+    // El campus no pasa por mergeSection: su precedencia no es por vacío sino
+    // por fuente, y se resuelve en el SQL de arriba. Sin campus explícito se
+    // manda null, que es lo que deja intacto lo que ya se sabía.
+    s.campus ?? null,
+    s.campus ? s.campusSource ?? 'portal' : null
   );
 
   // Una discrepancia no se resuelve en silencio ni rompe el sync: queda escrita
@@ -132,7 +154,14 @@ export function saveSection(s, { source = 'class-search' } = {}) {
 
   const sectionId = db.prepare('SELECT id FROM sections WHERE term = ? AND class_nbr = ?').get(s.term, s.classNbr).id;
   if (s.seats) {
-    recordSeatsStmt.run(sectionId, s.seats.status, s.seats.open, s.seats.capacity, s.seats.waitTotal);
+    recordSeatsStmt.run(
+      sectionId,
+      s.seats.status,
+      s.seats.open,
+      s.seats.capacity,
+      s.seats.waitTotal,
+      s.seats.capturedAt ?? null
+    );
   }
   return sectionId;
 }
@@ -206,17 +235,50 @@ export function seatHistory(term, classNbrs, { windowHours = 24 } = {}) {
   return byClass;
 }
 
+// ── Campus del estudiante ──────────────────────────────────────────────────
+// Vive acá y no con el resto del perfil porque el catálogo es su único
+// consumidor: ninguna pantalla del portal publica en qué campus estudiás, así
+// que nada lo scrapea y nadie más lo escribe. Sin elegir queda null, y entonces
+// el catálogo no reordena nada: proponerlo es del onboarding, no de esta capa.
+export function readHomeCampus(userId = LOCAL_USER_ID) {
+  return db.prepare('SELECT home_campus FROM profile WHERE user_id = ?').get(userId)?.home_campus ?? null;
+}
+
+// Valida contra el vocabulario del portal antes de escribir: SQLite no puede
+// hacerlo (no admite CHECK en una columna agregada), así que la garantía de que
+// `campus` es uno de los tres códigos vive exactamente acá. null es un valor
+// legítimo: significa "todavía no elegí".
+export function setHomeCampus(userId, campus) {
+  const parsed = campus === null || campus === undefined ? { success: true, data: null } : campusCodeSchema.safeParse(campus);
+  if (!parsed.success) throw new Error(`Campus desconocido: elegí uno de ${CAMPUS_CODES.join(', ')}`);
+  const value = parsed.data;
+  const updated = db
+    .prepare("UPDATE profile SET home_campus = ?, updated_at = datetime('now') WHERE user_id = ?")
+    .run(value, userId);
+  if (!updated.changes) {
+    db.prepare('INSERT INTO profile (user_id, home_campus) VALUES (?, ?)').run(userId, value);
+  }
+  return value;
+}
+
 // ── Capa de lectura (GET /api/catalog) ─────────────────────────────────────
 // Sirve el catálogo cacheado desde disco en <10ms. Agrupa secciones por materia
 // y adjunta el último snapshot de cupo de cada una con su timestamp.
-export function readCatalog(term) {
+//
+// El orden por campus se resuelve acá, no en cada pantalla: la lista plana ya
+// viene con las secciones del campus del perfil primero, y al lado viaja la
+// misma lista partida en grupos con su encabezado. Cada sección conserva su
+// campo crudo (campus + campusSource) para que una pantalla pueda presentarlo
+// de otra forma sin tener que deshacer este orden.
+export function readCatalog(term, { homeCampus = readHomeCampus() } = {}) {
   const sections = db
     .prepare(
       `SELECT s.id, s.course_id, s.term, s.class_nbr, s.section, s.component, s.instructor, s.meetings,
+              s.campus, s.campus_source,
               c.code, c.subject, c.catalog_nbr, c.title, c.career, c.credits
        FROM sections s JOIN courses c ON c.id = s.course_id
        ${term ? 'WHERE s.term = ?' : ''}
-       ORDER BY c.code, s.class_nbr`
+       ORDER BY c.code, s.section, s.class_nbr`
     )
     .all(...(term ? [term] : []));
 
@@ -257,13 +319,25 @@ export function readCatalog(term) {
           }
         : null,
       seatsUpdatedAt: seat?.captured_at ?? null,
+      campus: row.campus ?? null,
+      campusSource: row.campus_source ?? null,
     });
   }
+
+  const courses = [...byCourse.values()].map((course) => ({
+    ...course,
+    sections: orderByCampus(course.sections, homeCampus),
+    campusGroups: groupByCampus(course.sections, homeCampus).map(({ items, ...group }) => ({
+      ...group,
+      sections: items,
+    })),
+  }));
 
   return {
     term: term ?? null,
     generatedAt: new Date().toISOString(),
-    courses: [...byCourse.values()],
+    homeCampus,
+    courses,
   };
 }
 
@@ -407,7 +481,12 @@ async function searchByPrefix(page, { term, career, prefix, campus = null }) {
 }
 
 // Convierte lo extraído en filas validadas y las persiste.
-function persist(courses, { term, career }) {
+//
+// `campus` es el filtro con que se pidió la búsqueda: si la búsqueda lo llevaba,
+// el portal mismo está diciendo a qué campus pertenece cada fila que devolvió, y
+// se guarda como dato del portal. Sin filtro, la única pista es el número de
+// sección, que se guarda marcado como inferencia (ver campusFromSectionNumber).
+function persist(courses, { term, career, campus = null }) {
   let saved = 0;
   const subjects = knownSubjects();
   for (const course of courses) {
@@ -434,6 +513,8 @@ function persist(courses, { term, career }) {
         section: cell ? cell[1] : s.classNameCell || null,
         component: cell ? cell[2] : null,
         instructor: s.instructor || null,
+        campus: campus ?? campusFromSectionNumber(cell ? cell[1] : null),
+        campusSource: campus ? 'portal' : 'seccion',
         meetings: parseMeetings(s.dayTime, s.room),
         seats: s.status
           ? { status: normalizeSeatStatus(s.status), open: null, capacity: null, waitTotal: null }
@@ -452,46 +533,74 @@ function persist(courses, { term, career }) {
   return saved;
 }
 
-// Los tres campus del select del class search (recon-catalog-ICC.html). Son el
-// segundo eje de troceo: cuando el prefijo ya es un código completo (a ART107
-// no se le puede agregar otro dígito porque ART1070 no existe), la única forma
-// de partir sus >50 secciones es pedirlas campus por campus.
-const CAMPUSES = ['CSTI', 'CSTA', 'CVIR'];
-
-// Barre un subject (ej. "ICC") de un término/carrera y persiste sus secciones.
-// Si un trozo excede el límite de 50 del portal, lo subdivide agregando un
-// dígito al prefijo ("ICC" → "ICC0".."ICC9") y reintenta cada uno. Cuando los
-// dígitos se agotan (maxDepth), el prefijo es de hecho un código completo con
-// demasiadas secciones y se trocea por campus. Si aun así un campus excede,
-// se reporta como skipped: no queda ningún eje más y hay que mirarlo a mano.
-export async function syncCatalogSubject(page, { term, career, subject, throttleMs = 1500, maxDepth = 3 }) {
-  let saved = 0;
+/**
+ * El árbol de búsquedas de un barrido, sin navegador: el campus es el PRIMER
+ * eje y el prefijo el segundo.
+ *
+ * Antes el campus era el último recurso, cuando ya no quedaban dígitos que
+ * agregar. Invertirlo cambia tres cosas:
+ *
+ *   1. El campus deja de inferirse: cada fila la devolvió una búsqueda filtrada
+ *      por campus, así que el dato lo dice el portal.
+ *   2. Cada consulta trae la mitad de las secciones, así que la mayoría de los
+ *      subjects deja de exceder el límite de 50 y de subdividirse: en el ciclo
+ *      medido, ICC pasa de 11 navegaciones a 3.
+ *   3. Desaparece el modo de falla que dejaba materias "sin trocear": un código
+ *      completo que excedía ya no tenía ningún eje más que probar, y ahora el
+ *      campus se aplicó antes de llegar ahí.
+ *
+ * El costo es el piso: un subject que hoy entra en una sola búsqueda pasa a
+ * costar tres.
+ *
+ * `search` y `save` son la única parte que toca el portal y el disco: separarlas
+ * es lo que permite probar el árbol de decisiones sin abrir Chromium.
+ */
+export async function sweepSubject({ subject, campuses = CAMPUS_CODES, maxDepth = 3 }, { search, save }) {
+  const searches = [];
   const skipped = [];
+  let saved = 0;
 
-  const sweep = async (prefix, depth, campus = null) => {
-    const { exceeds, courses } = await searchByPrefix(page, { term, career, prefix, campus });
+  const walk = async (prefix, depth, campus) => {
+    searches.push({ prefix, campus });
+    const { exceeds, courses } = await search({ prefix, campus });
     if (!exceeds) {
-      saved += persist(courses, { term, career });
-      return;
-    }
-    if (campus) {
-      skipped.push(`${prefix}@${campus}`);
+      saved += await save(courses, campus);
       return;
     }
     if (depth >= maxDepth) {
-      for (const c of CAMPUSES) {
-        await page.waitForTimeout(throttleMs);
-        await sweep(prefix, depth, c);
-      }
+      // Sin dígitos que agregar y ya filtrado por campus, no queda eje: se
+      // reporta con el campus adentro para que se pueda mirar a mano.
+      skipped.push(`${prefix}@${campus}`);
       return;
     }
     for (let digit = 0; digit <= 9; digit++) {
-      await page.waitForTimeout(throttleMs);
-      await sweep(`${prefix}${digit}`, depth + 1);
+      await walk(`${prefix}${digit}`, depth + 1, campus);
     }
   };
 
-  await sweep(subject, 0);
+  for (const campus of campuses) {
+    await walk(subject, 0, campus);
+  }
+
+  return { saved, skipped, searches };
+}
+
+// Barre un subject (ej. "ICC") de un término/carrera y persiste sus secciones,
+// campus por campus. El throttle vive en la búsqueda misma: es un sync de fondo
+// contra un portal ajeno, no algo que dispare la UI.
+export async function syncCatalogSubject(page, { term, career, subject, throttleMs = 1500, maxDepth = 3 }) {
+  let first = true;
+  const { saved, skipped } = await sweepSubject(
+    { subject, maxDepth },
+    {
+      search: async ({ prefix, campus }) => {
+        if (!first) await page.waitForTimeout(throttleMs);
+        first = false;
+        return searchByPrefix(page, { term, career, prefix, campus });
+      },
+      save: (courses, campus) => persist(courses, { term, career, campus }),
+    }
+  );
 
   const detail = skipped.length ? `${subject} (sin trocear: ${skipped.join(', ')})` : subject;
   logSync({ kind: 'catalog', term, status: skipped.length ? 'error' : 'ok', detail, rows: saved });
@@ -503,7 +612,7 @@ export async function syncCatalogSubject(page, { term, career, subject, throttle
 // debe costar una sola navegación, no un árbol entero de prefijos. El filtro
 // posterior es deliberado: PeopleSoft trata el campo como "contains", aun
 // cuando se le pase el código completo.
-export async function syncCatalogCourse(page, { term, career, courseCode }) {
+export async function syncCatalogCourse(page, { term, career, courseCode, userId = LOCAL_USER_ID, campus = readHomeCampus(userId) }) {
   // El carrito puede llegar antes que un sync de catálogo completo. El código
   // canónico ya trae la partición necesaria para consultar el portal, así que
   // no dejamos al watcher ciego solo porque todavía no exista la fila courses.
@@ -512,8 +621,12 @@ export async function syncCatalogCourse(page, { term, career, courseCode }) {
   const course = fromDb ?? (parsed ? { subject: parsed[1], catalog_nbr: parsed[2] } : null);
   if (!course) throw new Error(`El código de materia vigilada no es válido: ${courseCode}`);
 
+  // Con campus elegido, el watcher sigue costando UNA navegación (la misma de
+  // siempre) y además vuelve con el campus dicho por el portal. Sin campus
+  // elegido no se pagan tres búsquedas por materia vigilada: se consulta sin
+  // filtrar y el campus queda inferido o ausente.
   const prefix = portalCatalogNbr({ subject: course.subject, catalogNbr: course.catalog_nbr });
-  const { exceeds, courses } = await searchByPrefix(page, { term, career, prefix });
+  const { exceeds, courses } = await searchByPrefix(page, { term, career, prefix, campus });
   if (exceeds) {
     throw new Error(`La búsqueda de ${courseCode} excedió el límite del portal; hace falta un selector más preciso`);
   }
@@ -523,7 +636,7 @@ export async function syncCatalogCourse(page, { term, career, courseCode }) {
     const code = splitCourseCode(row.rawNbr, { subjectHint: row.subjectFromHeader, knownSubjects: subjects });
     return code && courseCodeToString(code) === courseCode;
   });
-  const saved = persist(exact, { term, career });
+  const saved = persist(exact, { term, career, campus });
   logSync({ kind: 'watcher', term, status: 'ok', detail: courseCode, rows: saved });
   return { saved };
 }
