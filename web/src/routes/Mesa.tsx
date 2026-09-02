@@ -363,7 +363,15 @@ export function Mesa() {
                 <span className="font-medium">{course.code}</span>
                 <span className="text-muted">{course.title}</span>
                 <span className="tabular text-muted ml-auto font-mono text-xs">
-                  {course.sections.map((section) => `${section.section ?? '?'} ${section.component ?? ''}`).join(' · ')}
+                  {/* View My Classes no publica el número de grupo, así que en
+                      lo ya inscrito suele faltar. Un "?" se lee como un dato
+                      roto; el NRC sí existe siempre y es lo que la oficina
+                      teclea, así que es lo que se muestra cuando no hay grupo. */}
+                  {course.sections
+                    .map((section) =>
+                      [section.section ?? `NRC ${section.classNbr}`, section.component].filter(Boolean).join(' ')
+                    )
+                    .join(' · ')}
                 </span>
               </li>
             ))}
