@@ -22,11 +22,9 @@ const NAV: Array<{ to: string; label: string; keywords?: string[] }> = [
   { to: '/inscripcion', label: 'Inscripción', keywords: ['carrito', 'grupos', 'plan', 'inscribir', 'cupos'] },
   { to: '/horario', label: 'Mi horario', keywords: ['clases', 'aula', 'semana'] },
   { to: '/academico', label: 'Notas y avance', keywords: ['índice', 'gpa', 'pénsum', 'metas'] },
-  { to: '/mesa', label: 'Mesa de inscripción', keywords: ['mesa', 'secretaria', 'hoja', 'imprimir', 'presencial'] },
-  { to: '/ciclo', label: 'El ciclo y sus etapas', keywords: ['etapa', 'fase', 'fechas', 'calendario', 'cierre'] },
   { to: '/trayectoria', label: 'Trayectoria y ruta a graduación', keywords: ['graduación', 'ciclos', 'carrera', 'atraso'] },
-  { to: '/mesa', label: 'Armar el ciclo', keywords: ['mesa', 'elegir', 'materias', 'campus', 'secretaría', 'hoja', 'imprimir'] },
-  { to: '/ciclo', label: 'El ciclo y sus etapas', keywords: ['etapa', 'fase', 'fechas', 'retiro', 'modificación', 'calendario'] },
+  { to: '/mesa', label: 'Armar el ciclo', keywords: ['mesa', 'elegir', 'materias', 'campus', 'secretaria', 'hoja', 'imprimir', 'presencial'] },
+  { to: '/ciclo', label: 'El ciclo y sus etapas', keywords: ['etapa', 'fase', 'fechas', 'retiro', 'modificación', 'calendario', 'cierre'] },
   { to: '/ajustes', label: 'Ajustes', keywords: ['cuenta', 'notificaciones', 'respaldos'] },
 ];
 
