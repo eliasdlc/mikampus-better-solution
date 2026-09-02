@@ -217,8 +217,111 @@ export function timeWindow(
 // El costo, dicho: una materia cambia de tono al cambiar el conjunto. Por eso
 // el código va SIEMPRE escrito en el bloque, y el color no es nunca la única
 // forma de distinguir una materia.
+// Hue aproximado del acento en OKLCH. Los tonos de materia se rotan para
+// quedar lo más lejos posible de él: si una materia cae en el mismo tono que el
+// acento, el color deja de distinguir "esto es una materia" de "esto es una
+// acción", que es lo único que el acento tiene permitido significar.
+const HUE_ACENTO = 264;
+
 export function paletteFor(blocks: Block[]): Map<string, number> {
   const codes = [...new Set(blocks.map((block) => block.code))].sort();
   const step = 360 / Math.max(1, codes.length);
-  return new Map(codes.map((code, i) => [code, i * step]));
+  // Media vuelta de paso desde el acento deja el conjunto centrado en el hueco
+  // más lejano: con tres materias son 120 grados entre sí y 60 al acento.
+  const offset = (HUE_ACENTO + step / 2) % 360;
+  return new Map(codes.map((code, i) => [code, (offset + i * step) % 360]));
+}
+
+// ── Bandas de la grilla ────────────────────────────────────────────────────
+
+// La ventana dinámica sola no alcanza. Un horario que va de 10:00 a 21:00 y
+// ocupa seis horas de clase sigue costando once filas, y cinco de ellas son un
+// hueco: la tarde libre. Plegar las bandas que NINGÚN día usa es lo que baja la
+// grilla a la mitad.
+//
+// La tira plegada dice cuántas horas se comió y se despliega, porque un hueco
+// de cinco horas es información sobre tu semana, no ruido.
+export type Band =
+  | { kind: 'hora'; hour: number }
+  | { kind: 'plegada'; fromHour: number; toHour: number; hours: number };
+
+// Cuántas horas vacías seguidas hacen falta para que plegarlas gane algo.
+// Con dos, plegar ahorra una fila y agrega una tira: no vale la pena.
+export const MIN_HORAS_PLEGABLES = 3;
+
+function horaOcupada(blocks: Block[], hour: number): boolean {
+  const desde = hour * 60;
+  const hasta = desde + 60;
+  return blocks.some((block) => toMinutes(block.start) < hasta && desde < toMinutes(block.end));
+}
+
+export function foldBands(
+  blocks: Block[],
+  { startHour, endHour, minRun = MIN_HORAS_PLEGABLES }: { startHour: number; endHour: number; minRun?: number }
+): Band[] {
+  const bands: Band[] = [];
+  let vacias: number[] = [];
+
+  const cerrarRacha = () => {
+    if (vacias.length >= minRun) {
+      bands.push({ kind: 'plegada', fromHour: vacias[0], toHour: vacias.at(-1)! + 1, hours: vacias.length });
+    } else {
+      for (const hour of vacias) bands.push({ kind: 'hora', hour });
+    }
+    vacias = [];
+  };
+
+  for (let hour = startHour; hour < endHour; hour++) {
+    if (horaOcupada(blocks, hour)) {
+      cerrarRacha();
+      bands.push({ kind: 'hora', hour });
+    } else {
+      vacias.push(hour);
+    }
+  }
+  cerrarRacha();
+  return bands;
+}
+
+// Una banda de hora son dos filas de media hora; una plegada es una sola fila.
+// Las 1319 reuniones del catálogo empiezan y terminan en hora en punto y duran
+// 60, 120, 180, 240 o 360 minutos: no existe el bloque de 45, así que los slots
+// de 15 eran sesenta filas para representar quince posiciones.
+export const FILAS_POR_HORA = 2;
+
+export function bandRows(bands: Band[]): number {
+  return bands.reduce((n, band) => n + (band.kind === 'hora' ? FILAS_POR_HORA : 1), 0);
+}
+
+// De una hora a su línea de grid. La fila 1 es la cabecera de días, así que la
+// primera banda arranca en la 2. Una hora que cayó dentro de una tira plegada
+// se ancla al borde de la tira: no tiene fila propia.
+export function bandLine(bands: Band[], hhmm: string): number {
+  const minutos = toMinutes(hhmm);
+  let linea = 2;
+  for (const band of bands) {
+    if (band.kind === 'plegada') {
+      if (minutos < band.toHour * 60) return linea;
+      linea += 1;
+      continue;
+    }
+    const desde = band.hour * 60;
+    if (minutos < desde) return linea;
+    if (minutos < desde + 60) return linea + Math.round((minutos - desde) / 30);
+    linea += FILAS_POR_HORA;
+  }
+  return linea;
+}
+
+// Los días que hay que dibujar: los que tienen algo, en el orden de la semana.
+// Sale de los bloques y no de una lista fija, así que un bloque en domingo deja
+// de descartarse en silencio. Con el horario real quedan dos columnas y a 393px
+// son anchas de verdad.
+export function visibleDays(blocks: Block[], { all = false }: { all?: boolean } = {}): DayCode[] {
+  const orden: DayCode[] = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+  if (all) return orden.slice(0, 6);
+  const usados = new Set(blocks.map((block) => block.day));
+  const conClase = orden.filter((day) => usados.has(day));
+  // Sin un solo bloque no hay nada que deducir: se muestra la semana laboral.
+  return conClase.length > 0 ? conClase : orden.slice(0, 5);
 }
