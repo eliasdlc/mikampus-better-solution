@@ -4,7 +4,7 @@ import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { readCart, removeFromCart, saveCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
-import { readCatalog, seatHistory, syncCatalogCourse, applyPlanFacts } from './peoplesoft/catalog.js';
+import { readCatalog, seatHistory, syncCatalogCourse, applyPlanFacts, readHomeCampus, setHomeCampus } from './peoplesoft/catalog.js';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
 import { readTerms, reconcileTerms, planningTerm } from './terms.js';
@@ -498,6 +498,54 @@ app.post('/api/enrollment-windows/sync', async (req, res) => {
   }
 });
 
+// ── Calendario del ciclo y fases ────────────────────────────────────────────
+// El portal publica UNA ventana por ciclo (Enrollment Dates) y nada más: las
+// fechas de modificación, retiro y notas viven en el calendario académico que
+// PUCMM publica fuera del portal. Por eso el estudiante puede cargarlas, y por
+// eso lo que no cargó queda explícitamente ausente en vez de aparecer inventado.
+
+// Un ZodError trae el detalle en `issues`; su `message` es un JSON que nadie
+// puede leer en un aviso de pantalla.
+function readableError(err) {
+  const issues = err?.issues;
+  if (!Array.isArray(issues)) return err.message;
+  return issues.map((issue) => (issue.path?.length ? `${issue.path.join('.')}: ${issue.message}` : issue.message)).join('; ');
+}
+
+app.get('/api/term-events', (req, res) => {
+  const { term, termLabel } = termPhase(req.userId, { term: req.query.term ? String(req.query.term) : null });
+  res.json({ term, termLabel, events: term ? readTermEvents(req.userId, term) : [] });
+});
+
+// Reemplaza el calendario cargado a mano de un ciclo por la lista que llega:
+// borrar una fecha es no mandarla. Nunca toca lo que dijo el portal, y responde
+// con el estado de fase recalculado para que la UI no tenga que pedirlo aparte.
+app.put('/api/term-events', (req, res) => {
+  try {
+    const term = req.body?.term ? String(req.body.term) : null;
+    if (!term) throw new Error('Elegí el ciclo al que pertenece el calendario');
+    if (!Array.isArray(req.body?.events)) throw new Error('El calendario viaja como una lista de eventos');
+    saveTermEvents(req.userId, term, req.body.events);
+    res.json(termPhase(req.userId, { term }));
+  } catch (err) {
+    res.status(400).json({ error: readableError(err) });
+  }
+});
+
+// La lectura única desde la que el frontend gatea toda la app: etapa del ciclo,
+// cuánto falta, qué fechas faltan por cargar y el estado de cada capacidad con
+// su motivo legible. Que venga todo junto es el punto: si cada pantalla
+// comparara fechas por su cuenta, en dos semanas habría tres reglas distintas.
+//
+// El servidor NO bloquea por fase. Una segunda capa de reglamento construida
+// sobre fechas tipeadas a mano solo puede producir falsos negativos: PeopleSoft
+// ya rechaza lo que hay que rechazar y action_log guarda su respuesta literal.
+// La única excepción sigue siendo POST /api/schedule, que no decide si una
+// acción es legal sino cuánto tiempo vive una credencial cifrada en disco.
+app.get('/api/term-phase', (req, res) => {
+  res.json(termPhase(req.userId, { term: req.query.term ? String(req.query.term) : null }));
+});
+
 // Catálogo cacheado desde SQLite (<10ms). El ETag deriva de la última sync y
 // del volumen de secciones: mientras no cambie, el browser recibe 304 y el
 // índice MiniSearch no se reconstruye. El scraping en vivo va por otros
@@ -505,11 +553,15 @@ app.post('/api/enrollment-windows/sync', async (req, res) => {
 app.get('/api/catalog', (req, res) => {
   const term = req.query.term ? String(req.query.term) : null;
   const count = db.prepare('SELECT COUNT(*) AS n FROM sections' + (term ? ' WHERE term = ?' : '')).get(...(term ? [term] : [])).n;
-  const etag = `"cat-${term ?? 'all'}-${count}-${lastSync('catalog', { term }) ?? '0'}"`;
+  // El campus del perfil entra en el ETag porque decide el ORDEN de la
+  // respuesta: sin él, cambiar de campus en Ajustes devolvería 304 y el browser
+  // seguiría mostrando el orden viejo hasta que cambiara el conteo de secciones.
+  const homeCampus = readHomeCampus(req.userId);
+  const etag = `"cat-${term ?? 'all'}-${count}-${homeCampus ?? 'sin-campus'}-${lastSync('catalog', { term }) ?? '0'}"`;
   res.set('Cache-Control', 'no-cache');
   res.set('ETag', etag);
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
-  res.json(readCatalog(term));
+  res.json(readCatalog(term, { homeCampus }));
 });
 
 // "Ver más grupos": trae del portal TODAS las secciones de UNA materia en un
@@ -824,6 +876,20 @@ app.get('/api/profile', (req, res) => {
   res.json({ profile: readProfile(req.userId), syncedAt: lastSync('advisement', { userId: req.userId }) });
 });
 
+// El único campo del perfil que el estudiante escribe: su campus. Ninguna
+// pantalla del portal lo publica, así que no se scrapea ni se adivina; null es
+// un valor legítimo y significa "todavía no elegí", con el catálogo sin
+// reordenar nada.
+app.patch('/api/profile', (req, res) => {
+  try {
+    if (!('homeCampus' in (req.body ?? {}))) throw new Error('Mandá homeCampus para actualizar el perfil');
+    setHomeCampus(req.userId, req.body.homeCampus ?? null);
+    res.json({ profile: readProfile(req.userId), syncedAt: lastSync('advisement', { userId: req.userId }) });
+  } catch (err) {
+    res.status(400).json({ error: readableError(err) });
+  }
+});
+
 // ── Metas y señales (/academico, Fase 10 §12.7) ─────────────────────────────
 // El contexto de las metas: los totales del índice (de las notas) y los créditos
 // que faltan del pénsum (del árbol de requisitos). Una sola fuente para las
@@ -1070,6 +1136,142 @@ app.post('/api/search/add', async (req, res) => {
   }
 });
 
+// ── Mesa de inscripción ─────────────────────────────────────────────────────
+// La pantalla que decide qué materias inscribir. Endpoint compuesto: lo ya
+// inscrito, lo pendiente que se oferta, la selección viva, la fase del ciclo y
+// la antigüedad del cupo llegan juntos, porque juntos es como significan algo.
+// Todo es lectura local sobre SQLite; nada de acá toca el portal.
+
+app.get('/api/mesa', (req, res) => {
+  try {
+    const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
+    res.json(readMesa(req.userId, term));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Elegir (o cambiar) la sección de una materia. Es idempotente por materia: el
+// mismo PUT dos veces deja el mismo estado, que es lo que hace que la UI pueda
+// mandar el estado completo del control sin llevar la cuenta de si ya existía.
+app.put('/api/mesa/seleccion', (req, res) => {
+  try {
+    const term = planningTerm(req.body?.term ? String(req.body.term) : null, latestScheduledTerm(req.userId));
+    const courseId = Number(req.body?.courseId);
+    const sectionId = req.body?.sectionId == null ? null : Number(req.body.sectionId);
+    const relatedSectionId = req.body?.relatedSectionId == null ? null : Number(req.body.relatedSectionId);
+    if (!Number.isInteger(courseId)) throw new Error('Falta la materia');
+
+    const plan = mesaPlan(req.userId, term, { create: true });
+    const existing = plan.items.find((item) => item.courseId === courseId);
+    if (existing) {
+      plans.updatePlanItem(req.userId, plan.id, existing.id, { sectionId, relatedSectionId });
+    } else {
+      plans.addPlanItem(req.userId, plan.id, { courseId, sectionId, relatedSectionId });
+    }
+    res.json(readMesa(req.userId, term));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/mesa/seleccion/:courseId', (req, res) => {
+  try {
+    const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
+    const plan = mesaPlan(req.userId, term);
+    const item = plan?.items.find((entry) => entry.courseId === Number(req.params.courseId));
+    // Quitar algo que no está no es un error: la UI puede reintentar sin que la
+    // pantalla se llene de mensajes que no significan nada.
+    if (item) plans.removePlanItem(req.userId, plan.id, item.id);
+    res.json(readMesa(req.userId, term));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Arma combinaciones con las condiciones DURAS del estudiante. Las condiciones
+// no penalizan un horario: lo eliminan, y por eso la respuesta trae `blocked`,
+// las materias que se quedaron sin ninguna sección posible. Sin eso la pantalla
+// diría "no hay combinación" sin decir qué aflojar.
+app.post('/api/mesa/armar', (req, res) => {
+  try {
+    const term = planningTerm(req.body?.term ? String(req.body.term) : null, latestScheduledTerm(req.userId));
+    const mesa = readMesa(req.userId, term);
+    const wanted = new Set((req.body?.courseIds ?? []).map(Number));
+    const pool = wanted.size ? mesa.candidates.filter((course) => wanted.has(course.courseId)) : mesa.candidates;
+
+    const constraints = { ...NO_CONSTRAINTS, ...(req.body?.constraints ?? {}) };
+    const courses = pool.map((course) => ({
+      courseId: course.courseId,
+      code: course.code,
+      title: course.title,
+      // Solo los teóricos entran al solver: la práctica se elige después,
+      // contra el horario que la teórica ya fijó. Meterlas juntas multiplicaría
+      // el árbol por combinaciones que el portal ni siquiera acepta sueltas.
+      sections: course.sections
+        .filter((section) => section.component !== 'PRA')
+        .map((section) => ({
+          id: section.id,
+          courseId: course.courseId,
+          code: course.code,
+          title: course.title,
+          classNbr: section.classNbr,
+          section: section.section,
+          component: section.component,
+          instructor: section.instructor,
+          meetings: section.meetings,
+          campus: section.campus,
+        })),
+    }));
+
+    // Lo ya inscrito no se negocia: entra como una materia de una sola sección
+    // para que ninguna combinación propuesta choque con lo que ya tenés.
+    const locked = mesa.enrolled.flatMap((course) =>
+      course.sections.map((section) => ({
+        courseId: -course.id,
+        code: course.code,
+        title: course.title,
+        sections: [
+          {
+            id: section.id,
+            courseId: -course.id,
+            code: course.code,
+            title: course.title,
+            classNbr: section.classNbr,
+            section: section.section,
+            component: section.component,
+            instructor: section.instructor,
+            meetings: section.meetings,
+            campus: section.campus ?? null,
+          },
+        ],
+      }))
+    );
+
+    const solved = solveCombinations([...locked, ...courses], {
+      constraints,
+      limit: Number(req.body?.limit ?? 5000),
+    });
+
+    res.json({
+      term,
+      constraints,
+      truncated: solved.truncated,
+      blocked: solved.blocked,
+      dropped: solved.dropped,
+      // Las secciones de lo ya inscrito se quitan de la propuesta: entraron
+      // solo para que el choque se calcule bien, no son algo que elegir.
+      combinations: solved.combinations.slice(0, 20).map((combo) => ({
+        penalty: combo.penalty,
+        metrics: combo.metrics,
+        sections: combo.sections.filter((section) => section.courseId > 0),
+      })),
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ── Planes ──────────────────────────────────────────────────────────────────
 // CRUD puro sobre SQLite (<10ms): nada de esto toca el portal. La única
 // operación viva de un plan es mandarlo al carrito (más abajo).
@@ -1238,9 +1440,17 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
   const results = await withPage(req.userId, async (page) => {
     const out = [];
     for (const item of items) {
+      // La práctica viaja pegada a su teórica en el mismo pedido: la pantalla
+      // del portal las agrega juntas, con un radio para el componente
+      // relacionado. Mandar solo la teórica dejaba que PeopleSoft eligiera la
+      // práctica por su cuenta, y el horario inscrito no era el planeado.
+      const relatedClassNbr = item.relatedSection?.classNbr ?? null;
+      const etiqueta = relatedClassNbr
+        ? `${item.section.classNbr} + ${relatedClassNbr}`
+        : item.section.classNbr;
       scheduler.emitEvent({
         type: 'log',
-        message: `Agregando ${item.title} (${item.code} · ${item.section.classNbr}) al carrito…`,
+        message: `Agregando ${item.title} (${item.code} · ${etiqueta}) al carrito…`,
       });
       try {
         const r = await addExactSectionToCart(page, {
@@ -1248,12 +1458,13 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
           career: item.career ?? 'GRDO',
           courseNumber: portalCatalogNbr(item),
           classNbr: item.section.classNbr,
+          relatedClassNbr,
         });
         const alreadyInCart = !!r.alreadyInCart;
         logAction({
           userId: req.userId,
           action: 'add-to-cart',
-          detail: `${item.code} · NRC ${item.section.classNbr} (${plan.term})`,
+          detail: `${item.code} · NRC ${etiqueta} (${plan.term})`,
           response: alreadyInCart ? 'ya estaba en el carrito' : 'agregada al carrito',
           ok: true,
         });
@@ -1266,7 +1477,7 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
         logAction({
           userId: req.userId,
           action: 'add-to-cart',
-          detail: `${item.code} · NRC ${item.section.classNbr} (${plan.term})`,
+          detail: `${item.code} · NRC ${etiqueta} (${plan.term})`,
           response: err.message,
           ok: false,
         });
