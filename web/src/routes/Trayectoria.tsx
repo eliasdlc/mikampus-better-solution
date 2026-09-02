@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -8,9 +8,11 @@ import {
   fetchMySchedule,
   fetchPlans,
   fetchCart,
+  fetchDegreePath,
   syncPensum,
 } from '../lib/api.ts';
 import { CourseChip } from '../components/CourseChip.tsx';
+import { DegreePath } from '../components/DegreePath.tsx';
 import { TermBadge } from '../components/TermBadge.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import { formatGpa } from '../../../src/shared/gpa.ts';
@@ -49,7 +51,13 @@ function Nodo({ tono, children, ultimo }: { tono: Tono; children: ReactNode; ult
 
 // El encabezado: la posición en la carrera y el atraso, con su base de cálculo a
 // la vista. El atraso es una inferencia (cohorte + 3 ciclos/año); se dice.
-function Posicion({ summary }: { summary: CareerSummary }) {
+//
+// `cyclesLeft` NO se muestra acá. Ese número es el conteo de períodos del pénsum
+// sin cerrar, y para quien va atrasado es sistemáticamente falso: tres materias
+// sueltas repartidas en seis bloques abiertos son seis períodos y un solo ciclo
+// de trabajo. Los ciclos que faltan salen de la ruta (shared/degreePath.ts), que
+// coloca lo pendiente en el tiempo respetando prerrequisitos y carga.
+function Posicion({ summary, ciclos }: { summary: CareerSummary; ciclos: number | null }) {
   const { position: p, credits: c, delay: d } = summary;
   return (
     <div className="border-line space-y-3 rounded-[var(--radius)] border p-4">
@@ -72,8 +80,8 @@ function Posicion({ summary }: { summary: CareerSummary }) {
           <Cifra label="Materias" value={String(summary.coursesNeeded ?? 0)} hint="faltantes" />
           <Cifra
             label="Ciclos"
-            value={summary.cyclesLeft === 0 ? '—' : `~${summary.cyclesLeft}`}
-            hint={summary.cyclesLeft === 0 ? 'terminaste' : 'para terminar'}
+            value={ciclos === null ? '·' : ciclos === 0 ? '—' : String(ciclos)}
+            hint={ciclos === null ? 'calculando' : ciclos === 0 ? 'terminaste' : 'para terminar'}
           />
         </div>
       </div>
@@ -237,6 +245,16 @@ export function Trayectoria() {
   const plans = useQuery({ queryKey: ['plans'], queryFn: fetchPlans });
   const cart = useQuery({ queryKey: ['cart'], queryFn: fetchCart });
 
+  // La carga por ciclo vive acá porque dos cosas la usan: el encabezado (que
+  // muestra los ciclos que faltan) y la ruta (que la deja cambiar). Es la misma
+  // consulta; React Query la resuelve una sola vez.
+  const [maxCredits, setMaxCredits] = useState(18);
+  const path = useQuery({
+    queryKey: ['degree-path', maxCredits],
+    queryFn: () => fetchDegreePath(maxCredits),
+    placeholderData: (previous) => previous,
+  });
+
   const current = terms.data?.current ?? null;
   const next = terms.data?.next ?? null;
   const nextSchedule = useQuery({
@@ -321,7 +339,12 @@ export function Trayectoria() {
         </div>
       ) : (
         <>
-          <Posicion summary={summary} />
+          <Posicion summary={summary} ciclos={path.data?.available ? path.data.termsRemaining : null} />
+
+          {/* La ruta va inmediatamente después de la posición: "dónde estoy" y
+              "cuándo termino" son la misma pregunta partida en dos, y la línea
+              de tiempo de abajo es el detalle de ambas. */}
+          <DegreePath maxCredits={maxCredits} onMaxCredits={setMaxCredits} />
 
           <ol className="mt-2">
             {pastTerms.map((t) => (

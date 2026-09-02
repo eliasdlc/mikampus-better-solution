@@ -12,13 +12,18 @@ import { courseColor } from '../lib/color.ts';
 // acciones que la necesitan, no como una sección de navegación. Una materia
 // abre la misma ficha de grupos y acciones que los buscadores locales.
 
-const NAV = [
-  { to: '/', label: 'Inicio' },
-  { to: '/inscripcion', label: 'Inscripción' },
-  { to: '/horario', label: 'Mi horario' },
-  { to: '/inscripcion', label: 'Carrito e inscripción' },
-  { to: '/academico', label: 'Notas y avance' },
-  { to: '/ajustes', label: 'Ajustes' },
+// `keywords` existe porque una pantalla se busca por lo que vas a hacer en ella
+// y no por el nombre que le pusimos: "carrito" tiene que llegar a Inscripción.
+// Antes eso se resolvía repitiendo la fila con otro nombre, y dos filas con el
+// mismo destino colisionaban en la key de React y en el `value` de cmdk — la
+// segunda no se podía seleccionar con el teclado.
+const NAV: Array<{ to: string; label: string; keywords?: string[] }> = [
+  { to: '/', label: 'Inicio', keywords: ['hoy', 'agenda', 'próxima clase'] },
+  { to: '/inscripcion', label: 'Inscripción', keywords: ['carrito', 'grupos', 'plan', 'inscribir', 'cupos'] },
+  { to: '/horario', label: 'Mi horario', keywords: ['clases', 'aula', 'semana'] },
+  { to: '/academico', label: 'Notas y avance', keywords: ['índice', 'gpa', 'pénsum', 'metas'] },
+  { to: '/trayectoria', label: 'Trayectoria y ruta a graduación', keywords: ['graduación', 'ciclos', 'carrera', 'atraso'] },
+  { to: '/ajustes', label: 'Ajustes', keywords: ['cuenta', 'notificaciones', 'respaldos'] },
 ];
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -109,7 +114,10 @@ function RootPage({
   onCourse: (c: CatalogCourse) => void;
   onNav: (to: string) => void;
 }) {
-  const nav = q.trim() ? NAV.filter((n) => n.label.toLowerCase().includes(q.trim().toLowerCase())) : NAV;
+  const termino = q.trim().toLowerCase();
+  const nav = termino
+    ? NAV.filter((n) => [n.label, ...(n.keywords ?? [])].some((text) => text.toLowerCase().includes(termino)))
+    : NAV;
 
   return (
     <>

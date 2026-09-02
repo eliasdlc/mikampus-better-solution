@@ -2,6 +2,7 @@ import { readCatalog } from './peoplesoft/catalog.js';
 import { readGrades } from './peoplesoft/grades.js';
 import { readRequirementTree, readProfile, readPensum } from './peoplesoft/advisement.js';
 import { recommendCourses } from './shared/recommend.ts';
+import { buildDegreePath } from './shared/degreePath.ts';
 import { isApproved } from './shared/gpa.ts';
 import { planFor } from './shared/pensum/index.ts';
 
@@ -109,4 +110,41 @@ export function recommendationOptions(userId, term, options = {}) {
     plan: plan ? { code: plan.plan, career: plan.career, issuedAt: plan.issuedAt } : null,
     proposals: STRATEGIES.map((strategy) => recommendationForTerm(userId, term, { ...options, strategy })),
   };
+}
+
+/**
+ * La ruta a graduación: el mismo standing y el mismo plan que usa el
+ * recomendador, pero proyectados hasta el final de la carrera en vez de un solo
+ * ciclo. Lectura local pura, cero PeopleSoft — entrar a la pantalla nunca
+ * dispara scraping.
+ *
+ * Los créditos ya acreditados salen del árbol del advisement cuando el portal
+ * los publica: es SU número, y es el que las compuertas por porcentaje miden.
+ * El histórico solo entra como respaldo.
+ */
+export function degreePathFor(userId, { maxCredits = DEFAULT_MAX_CREDITS, startTerm = null } = {}) {
+  const requirements = readRequirementTree(userId);
+  const approved = new Set();
+  const inProgress = new Set();
+  let historyUnits = 0;
+  for (const entry of academicStanding(userId)) {
+    if (entry.status === 'in_progress') inProgress.add(entry.courseCode);
+    else if (entry.status === 'taken') {
+      approved.add(entry.courseCode);
+      if (Number.isFinite(entry.credits ?? NaN)) historyUnits += Number(entry.credits);
+    }
+  }
+
+  const officialUnits = requirements?.units?.taken;
+  return buildDegreePath({
+    requirements,
+    plan: planForUser(userId),
+    standing: {
+      approved,
+      inProgress,
+      approvedUnits: Number.isFinite(officialUnits ?? NaN) ? Number(officialUnits) : historyUnits,
+    },
+    maxCredits: Number(maxCredits),
+    startTerm,
+  });
 }

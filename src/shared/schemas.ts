@@ -349,6 +349,62 @@ export const recommendationOptionsResponseSchema = z.object({
 });
 export type RecommendationOptionsResponse = z.infer<typeof recommendationOptionsResponseSchema>;
 
+// ── Ruta a graduación (GET /api/degree-path) ────────────────────────────────
+// Cuántos ciclos faltan colocando lo pendiente en el tiempo, y cuál de las dos
+// restricciones —la cadena de prerrequisitos o el techo de créditos— fija esa
+// fecha. Es cálculo local sobre el árbol de requisitos y el plan oficial; el
+// contrato existe porque es el borde entre backend y frontend.
+const degreePathCourseSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+  credits: z.number(),
+  kind: z.enum(['obligatoria', 'electiva']),
+  blockLabel: z.string(),
+  unlocks: z.number().int(),
+  chainLength: z.number().int(),
+  critical: z.boolean(),
+  requiredBy: z.string().nullable(),
+  conditionalOn: z.array(z.string()).default([]),
+});
+
+export const degreePathResponseSchema = z.object({
+  available: z.boolean(),
+  reason: z.string().nullable(),
+  maxCredits: z.number(),
+  startTerm: z.string().nullable().default(null),
+  generatedAt: z.string(),
+  terms: z.array(
+    z.object({
+      index: z.number().int(),
+      label: z.string().nullable(),
+      credits: z.number(),
+      courses: z.array(degreePathCourseSchema),
+    })
+  ),
+  termsRemaining: z.number().int(),
+  creditsRemaining: z.number(),
+  coursesRemaining: z.number().int(),
+  graduationTerm: z.string().nullable(),
+  binding: z.enum(['prerrequisitos', 'carga', 'ambas', 'ninguna']),
+  chainFloor: z.number().int(),
+  loadFloor: z.number().int(),
+  criticalPath: z.array(z.object({ code: z.string(), title: z.string() })),
+  bottlenecks: z.array(
+    z.object({
+      code: z.string(),
+      title: z.string(),
+      unlocks: z.number().int(),
+      chainLength: z.number().int(),
+      termIndex: z.number().int(),
+    })
+  ),
+  unscheduled: z.array(
+    z.object({ code: z.string(), title: z.string(), reason: z.string(), missing: z.array(z.string()) })
+  ),
+  caveats: z.array(z.string()),
+});
+export type DegreePathResponse = z.infer<typeof degreePathResponseSchema>;
+
 // Carrito real (GET /api/cart), enriquecido: además del label crudo del portal,
 // el código canónico (color estable + cruce con el catálogo), el título del
 // diccionario local, el horario parseado (para proyectar el carrito en el

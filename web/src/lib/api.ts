@@ -7,6 +7,8 @@ import {
   planSummarySchema,
   planToCartResultSchema,
   recommendationOptionsResponseSchema,
+  degreePathResponseSchema,
+  type DegreePathResponse,
   scheduleResponseSchema,
   termInfoSchema,
   termContextSchema,
@@ -338,6 +340,14 @@ function controlsToQuery(controls: RecommendationControls): Record<string, strin
     ...(controls.include?.length ? { include: controls.include.join(',') } : {}),
     ...(controls.exclude?.length ? { exclude: controls.exclude.join(',') } : {}),
   };
+}
+
+// La ruta a graduación: cuántos ciclos faltan colocando lo pendiente en el
+// tiempo, y qué restricción fija esa fecha. Todo se calcula en el backend sin
+// tocar el portal, así que pedirla es barato y no encola nada.
+export async function fetchDegreePath(maxCredits: number): Promise<DegreePathResponse> {
+  const qs = new URLSearchParams({ maxCredits: String(maxCredits) });
+  return degreePathResponseSchema.parse(await getJSON(`/api/degree-path?${qs}`));
 }
 
 export async function fetchRecommendation(

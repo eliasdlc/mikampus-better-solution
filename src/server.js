@@ -33,7 +33,7 @@ import { startCatalogCron, stopCatalogCron } from './cron.js';
 import { readEnrollmentWindows, syncEnrollmentWindows } from './peoplesoft/enrollmentWindows.js';
 import { dropClass } from './peoplesoft/dropClass.js';
 import { startBackupCron, stopBackupCron } from './backups.js';
-import { recommendationForTerm, recommendationOptions, planForUser, STRATEGIES, DEFAULT_MAX_CREDITS } from './recommendations.js';
+import { recommendationForTerm, recommendationOptions, degreePathFor, planForUser, STRATEGIES, DEFAULT_MAX_CREDITS } from './recommendations.js';
 import { vapidPublicKey, saveSubscription, removeSubscription } from './webpush.js';
 import { acquireAgentLock, agentHealthAuthorized, recordRuntimeStart, recordRuntimeStop, releaseAgentLock } from './runtime.js';
 import { resourcePath } from './paths.js';
@@ -1101,6 +1101,25 @@ app.get('/api/recommendation', (req, res) => {
   try {
     const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
     res.json(recommendationOptions(req.userId, term, recommendationOptionsFrom(req.query)));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// La ruta a graduación. Cálculo local sobre el árbol de requisitos y el plan
+// oficial: nunca sale al portal, así que abrir la pantalla no cuesta una sesión
+// de Playwright. El ciclo de arranque es el próximo a inscribir; si no hay uno
+// resuelto, la ruta se traza igual y sale sin fechas.
+app.get('/api/degree-path', (req, res) => {
+  try {
+    const terms = readTerms();
+    const maxCredits = Number(req.query.maxCredits ?? DEFAULT_MAX_CREDITS);
+    const startTerm = terms.next?.label ?? terms.current?.label ?? null;
+    res.json({
+      ...degreePathFor(req.userId, { maxCredits, startTerm }),
+      startTerm,
+      generatedAt: new Date().toISOString(),
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
