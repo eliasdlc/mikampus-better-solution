@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ClipboardList, LayoutGrid, ShoppingCart, Trash2, Zap, type LucideIcon } from 'lucide-react';
+import { CircleDot, ClipboardList, LayoutGrid, ShoppingCart, Table2, Trash2, Zap, type LucideIcon } from 'lucide-react';
 import {
   fetchCart,
   syncCart,
@@ -50,6 +50,21 @@ const STAGES: { id: Stage; label: string; short: string; icon: LucideIcon; hint:
 
 function isStage(value: string | null): value is Stage {
   return value === 'plan' || value === 'grupos' || value === 'carrito';
+}
+
+// Salida lateral desde el recorrido: mismo peso visual que el botón secundario
+// del header, nunca el del acento, que acá lo lleva la etapa activa.
+function SideTrip({ to, icon: Icon, label, hint }: { to: string; icon: LucideIcon; label: string; hint: string }) {
+  return (
+    <Link
+      to={to}
+      title={hint}
+      className="border-line hover:bg-surface-2 text-muted hover:text-fg tap flex min-h-9 items-center gap-2 rounded-[var(--radius)] border px-2.5 py-1.5 text-xs font-medium"
+    >
+      <Icon className="size-4" aria-hidden />
+      {label}
+    </Link>
+  );
 }
 
 // ── Cuándo se puede someter ─────────────────────────────────────────────────
@@ -346,6 +361,15 @@ export function Inscripcion() {
               Sin el código interno del ciclo, PeopleSoft no acepta consultas de cupos ni de carrito.
             </span>
           )}
+        </div>
+
+        {/* Mesa y El ciclo cuelgan de acá y no del nav principal: no son
+            destinos paralelos sino contexto del mismo ciclo que se eligió
+            arriba. Van fuera de la barra de etapas a propósito, porque no son
+            un cuarto paso del recorrido: se consultan, no se recorren. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <SideTrip to="/mesa" icon={Table2} label="Mesa de inscripción" hint="La hoja que se lleva a la mesa" />
+          <SideTrip to="/ciclo" icon={CircleDot} label="El ciclo" hint="En qué etapa está y qué se puede hacer" />
         </div>
 
         <nav className="border-line flex w-full gap-1 overflow-x-auto rounded-[var(--radius)] border p-1 sm:w-fit" aria-label="Etapas de la inscripción">

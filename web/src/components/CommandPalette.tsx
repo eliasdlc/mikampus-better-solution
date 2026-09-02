@@ -22,6 +22,8 @@ const NAV: Array<{ to: string; label: string; keywords?: string[] }> = [
   { to: '/inscripcion', label: 'Inscripción', keywords: ['carrito', 'grupos', 'plan', 'inscribir', 'cupos'] },
   { to: '/horario', label: 'Mi horario', keywords: ['clases', 'aula', 'semana'] },
   { to: '/academico', label: 'Notas y avance', keywords: ['índice', 'gpa', 'pénsum', 'metas'] },
+  { to: '/mesa', label: 'Mesa de inscripción', keywords: ['mesa', 'secretaria', 'hoja', 'imprimir', 'presencial'] },
+  { to: '/ciclo', label: 'El ciclo y sus etapas', keywords: ['etapa', 'fase', 'fechas', 'calendario', 'cierre'] },
   { to: '/trayectoria', label: 'Trayectoria y ruta a graduación', keywords: ['graduación', 'ciclos', 'carrera', 'atraso'] },
   { to: '/ajustes', label: 'Ajustes', keywords: ['cuenta', 'notificaciones', 'respaldos'] },
 ];
