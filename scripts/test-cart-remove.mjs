@@ -10,6 +10,11 @@
 //   3. Que la confirmación sea el carrito releído y no el click: si el portal
 //      ignora la acción, esto tiene que gritarlo, no devolver ok.
 import { chromium } from 'playwright';
+// La app nunca lanza chromium a pelo: browserLaunchOptions prefiere el
+// chromium del sistema sobre el que administra Playwright (src/browser.js).
+// Un test que se salta esa lógica prueba un arranque que la app no usa, y
+// falla en cualquier máquina donde el cache de Playwright no esté al día.
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -29,7 +34,7 @@ db.exec(`
 `);
 
 const html = await readFile('fixtures/recon-cart.html', 'utf8');
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 
 // El fixture es una página suelta: no hay servidor que procese el submit de
 // PeopleSoft. Se simula lo que el portal hace al borrar —sacar la fila del DOM—

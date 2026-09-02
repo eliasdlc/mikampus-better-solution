@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,7 +19,7 @@ const { extractDropOptions, parseDropOptions, extractDropConfirmation, extractDr
   '../src/peoplesoft/dropClass.js'
 );
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 try {
   await page.setContent(await readFile('fixtures/recon-enrollment-appointment.html', 'utf8'));

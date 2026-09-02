@@ -133,7 +133,7 @@ function BrowserInstall({ state, onStart, pending }: { state: OnboardingState; o
           <div className="bg-accent h-full transition-[width] duration-300" style={{ width: `${install.percent}%` }} />
         </div>
         <p className="text-muted mt-2 flex items-center gap-2 text-xs">
-          <Loader2 className="size-3 animate-spin" aria-hidden />
+          <Loader2 className="size-3" aria-hidden />
           {install.percent}% · {install.message ?? 'descargando'}
         </p>
         <p className="text-muted mt-1 text-xs">Podés cerrar esta pestaña: la descarga la hace el agente, no el navegador.</p>

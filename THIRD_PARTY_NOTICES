@@ -8,6 +8,7 @@ required by every dependency included in that artifact.
 
 Current direct runtime dependencies:
 
+- @modelcontextprotocol/sdk: MIT
 - @fontsource-variable/bricolage-grotesque — SIL Open Font License 1.1
 - @fontsource/inter — SIL Open Font License 1.1
 - @fontsource/jetbrains-mono — SIL Open Font License 1.1

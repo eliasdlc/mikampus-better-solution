@@ -259,6 +259,10 @@ db.exec(`
     plan_id     INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
     course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
     section_id  INTEGER REFERENCES sections(id) ON DELETE SET NULL,
+    -- La práctica que acompaña a la teórica de section_id. Es un par y no una
+    -- lista porque el portal solo ofrece eso: una clase más su componente
+    -- relacionado elegido con un radio (ver peoplesoft/classSearch.js).
+    related_section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
     status      TEXT NOT NULL DEFAULT 'desired', -- desired / planned
     note        TEXT,
     locked      INTEGER NOT NULL DEFAULT 0,
@@ -737,6 +741,13 @@ if (!hasColumn('requirement_groups', 'plan_id')) {
 // bases existentes. De acá en adelante los cambios de esquema son migraciones
 // numeradas y transaccionales, con copia pre-upgrade y compatibilidad declarada
 // (src/migrations.js). El resultado se expone para `status`/`doctor`.
+//
+// La baseline está CERRADA: ninguna tabla ni columna nueva se agrega arriba,
+// aunque el CREATE TABLE de acá sea más cómodo. Dos mecanismos de esquema
+// escribiendo el mismo cambio hacen que ninguno sea la verdad, y el de arriba
+// no tiene versión, ni transacción común, ni copia previa. Una base recién
+// creada llega al esquema actual por el mismo camino que una vieja: la baseline
+// crea las tablas históricas y las migraciones aplican todo lo posterior.
 export const schemaState = runMigrations(db, {
   backupDir: dataPaths().backups,
   preexisting: databaseExistedBefore,
@@ -760,9 +771,12 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_sync_log_kind ON sync_log(kind, user_id,
 // sí los incluye — esa es otra operación (deleteAllUserData). El árbol
 // compartido (pensum_plans/requirement_groups/requirement_courses) no se toca
 // jamás: es de la carrera, no de la persona.
+// term_events entra acá porque el calendario académico que el estudiante carga
+// a mano es tan suyo como sus notas: cambiar de cuenta no puede dejar las
+// fechas del anterior sobre el ciclo del nuevo.
 const PERSONAL_TABLES = [
   'grades', 'enrollments', 'progress_items', 'holds', 'cart_rows',
-  'profile', 'enrollment_windows', 'pensum', 'requirement_progress',
+  'profile', 'enrollment_windows', 'term_events', 'pensum', 'requirement_progress',
 ];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.

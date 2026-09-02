@@ -15,22 +15,29 @@ const latestSeatStmt = db.prepare(`
 `);
 
 // La misma forma de sección que sirve /api/catalog: la UI reutiliza los mismos
-// componentes (SeatBadge, WeeklyGrid) sin re-mapear nada.
-function sectionShape(row) {
-  if (!row.section_id) return null;
-  const seat = latestSeatStmt.get(row.section_id);
+// componentes (SeatBadge, WeeklyGrid) sin re-mapear nada. `prefix` existe
+// porque una fila trae dos secciones (la teórica y su práctica) con las mismas
+// columnas repetidas bajo otro alias.
+function sectionShape(row, prefix = '') {
+  const id = row[`${prefix}section_id`];
+  if (!id) return null;
+  const seat = latestSeatStmt.get(id);
   return {
-    id: row.section_id,
-    term: row.section_term,
-    classNbr: row.class_nbr,
-    section: row.section,
-    component: row.component,
-    instructor: row.instructor,
-    meetings: row.meetings ? JSON.parse(row.meetings) : [],
+    id,
+    term: row[`${prefix}section_term`],
+    classNbr: row[`${prefix}class_nbr`],
+    section: row[`${prefix}section`],
+    component: row[`${prefix}component`],
+    instructor: row[`${prefix}instructor`],
+    meetings: row[`${prefix}meetings`] ? JSON.parse(row[`${prefix}meetings`]) : [],
     seats: seat
       ? { status: seat.status, open: seat.seats_open, capacity: seat.seats_cap, waitTotal: seat.wait_total }
       : null,
     seatsUpdatedAt: seat?.captured_at ?? null,
+    // El campus viaja siempre con su procedencia: una sección de un plan no se
+    // puede leer distinto de la misma sección en el catálogo.
+    campus: row[`${prefix}campus`] ?? null,
+    campusSource: row[`${prefix}campus_source`] ?? null,
   };
 }
 
@@ -66,12 +73,17 @@ export function readPlan(userId, planId) {
 
   const items = db
     .prepare(
-      `SELECT i.id, i.status, i.note, i.locked, i.section_id,
+      `SELECT i.id, i.status, i.note, i.locked, i.section_id, i.related_section_id,
               c.id AS course_id, c.code, c.subject, c.title, c.credits, c.career, c.catalog_nbr,
-              s.term AS section_term, s.class_nbr, s.section, s.component, s.instructor, s.meetings
+              s.term AS section_term, s.class_nbr, s.section, s.component, s.instructor, s.meetings,
+              s.campus, s.campus_source,
+              r.term AS r_section_term, r.class_nbr AS r_class_nbr, r.section AS r_section,
+              r.component AS r_component, r.instructor AS r_instructor, r.meetings AS r_meetings,
+              r.campus AS r_campus, r.campus_source AS r_campus_source
        FROM plan_items i
        JOIN courses c ON c.id = i.course_id
        LEFT JOIN sections s ON s.id = i.section_id
+       LEFT JOIN sections r ON r.id = i.related_section_id
        WHERE i.plan_id = ?
        ORDER BY i.created_at, i.id`
     )
@@ -89,6 +101,10 @@ export function readPlan(userId, planId) {
       note: row.note,
       locked: !!row.locked,
       section: sectionShape(row),
+      // La práctica va como su propia sección y no anidada dentro de la
+      // teórica: el grid la dibuja igual que a cualquier otra y la hoja
+      // impresa la lista como una fila más, que es lo que la oficina teclea.
+      relatedSection: sectionShape({ ...row, r_section_id: row.related_section_id }, 'r_'),
     }));
 
   return { id: plan.id, term: plan.term, name: plan.name, updatedAt: plan.updated_at, items };
@@ -118,6 +134,7 @@ export function createPlanWithItems(userId, { term, name, items }) {
     if (seen.has(item.courseId)) throw new Error('La recomendación repite una materia');
     seen.add(item.courseId);
     assertSectionBelongs(planShape, item.courseId, item.sectionId);
+    assertRelatedSection(planShape, item.courseId, item.sectionId, item.relatedSectionId ?? null);
   }
 
   db.exec('BEGIN');
@@ -126,10 +143,12 @@ export function createPlanWithItems(userId, { term, name, items }) {
       .prepare('INSERT INTO plans (user_id, term, name) VALUES (?, ?, ?)')
       .run(userId, term.trim(), name.trim());
     const insert = db.prepare(
-      `INSERT INTO plan_items (plan_id, course_id, section_id, status, note)
-       VALUES (?, ?, ?, 'planned', ?)`
+      `INSERT INTO plan_items (plan_id, course_id, section_id, related_section_id, status, note)
+       VALUES (?, ?, ?, ?, 'planned', ?)`
     );
-    for (const item of items) insert.run(planId, item.courseId, item.sectionId, item.note ?? null);
+    for (const item of items) {
+      insert.run(planId, item.courseId, item.sectionId, item.relatedSectionId ?? null, item.note ?? null);
+    }
     db.exec('COMMIT');
     return readPlan(userId, planId);
   } catch (err) {
@@ -184,7 +203,17 @@ function assertSectionBelongs(plan, courseId, sectionId) {
   if (section.term !== plan.term) throw new Error(`Esa sección es de otro término (${section.term})`);
 }
 
-export function addPlanItem(userId, planId, { courseId, sectionId = null, note = null }) {
+// La práctica se valida como cualquier sección y además contra su teórica: sin
+// teórica elegida no hay a qué acompañar, y una práctica que es la misma fila
+// que la teórica sería un par de una sola clase, que el portal no acepta.
+function assertRelatedSection(plan, courseId, sectionId, relatedSectionId) {
+  if (relatedSectionId == null) return;
+  if (sectionId == null) throw new Error('Una práctica necesita su teórica elegida primero');
+  if (relatedSectionId === sectionId) throw new Error('La práctica no puede ser la misma sección que la teórica');
+  assertSectionBelongs(plan, courseId, relatedSectionId);
+}
+
+export function addPlanItem(userId, planId, { courseId, sectionId = null, relatedSectionId = null, note = null }) {
   const plan = db.prepare('SELECT id, term FROM plans WHERE id = ? AND user_id = ?').get(planId, userId);
   if (!plan) throw new Error('Ese plan no existe');
   if (!db.prepare('SELECT id FROM courses WHERE id = ?').get(courseId)) {
@@ -194,29 +223,47 @@ export function addPlanItem(userId, planId, { courseId, sectionId = null, note =
     throw new Error('Esa materia ya está en el plan');
   }
   if (sectionId != null) assertSectionBelongs(plan, courseId, sectionId);
+  assertRelatedSection(plan, courseId, sectionId, relatedSectionId);
 
   db.prepare(
-    'INSERT INTO plan_items (plan_id, course_id, section_id, status, note) VALUES (?, ?, ?, ?, ?)'
-  ).run(planId, courseId, sectionId, sectionId != null ? 'planned' : 'desired', note);
+    `INSERT INTO plan_items (plan_id, course_id, section_id, related_section_id, status, note)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(planId, courseId, sectionId, relatedSectionId, sectionId != null ? 'planned' : 'desired', note);
   touchStmt.run(planId);
   return readPlan(userId, planId);
 }
 
 // sectionId acepta tres valores: un id (elegir/cambiar grupo), null (volver la
 // materia a "deseada") y undefined (no tocar la sección, solo nota/candado).
-export function updatePlanItem(userId, planId, itemId, { sectionId, note, locked }) {
+export function updatePlanItem(userId, planId, itemId, { sectionId, relatedSectionId, note, locked }) {
   const plan = db.prepare('SELECT id, term FROM plans WHERE id = ? AND user_id = ?').get(planId, userId);
   if (!plan) throw new Error('Ese plan no existe');
   const item = db
-    .prepare('SELECT id, course_id FROM plan_items WHERE id = ? AND plan_id = ?')
+    .prepare('SELECT id, course_id, section_id, related_section_id FROM plan_items WHERE id = ? AND plan_id = ?')
     .get(itemId, planId);
   if (!item) throw new Error('Esa materia no está en el plan');
 
-  if (sectionId !== undefined) {
-    if (sectionId != null) assertSectionBelongs(plan, item.course_id, sectionId);
-    db.prepare('UPDATE plan_items SET section_id = ?, status = ? WHERE id = ?').run(
-      sectionId,
-      sectionId != null ? 'planned' : 'desired',
+  // La teórica y su práctica se resuelven juntas aunque lleguen por separado:
+  // quitar la teórica tiene que llevarse la práctica, porque una práctica
+  // huérfana no se puede mandar al carrito ni dibujar como materia elegida.
+  const nextSection = sectionId === undefined ? item.section_id : sectionId;
+  // Pedir una práctica sin teórica es un error del que llama y se dice. Que la
+  // teórica se vaya y arrastre la práctica NO lo es: es la cascada correcta,
+  // porque una práctica huérfana no se puede mandar al carrito.
+  const nextRelated =
+    relatedSectionId === undefined
+      ? nextSection == null
+        ? null
+        : item.related_section_id
+      : relatedSectionId;
+
+  if (sectionId !== undefined || relatedSectionId !== undefined) {
+    if (nextSection != null) assertSectionBelongs(plan, item.course_id, nextSection);
+    assertRelatedSection(plan, item.course_id, nextSection, nextRelated);
+    db.prepare('UPDATE plan_items SET section_id = ?, related_section_id = ?, status = ? WHERE id = ?').run(
+      nextSection,
+      nextRelated,
+      nextSection != null ? 'planned' : 'desired',
       itemId
     );
   }

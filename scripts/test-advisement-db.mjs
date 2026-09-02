@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-test-'));
 process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
@@ -24,7 +25,7 @@ const {
 } = await import('../src/peoplesoft/advisement.js');
 const { db } = await import('../src/db.js');
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 await page.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
 const raw = await page.evaluate(extractAdvisementTree);
