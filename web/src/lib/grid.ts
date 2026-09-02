@@ -128,9 +128,14 @@ export function layoutDay(dayBlocks: Block[]): PlacedBlock[] {
     (a, b) => toMinutes(a.start) - toMinutes(b.start) || toMinutes(a.end) - toMinutes(b.end)
   );
 
+  // Los fantasmas quedan fuera del reparto: se pintan encima y con inset, así
+  // que su carril nunca se lee, y ocuparlo partía la columna en dos justo
+  // mientras se compara una candidata contra lo que ya hay.
+  const reales = sorted.filter((block) => !block.ghost);
+
   const lane = new Map<string, number>();
   const laneEnds: number[] = [];
-  for (const block of sorted) {
+  for (const block of reales) {
     let assigned = laneEnds.findIndex((end) => end <= toMinutes(block.start));
     if (assigned === -1) assigned = laneEnds.length;
     laneEnds[assigned] = toMinutes(block.end);
@@ -142,34 +147,32 @@ export function layoutDay(dayBlocks: Block[]): PlacedBlock[] {
   const groupOf = new Map<string, number>();
   let groupId = 0;
   let groupEnd = -1;
-  for (const block of sorted) {
+  for (const block of reales) {
     if (toMinutes(block.start) >= groupEnd) groupId++;
     groupEnd = Math.max(groupEnd, toMinutes(block.end));
     groupOf.set(block.id, groupId);
   }
 
   const lanesPerGroup = new Map<number, number>();
-  for (const block of sorted) {
+  for (const block of reales) {
     const g = groupOf.get(block.id)!;
     lanesPerGroup.set(g, Math.max(lanesPerGroup.get(g) ?? 1, (lane.get(block.id) ?? 0) + 1));
   }
 
   return sorted.map((block) => ({
     ...block,
-    lane: lane.get(block.id)!,
-    lanes: lanesPerGroup.get(groupOf.get(block.id)!)!,
+    lane: block.ghost ? 0 : lane.get(block.id)!,
+    lanes: block.ghost ? 1 : lanesPerGroup.get(groupOf.get(block.id)!)!,
     // Un fantasma no genera choques reales: es un preview, no una elección.
+    // Se nombra por código y sección, no por título: dos secciones de la misma
+    // materia se leían idénticas, que es justo cuando el choque importa.
     conflictsWith: sorted
       .filter((other) => other.id !== block.id && !other.ghost && !block.ghost && overlaps(block, other))
-      .map((other) => other.title),
+      .map((other) => `${other.code} ${other.section ?? `NRC ${other.classNbr}`}`),
   }));
 }
 
-// Minutos → línea de grid. Las filas del grid arrancan en 1 y la primera la
-// ocupa la cabecera de días, de ahí el +2.
-export function toGridLine(hhmm: string, startHour: number, slotMinutes: number): number {
-  return Math.round((toMinutes(hhmm) - startHour * 60) / slotMinutes) + 2;
-}
+
 
 // ── Ventana horaria ────────────────────────────────────────────────────────
 
@@ -245,9 +248,10 @@ export type Band =
   | { kind: 'hora'; hour: number }
   | { kind: 'plegada'; fromHour: number; toHour: number; hours: number };
 
-// Cuántas horas vacías seguidas hacen falta para que plegarlas gane algo.
-// Con dos, plegar ahorra una fila y agrega una tira: no vale la pena.
-export const MIN_HORAS_PLEGABLES = 3;
+// Cuántas horas vacías seguidas hacen falta para plegarlas. Dos ya ganan: cada
+// hora son dos filas de media hora, así que plegar dos cambia cuatro filas por
+// una tira. Es el umbral que fijó el mock.
+export const MIN_HORAS_PLEGABLES = 2;
 
 function horaOcupada(blocks: Block[], hour: number): boolean {
   const desde = hour * 60;
@@ -319,8 +323,11 @@ export function bandLine(bands: Band[], hhmm: string): number {
 // son anchas de verdad.
 export function visibleDays(blocks: Block[], { all = false }: { all?: boolean } = {}): DayCode[] {
   const orden: DayCode[] = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
-  if (all) return orden.slice(0, 6);
   const usados = new Set(blocks.map((block) => block.day));
+  // "Ver todos" nunca puede ESCONDER algo: mostrar los seis días de la semana
+  // laboral y encima el domingo si hay clase, que es justo el día que se
+  // descartaba en silencio antes.
+  if (all) return orden.filter((day, i) => i < 6 || usados.has(day));
   const conClase = orden.filter((day) => usados.has(day));
   // Sin un solo bloque no hay nada que deducir: se muestra la semana laboral.
   return conClase.length > 0 ? conClase : orden.slice(0, 5);

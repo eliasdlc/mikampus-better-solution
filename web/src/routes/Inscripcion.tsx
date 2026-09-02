@@ -17,6 +17,7 @@ import {
 } from '../lib/api.ts';
 import type { CartRow, CatalogCourse, TermInfo } from '../../../src/shared/schemas.ts';
 import { sectionToBlocks, hasCollisions, type Block } from '../lib/grid.ts';
+import { ClassDetail } from '../components/ClassDetail.tsx';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { SeatBadge } from '../components/SeatBadge.tsx';
@@ -141,6 +142,10 @@ function cartBlocks(rows: CartRow[]): Block[] {
 export function Inscripcion() {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
+  // El detalle de un bloque del horario. Sin esto la grilla de esta pantalla
+  // era un div mudo: sin rol, sin teclado, y el profesor y el aula no estaban
+  // en ningún lado.
+  const [detalleClase, setDetalleClase] = useState<Block | null>(null);
 
   const stage: Stage = isStage(params.get('etapa')) ? (params.get('etapa') as Stage) : 'plan';
   const parsedPlanId = Number(params.get('plan'));
@@ -539,7 +544,7 @@ export function Inscripcion() {
                 onDropped={() => qc.invalidateQueries({ queryKey: ['cart'] })}
               />
 
-              {blocks.length > 0 && <WeeklyGrid blocks={blocks} />}
+              {blocks.length > 0 && <WeeklyGrid blocks={blocks} onSelect={setDetalleClase} />}
 
               {enroll.error && <p className="text-closed text-sm">{(enroll.error as Error).message}</p>}
               {remove.error && (
@@ -563,6 +568,8 @@ export function Inscripcion() {
       </div>
 
       <ActivityFeed />
+
+      <ClassDetail block={detalleClase} onClose={() => setDetalleClase(null)} />
     </div>
   );
 }

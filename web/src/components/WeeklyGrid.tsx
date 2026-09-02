@@ -94,15 +94,20 @@ function Bloque({
     .join(', ');
 
   return (
-    <div
-      role={onSelect ? 'button' : undefined}
-      tabIndex={onSelect && focused ? 0 : undefined}
+    <button
+      type="button"
+      disabled={!onSelect}
+      tabIndex={onSelect && focused ? 0 : -1}
       aria-label={onSelect ? etiqueta : undefined}
       aria-pressed={onSelect && selected ? true : undefined}
+      // El click sincroniza el índice de foco: sin esto, tocar un bloque y
+      // después apretar Enter abría el detalle del que tuviera el índice.
       onClick={onSelect ? () => onSelect({ ...block, hue }) : undefined}
       className={`overflow-hidden rounded-[var(--radius)] py-1 pr-1.5 pl-1.5 text-left text-[11px] leading-tight ${
         block.ghost ? 'pointer-events-none z-20' : 'z-10'
-      } ${animate && !block.ghost ? 'block-land' : ''} ${onSelect ? 'cursor-pointer' : ''} ${
+      } ${animate && !block.ghost ? 'block-land' : ''} ${
+        onSelect ? 'cursor-pointer hover:brightness-95 dark:hover:brightness-110' : ''
+      } ${
         focused ? 'outline-accent outline-2 outline-offset-1' : ''
       }`}
       style={{
@@ -127,6 +132,9 @@ function Bloque({
     >
       <div className="flex items-baseline gap-1">
         <span className="min-w-0 flex-1 truncate font-medium">{block.code}</span>
+        {/* El componente se dice con palabra además de con la forma de la
+            barra: una forma es una pista, la palabra es el dato. */}
+        {block.component && <span className="shrink-0 text-[9px] opacity-70">{block.component}</span>}
         {selected && <span className="bg-accent size-1.5 shrink-0 rounded-full" aria-hidden />}
       </div>
       <div className="truncate opacity-80">{block.title}</div>
@@ -139,7 +147,7 @@ function Bloque({
           choca
         </div>
       )}
-    </div>
+    </button>
   );
 }
 
@@ -194,10 +202,11 @@ export function WeeklyGrid({
   const [foco, setFoco] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
 
-  const reales = useMemo(() => blocks.filter((block) => !block.ghost), [blocks]);
-  const base = reales.length > 0 ? reales : blocks;
-
-  const days = useMemo(() => visibleDays(base, { all: verTodos }), [base, verTodos]);
+  // La ventana, los días y las bandas salen de TODOS los bloques, fantasma
+  // incluido. Derivarlas solo de los reales hacía que una vista previa fuera de
+  // la ventana, o en un día sin clases, se descartara en silencio: justo el
+  // caso de comparar una candidata de la noche contra un horario de mañana.
+  const days = useMemo(() => visibleDays(blocks, { all: verTodos }), [blocks, verTodos]);
 
   const byDay = useMemo(() => {
     const map = new Map<DayCode, Block[]>(days.map((d) => [d, []]));
@@ -205,10 +214,10 @@ export function WeeklyGrid({
     return map;
   }, [blocks, days]);
 
-  const { startHour, endHour } = useMemo(() => timeWindow(base), [base]);
+  const { startHour, endHour } = useMemo(() => timeWindow(blocks), [blocks]);
 
   const bands = useMemo(() => {
-    const plegadas = foldBands(base, { startHour, endHour });
+    const plegadas = foldBands(blocks, { startHour, endHour });
     // Una tira desplegada vuelve a ser sus horas: el estado vive acá y no en la
     // función pura, que no tiene por qué saber qué abrió el usuario.
     return plegadas.flatMap<Band>((band) =>
@@ -216,7 +225,7 @@ export function WeeklyGrid({
         ? Array.from({ length: band.hours }, (_, i) => ({ kind: 'hora' as const, hour: band.fromHour + i }))
         : [band]
     );
-  }, [base, startHour, endHour, desplegadas]);
+  }, [blocks, startHour, endHour, desplegadas]);
 
   const palette = useMemo(() => paletteFor(blocks), [blocks]);
   const colocados = useMemo(() => days.map((day) => layoutDay(byDay.get(day) ?? [])), [days, byDay]);
@@ -346,7 +355,7 @@ export function WeeklyGrid({
                 bands={bands}
                 animate={animate}
                 selected={selectedIds?.has(block.classNbr) ?? false}
-                focused={!block.ghost && navegables[foco]?.id === block.id}
+                focused={!!onSelect && !block.ghost && navegables[foco]?.id === block.id}
                 onSelect={onSelect}
               />
             ))
@@ -375,8 +384,23 @@ export function WeeklyGrid({
 
       {/* Ver los seis días es siempre posible: ocultar un día vacío no puede
           significar que dejes de poder mirarlo. */}
-      <div className="border-line flex justify-end border-t px-2 py-1">
-        <button type="button" onClick={() => setVerTodos((v) => !v)} className="text-muted hover:text-fg text-[11px]">
+      <div className="border-line flex justify-end gap-3 border-t px-2 py-1">
+        {/* Desplegar era un viaje de ida: una tira abierta volvía a costar
+            todas sus filas y no había forma de recuperarlas. */}
+        {desplegadas.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setDesplegadas(new Set<number>())}
+            className="text-muted hover:text-fg min-h-11 text-[11px]"
+          >
+            Plegar las horas vacías
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setVerTodos((v) => !v)}
+          className="text-muted hover:text-fg min-h-11 text-[11px]"
+        >
           {verTodos ? 'Ver solo los días con clase' : 'Ver los seis días'}
         </button>
       </div>

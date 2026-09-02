@@ -501,7 +501,7 @@ export function Mesa() {
             <button
               type="button"
               onClick={() => window.print()}
-              className="bg-accent text-accent-fg rounded-full px-3 py-1.5 text-sm font-medium"
+              className="border-line hover:bg-surface-2 rounded-full border px-3 py-1.5 text-sm"
             >
               Imprimir
             </button>
