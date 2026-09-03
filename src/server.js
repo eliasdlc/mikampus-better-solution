@@ -1717,17 +1717,40 @@ server.on('error', (error) => {
   process.exit(1);
 });
 
+// Cuánto se espera a que el servidor cierre solo antes de forzar la salida. No
+// es paranoia: `server.close()` solo llama a su callback cuando NO queda una
+// sola conexión abierta, y el feed de actividad es SSE, o sea una conexión que
+// por diseño no termina. Con una pestaña abierta el agente recibía la señal, se
+// quedaba esperando para siempre y no había forma de reiniciarlo: `stop`
+// reportaba que no se detuvo y el arranque siguiente chocaba con su propio lock.
+const SHUTDOWN_GRACE_MS = 5_000;
+
+let apagando = false;
+
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
+    // Una segunda señal mientras se apaga significa "ya, ahora": el operador no
+    // tiene que buscar el PID para mandar un KILL.
+    if (apagando) return process.exit(0);
+    apagando = true;
+
     stopCatalogCron();
     stopBackupCron();
     stopSyncLoop();
     stopClassReminders();
     await shutdown();
-    server.close(() => {
+
+    const cerrar = () => {
       releaseAgentLock();
       recordRuntimeStop();
       process.exit(0);
-    });
+    };
+    const forzar = setTimeout(cerrar, SHUTDOWN_GRACE_MS);
+    forzar.unref();
+
+    server.close(cerrar);
+    // Los SSE vivos se cortan a mano: son la razón por la que close() no vuelve.
+    // El cliente reconecta solo cuando el agente esté de nuevo arriba.
+    server.closeAllConnections?.();
   });
 }
