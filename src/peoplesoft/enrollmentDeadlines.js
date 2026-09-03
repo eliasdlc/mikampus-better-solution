@@ -7,6 +7,7 @@ import {
   VIEW_MY_CLASSES_URL,
   ENROLLMENT_DEADLINES_LINK,
   ENROLLMENT_DEADLINES_PANEL,
+  ENROLLMENT_DEADLINES_MODAL_FRAME,
 } from './constants.js';
 
 // Los plazos POR CLASE del calendario académico.
@@ -375,6 +376,18 @@ export function saveEnrollmentDeadlines(userId, termCode, events) {
   return written;
 }
 
+// El iframe del modal aparece después del submitAction y su nombre lleva el
+// índice de la materia (ptModFrame_0 para la primera clase de la lista).
+async function waitForModalFrame(page, timeout) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const frame = page.frames().find((f) => ENROLLMENT_DEADLINES_MODAL_FRAME.test(f.name()));
+    if (frame) return frame;
+    await page.waitForTimeout(300);
+  }
+  return null;
+}
+
 async function findFrame(page, selector, timeout = 12_000) {
   const started = Date.now();
   while (Date.now() - started < timeout) {
@@ -423,14 +436,20 @@ export async function syncEnrollmentDeadlines(page, { userId, term = null, onSte
     }
     onStep('abriendo Enrollment Deadlines…');
     await frame.locator(ENROLLMENT_DEADLINES_LINK).first().click();
-    await page.waitForTimeout(6_000);
 
-    // PENDIENTE DE FIXTURE: el panel de plazos se identifica por el selector de
-    // constants.js, que todavía no se confirmó contra la pantalla real. Si no
-    // aparece, se lee el frame donde estaba el enlace en vez de fallar: el
-    // extractor filtra por forma de fecha, así que leer de más no ensucia el
-    // resultado, y quedarse sin leer sí lo perdería.
-    frame = (await findFrame(page, ENROLLMENT_DEADLINES_PANEL, 8_000)) ?? frame;
+    // El enlace dispara submitAction y PeopleSoft inserta un modal Fluid cuyo
+    // contenido vive en un IFRAME aparte (ptModFrame_N). Confirmado con el
+    // recon del 2026-09-03: el frame del enlace no cambia, así que buscar el
+    // panel ahí adentro leía siempre la pantalla anterior.
+    //
+    // Se espera al iframe y no a un timeout: es la única señal de que abrió.
+    const modal = await waitForModalFrame(page, 25_000);
+    if (!modal) {
+      throw new Error('El enlace de plazos no abrió su modal: PeopleSoft no insertó el iframe del panel');
+    }
+    // El iframe existe antes que su contenido, que llega por AJAX.
+    await modal.waitForSelector(ENROLLMENT_DEADLINES_PANEL, { timeout: 20_000 }).catch(() => {});
+    frame = modal;
 
     onStep('leyendo los plazos publicados…');
     const raw = await frame.evaluate(extractEnrollmentDeadlines);

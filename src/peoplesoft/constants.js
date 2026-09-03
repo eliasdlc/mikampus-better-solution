@@ -66,9 +66,20 @@ export const CONTENT_FRAME_NAME = 'TargetContent';
 // Se usa la primera: es la única cuyo markup está confirmado.
 export const ENROLLMENT_DEADLINES_LINK = 'a[id^="DERIVED_SSR_FL_SSR_ENRL_DL$"]';
 
-// PENDIENTE DE FIXTURE: el panel que abre ese enlace no está capturado, así que
-// este selector es una apuesta sobre las dos formas en que PeopleSoft muestra
-// una pantalla secundaria (modal Fluid o grilla clásica). El scraper no depende
-// de que acierte: si no encuentra el panel, lee el frame donde estaba el enlace.
-export const ENROLLMENT_DEADLINES_PANEL =
-  '[id*="SSR_ENRL_DL"] table, div[id^="win0divPT_MODAL"] table.PSLEVEL1GRID, table.PSLEVEL1GRID';
+// CONFIRMADO con el recon del 2026-09-03: ese enlace no navega ni abre una
+// grilla en la misma página. Dispara `submitAction_win0`, PeopleSoft inserta un
+// modal Fluid (`ptMod_0` → `ptModTable_0` → `ptModContent_0`) y el contenido
+// del modal vive en un IFRAME aparte, `ptModFrame_0`, con
+// title="View My Classes Popup window" y un src con ICType=Panel.
+//
+// Por eso el selector viejo no servía: apuntaba a `table.PSLEVEL1GRID`, que es
+// la gramática clásica, y esta pantalla es Fluid (`ps_grid-flex`). Y sobre todo
+// lo buscaba en el frame del enlace, donde el contenido no está.
+//
+// El nombre del iframe lleva el índice de la clase: hay un enlace por materia
+// inscrita ($0..$3 con cuatro materias), así que el modal de la segunda es
+// ptModFrame_1.
+export const ENROLLMENT_DEADLINES_MODAL_FRAME = /^ptModFrame_\d+$/;
+
+// Lo que ancla que el modal ya cargó, del lado de adentro del iframe.
+export const ENROLLMENT_DEADLINES_PANEL = 'table[class*="ps_grid-flex"], table.PSLEVEL1GRID';

@@ -1,5 +1,9 @@
 import { loginForRecon } from './reconLogin.js';
-import { VIEW_MY_CLASSES_URL, ENROLLMENT_DEADLINES_LINK, ENROLLMENT_DEADLINES_PANEL } from './peoplesoft/constants.js';
+import {
+  VIEW_MY_CLASSES_URL,
+  ENROLLMENT_DEADLINES_LINK,
+  ENROLLMENT_DEADLINES_MODAL_FRAME,
+} from './peoplesoft/constants.js';
 import fs from 'node:fs/promises';
 
 // Recon de los plazos POR CLASE ("Enrollment Deadlines").
@@ -32,6 +36,37 @@ async function findFrame(page, selector, timeout = 10000) {
     await page.waitForTimeout(300);
   }
   return null;
+}
+
+// El iframe del modal aparece después del submitAction, así que se espera por
+// su nombre (ptModFrame_N) en vez de por un timeout fijo.
+async function waitForModalFrame(page, timeout) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const frame = page.frames().find((f) => ENROLLMENT_DEADLINES_MODAL_FRAME.test(f.name()));
+    if (frame) return frame;
+    await page.waitForTimeout(300);
+  }
+  return null;
+}
+
+// Vuelca TODOS los frames de la página. El contenido de una pantalla Fluid
+// puede estar en cualquiera de ellos, y descubrir cuál a base de corridas
+// sucesivas cuesta una contraseña tipeada cada vez.
+async function dumpAllFrames(page) {
+  let i = 0;
+  for (const frame of page.frames()) {
+    const nombre = frame.name() || `frame${i}`;
+    try {
+      const html = await frame.content();
+      if (html.length < 400) continue;
+      await fs.writeFile(`screenshots/recon-deadlines-${nombre}.html`, html);
+      console.log(`  volcado → screenshots/recon-deadlines-${nombre}.html (${html.length} bytes)`);
+    } catch {
+      // frame desprendido a mitad del volcado: no vale abortar el recon por eso
+    }
+    i += 1;
+  }
 }
 
 async function dump(page, name) {
@@ -98,13 +133,32 @@ async function main() {
       return;
     }
 
+    const cuantos = await linkFrame.locator(ENROLLMENT_DEADLINES_LINK).count();
+    console.log(`  ${cuantos} enlace(s) de plazos, uno por materia inscrita`);
     await linkFrame.locator(ENROLLMENT_DEADLINES_LINK).first().click();
-    await page.waitForTimeout(7000);
-    const frame = await dump(page, 'panel');
 
-    const panelFrame = (await findFrame(page, ENROLLMENT_DEADLINES_PANEL, 5000)) ?? frame;
+    // El enlace dispara submitAction y PeopleSoft inserta un modal Fluid cuyo
+    // contenido vive en un iframe aparte. Esperar al iframe es la única señal
+    // real de que abrió; un timeout fijo capturaba la página de antes.
+    const modal = await waitForModalFrame(page, 25_000);
+    if (!modal) {
+      console.log('\nEl modal no apareció. Volcando todos los frames para verlo igual.');
+    } else {
+      console.log(`  modal abierto en el iframe ${modal.name()}`);
+      // Su contenido llega por AJAX después del iframe: se espera a que haya
+      // algo con forma de grilla adentro, no a que el iframe exista.
+      await modal.waitForSelector('table, .ps_box-value, .ps-text', { timeout: 20_000 }).catch(() => {});
+      await page.waitForTimeout(2500);
+    }
+
+    await dump(page, 'panel');
+    // Todos los frames, no solo el que creemos correcto: una tercera corrida
+    // cuesta otra vez tu contraseña, y el volcado completo la evita.
+    await dumpAllFrames(page);
+
+    const objetivo = modal ?? (await findFrame(page, 'table', 3000)) ?? page.mainFrame();
     console.log('\nINVENTARIO DEL PANEL:');
-    console.log(JSON.stringify(await inventario(panelFrame), null, 1));
+    console.log(JSON.stringify(await inventario(objetivo), null, 1));
     console.log('\nLo que importa son los `pares`: son las etiquetas literales que');
     console.log('DEADLINE_RULES tiene que reconocer en enrollmentDeadlines.js.');
   } finally {
