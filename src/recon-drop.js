@@ -1,4 +1,4 @@
-import { loginToPeopleSoft } from './login.js';
+import { loginForRecon } from './reconLogin.js';
 import { DROP_URL } from './peoplesoft/constants.js';
 import fs from 'node:fs/promises';
 
@@ -100,7 +100,7 @@ async function main() {
   console.log('Recon de la baja de materias — NO da de baja nada.');
   console.log(HASTA_CONFIRMACION ? '  modo: Paso 1 → Paso 2 (sin confirmar)' : '  modo: solo Paso 1');
 
-  const { browser, page } = await loginToPeopleSoft({ headless: true });
+  const { browser, page } = await loginForRecon();
   try {
     await page.goto(DROP_URL, { waitUntil: 'commit' });
     await page.waitForTimeout(6000);

@@ -1,4 +1,4 @@
-import { loginToPeopleSoft } from './login.js';
+import { loginForRecon } from './reconLogin.js';
 import { CART_URL } from './peoplesoft/constants.js';
 import { STUDENT_CENTER_URL } from './peoplesoft/grades.js';
 import fs from 'node:fs/promises';
@@ -95,7 +95,7 @@ async function reconCartReview(page) {
   }
 }
 
-const { browser, page } = await loginToPeopleSoft({ headless: true });
+const { browser, page } = await loginForRecon();
 try {
   await reconAppointment(page);
   await reconCartReview(page);

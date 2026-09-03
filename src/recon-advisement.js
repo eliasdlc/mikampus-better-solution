@@ -1,4 +1,4 @@
-import { loginToPeopleSoft } from './login.js';
+import { loginForRecon } from './reconLogin.js';
 import fs from 'node:fs/promises';
 
 // Recon de My Academics → informe de orientación académica (el "Reporte
@@ -26,7 +26,7 @@ async function findFrame(page, selector, timeout = 12000) {
   throw new Error(`No se encontró: ${selector}`);
 }
 
-const { browser, page } = await loginToPeopleSoft({ headless: true });
+const { browser, page } = await loginForRecon();
 try {
   await page.goto(MY_ACAD_URL, { waitUntil: 'commit' });
   await page.waitForTimeout(7000);
