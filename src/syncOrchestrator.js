@@ -9,6 +9,7 @@ import { fetchAdvisement, saveRequirementTree, earliestGradeTerm } from './peopl
 import { fetchHolds, saveHolds } from './peoplesoft/holds.js';
 import { syncEnrollmentWindows } from './peoplesoft/enrollmentWindows.js';
 import { syncAcademicCalendar } from './academicCalendar.js';
+import { recordHeartbeat } from './runtime.js';
 import * as scheduler from './scheduler.js';
 
 // El orquestador de sincronización (P1). Antes cada pantalla decidía por su
@@ -93,7 +94,7 @@ export const SOURCES = [
     relevant: () => Boolean(enrollmentTerm()),
     async run({ userId, onStep }) {
       const windows = await withPage(userId, (page) => syncEnrollmentWindows(page, { userId, onStep }));
-      return { detail: `${windows.length} sesión(es)` };
+      return { detail: windows.length ? `${windows.length} sesión(es)` : 'el portal no publica ninguna ventana ahora' };
     },
   },
   {
@@ -122,7 +123,7 @@ export const SOURCES = [
     invalidates: ['grades', 'goals', 'insights', 'trajectory', 'dashboard'],
     async run({ userId, emit }) {
       const previous = readGrades(userId);
-      const { courses, mismatches } = await withPage(userId, (page) => fetchGrades(page, { userId }));
+      const { courses, mismatches, warning } = await withPage(userId, (page) => fetchGrades(page, { userId }));
       const published = diffPublishedGrades(previous, courses);
       saveGrades(userId, courses);
       reconcileTerms();
@@ -138,7 +139,10 @@ export const SOURCES = [
       for (const mismatch of mismatches) {
         emit({ type: 'log', userId, message: `⚠ El índice no cuadra con el portal — ${mismatch}` });
       }
-      return { detail: `${courses.length} materia(s)` };
+      // La auditoría del índice puede no haberse podido hacer sin que eso
+      // invalide las notas. Se dice, y la fuente sigue estando al día.
+      if (warning) emit({ type: 'log', userId, message: `⚠ ${warning}` });
+      return { detail: warning ? `${courses.length} materia(s) · ${warning}` : `${courses.length} materia(s)` };
     },
   },
   {
@@ -268,21 +272,37 @@ function readRow(userId, key) {
   );
 }
 
-function writeRow(userId, key, { status, error = null }) {
+// Los desenlaces que una fuente puede tener guardados. Antes solo se
+// persistían tres ('ok', 'error', 'paused') y los otros dos caminos salían de
+// la función sin escribir nada, así que la fila conservaba el motivo de una
+// corrida vieja: la base de un usuario mostraba avance en 'paused · sin sesión
+// activa' cuando en realidad se había saltado porque notas falló.
+export const SOURCE_STATUSES = ['ok', 'error', 'paused', 'blocked', 'skipped'];
+
+function writeRow(userId, key, { status, error, touchRun = true }) {
   // Tres hechos distintos: cuándo se intentó, cuándo funcionó por última vez, y
   // qué error hay ahora. Un fallo actualiza el intento y el error, y deja
   // intacto el último éxito — si no, la fuente parecería fresca justo cuando
   // más falta le hace reintentar.
+  //
+  // `error` sin pasar deja el anterior donde estaba: una pausa por sesión no
+  // puede borrar el error del parser, que es lo único que explica por qué la
+  // fuente lleva nueve días sin dato nuevo. Y `touchRun: false` es para los
+  // desenlaces que nunca salieron al portal: guardan su estado sin inventar un
+  // intento, que es de donde sale el enfriamiento tras un fallo.
+  const setError = error !== undefined;
   const successAt = status === 'ok' ? new Date().toISOString() : null;
+  // Mismo formato que datetime('now'): UTC sin sufijo, que es lo que toMillis espera.
+  const runAt = touchRun ? new Date().toISOString().replace('T', ' ').slice(0, 19) : null;
   db.prepare(
     `INSERT INTO sync_sources (user_id, source_key, last_run_at, last_success_at, last_status, last_error)
-     VALUES (?, ?, datetime('now'), ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id, source_key) DO UPDATE SET
-       last_run_at = datetime('now'),
+       last_run_at = COALESCE(excluded.last_run_at, sync_sources.last_run_at),
        last_success_at = COALESCE(excluded.last_success_at, sync_sources.last_success_at),
        last_status = excluded.last_status,
-       last_error = excluded.last_error`
-  ).run(userId, key, successAt, status, error);
+       last_error = CASE WHEN ? THEN excluded.last_error ELSE sync_sources.last_error END`
+  ).run(userId, key, runAt, successAt, status, setError ? error : null, setError ? 1 : 0);
 }
 
 // ── Cada cuánto se refresca lo que se scrapea ───────────────────────────────
@@ -462,11 +482,16 @@ async function executeSync(userId, { force, keys, emit }) {
     const blockedBy = source.dependsOn.find((dependency) => failed.has(dependency));
     if (blockedBy) {
       failed.add(source.key);
-      results.push({ ...base, status: 'skipped', reason: `depende de ${BY_KEY.get(blockedBy).label}, que no se pudo actualizar` });
+      const reason = `depende de ${BY_KEY.get(blockedBy).label}, que no se pudo actualizar`;
+      writeRow(userId, source.key, { status: 'blocked', error: reason, touchRun: false });
+      results.push({ ...base, status: 'blocked', blockedBy, reason });
       continue;
     }
 
     if (source.relevant && !source.relevant()) {
+      // El error anterior se conserva: que hoy no aplique no borra el motivo
+      // por el que la última vez que sí aplicaba no se pudo traer.
+      writeRow(userId, source.key, { status: 'skipped', touchRun: false });
       results.push({ ...base, status: 'skipped', reason: 'no aplica en este momento del ciclo' });
       continue;
     }
@@ -478,8 +503,10 @@ async function executeSync(userId, { force, keys, emit }) {
 
     if (source.needsPortal && hold) {
       // Pausado no es error: el dato cacheado sigue sirviendo y la UI explica
-      // qué falta para volver a consultar.
-      writeRow(userId, source.key, { status: 'paused', error: hold });
+      // qué falta para volver a consultar. El motivo de la pausa se calcula en
+      // vivo (`syncState().hold`), así que no se persiste: escribirlo pisaba el
+      // error del último intento real, que es el que dice qué está roto.
+      writeRow(userId, source.key, { status: 'paused', touchRun: false });
       results.push({ ...base, status: 'paused', reason: hold });
       continue;
     }
@@ -492,7 +519,7 @@ async function executeSync(userId, { force, keys, emit }) {
         emit,
         onStep: (message) => emit({ type: 'log', userId, message }),
       });
-      writeRow(userId, source.key, { status: 'ok' });
+      writeRow(userId, source.key, { status: 'ok', error: null });
       results.push({
         ...base,
         status: 'updated',
@@ -530,6 +557,9 @@ let lastTickAt = null;
 export async function syncTick(userId, { now = Date.now(), emit = scheduler.emitEvent } = {}) {
   const previous = lastTickAt;
   lastTickAt = now;
+  // El latido durable del agente. Es lo que permite medir un corte sucio: si el
+  // proceso muere, el arranque siguiente sabe hasta cuándo estuvo vivo.
+  recordHeartbeat(new Date(now));
   const gapMs = previous == null ? 0 : now - previous;
   const resumed = gapMs > TICK_MS * GAP_FACTOR;
   if (resumed) {
