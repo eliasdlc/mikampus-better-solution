@@ -10,6 +10,7 @@ import {
   fetchPlans,
   fetchTermContext,
   fetchEnrollmentWindows,
+  fetchTermPhase,
   syncHolds,
 } from '../lib/api.ts';
 import { toBlocks, type Block } from '../lib/grid.ts';
@@ -22,6 +23,7 @@ import { Countdown } from '../components/Countdown.tsx';
 import { TermBadge } from '../components/TermBadge.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
 import { UpcomingDates } from '../components/UpcomingDates.tsx';
+import { capabilityOf } from '../components/Capacidad.tsx';
 
 // Dashboard (plan §5.1 + §11): el estado del día en una pantalla. Regla que
 // ordena todo: el hero y la agenda son SOLO del ciclo actual; lo del ciclo que
@@ -58,6 +60,11 @@ export function Dashboard() {
     queryFn: () => fetchEnrollmentWindows(next?.code ?? undefined),
     enabled: terms.isSuccess,
   });
+  // La etapa del ciclo EN CURSO. Inicio no la consultaba, así que la columna
+  // derecha la encabezaban dos tarjetas sin nada que hacer: "Próximo ciclo, sin
+  // materias todavía" y "Watcher: apagado", en plena docencia y con la
+  // inscripción cerrada hacía meses.
+  const phase = useQuery({ queryKey: ['term-phase', null], queryFn: () => fetchTermPhase() });
 
   // Cada 30s: es lo que tarda "faltan 12 min" en volverse mentira. El countdown
   // del hero corre por su cuenta cada segundo; esto solo decide CUÁL es la
@@ -78,6 +85,22 @@ export function Dashboard() {
   const hoy = useMemo(() => agendaFor(blocks, now), [blocks, now]);
   const nextEnrolled = (nextSchedule.data?.courses ?? []).filter((c) => c.status === 'enrolled');
   const nextPlans = (plans.data ?? []).filter((p) => next && p.term === next.code);
+
+  // Ya empezaste a moverte para el próximo ciclo, o la etapa dice que se puede
+  // inscribir. Con el ciclo cerrado y nada armado, la tarjeta solo repetía que
+  // no había nada.
+  const puedeInscribir = capabilityOf(phase.data, 'inscribir').state !== 'cerrada';
+  const mostrarProximo =
+    puedeInscribir ||
+    nextEnrolled.length > 0 ||
+    nextPlans.length > 0 ||
+    (cart.data?.rows.length ?? 0) > 0 ||
+    Boolean(state.data?.schedule?.atISO);
+  // El watcher se muestra si está trabajando o si vigilar todavía sirve. Nunca
+  // apagado y sin nada que vigilar: eso es una fila que enseña a ignorar la
+  // columna entera.
+  const mostrarWatcher =
+    Boolean(state.data?.watcher) || capabilityOf(phase.data, 'vigilar-cupo').state === 'habilitada';
 
   return (
     <div className="space-y-6">
@@ -108,21 +131,28 @@ export function Dashboard() {
             <Timeline blocks={hoy} now={now} />
           </section>
 
-          {/* Las fechas institucionales cierran la línea académica: después de
-              hoy viene lo que la universidad ya tiene calendarizado. */}
-          <UpcomingDates limit={4} />
+          {/* El calendario cierra la línea académica, y ya no solo hacia
+              adelante: ver que la modificación cerró ayer es lo que explica por
+              qué hoy el carrito no somete. */}
+          <UpcomingDates limit={6} past={3} />
         </div>
 
         <aside className="space-y-3">
-          <NextCycleCard
-            term={next}
-            enrolled={nextEnrolled.length}
-            planes={nextPlans.length}
-            cartCount={cart.data?.rows.length ?? 0}
-            scheduledAt={state.data?.schedule?.atISO ?? null}
-            enrollmentWindow={enrollmentWindows.data?.windows[0] ?? null}
-          />
-          <WatcherCard watcher={state.data?.watcher ?? null} />
+          {/* Mismo criterio que holds: una tarjeta aparece cuando hay algo que
+              hacer con ella. El próximo ciclo importa si ya empezaste a armarlo
+              o si la etapa dice que se puede inscribir; el watcher, si está
+              corriendo o si vigilar todavía sirve para este ciclo. */}
+          {mostrarProximo && (
+            <NextCycleCard
+              term={next}
+              enrolled={nextEnrolled.length}
+              planes={nextPlans.length}
+              cartCount={cart.data?.rows.length ?? 0}
+              scheduledAt={state.data?.schedule?.atISO ?? null}
+              enrollmentWindow={enrollmentWindows.data?.windows[0] ?? null}
+            />
+          )}
+          {mostrarWatcher && <WatcherCard watcher={state.data?.watcher ?? null} />}
           {/* Holds solo cuando hay algo que hacer: o hay holds, o nunca se
               consultaron. "Cero holds confirmados" no es una tarea, y ocupar
               espacio con eso empuja hacia abajo lo que sí lo es (P3 §1). */}

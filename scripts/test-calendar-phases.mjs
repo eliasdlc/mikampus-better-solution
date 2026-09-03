@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { matchCalendarEvent, calendarEventsForTerm, termAnchors, termCodeInTitle } from '../src/shared/calendarPhases.ts';
+import {
+  matchCalendarEvent,
+  calendarEventsForTerm,
+  termAnchors,
+  termCodeInTitle,
+  preinscriptionFor,
+} from '../src/shared/calendarPhases.ts';
 import { resolveTermPhase } from '../src/shared/termPhase.ts';
 
 // El puente entre el calendario público de PUCMM y las etapas del ciclo.
@@ -130,5 +136,13 @@ assert.equal(enNotas.phase, 'notas');
 // puede romper el día que la instalación es nueva.
 const sinFechas = resolveTermPhase([], CICLO_1930, new Date(2026, 8, 4));
 assert.equal(sinFechas.capabilities.inscribir.state, 'advertida', 'no saber advierte, nunca apaga');
+
+// La preinscripción no es una etapa (no gobierna ninguna capacidad) pero es la
+// fecha que contesta "¿cuándo voy a poder armar el próximo ciclo?" mientras la
+// oferta no exista.
+assert.equal(preinscriptionFor(CALENDARIO, '1940')?.startsOn, '2026-11-11');
+assert.equal(preinscriptionFor(CALENDARIO, '1940')?.endsOn, '2026-11-13');
+assert.equal(preinscriptionFor(CALENDARIO, '1930'), null, 'la del 1930 ya no está publicada y no se inventa');
+assert.equal(preinscriptionFor(CALENDARIO, null), null);
 
 console.log('✓ calendario PUCMM → etapas: qué es etapa, de qué ciclo es cada fecha, y qué se cierra en cada una');

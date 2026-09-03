@@ -26,12 +26,15 @@ y la [guía de contribución](./CONTRIBUTING.md) antes de instalar o aportar.
 Hoy funciona:
 
 1. **Inicio** — la clase en curso o la próxima con su aula, la agenda del día y
-   las próximas fechas del calendario académico oficial de PUCMM.
+   el calendario académico oficial de PUCMM como línea de tiempo: lo que pasó,
+   lo que está pasando hoy y lo que viene.
 2. **Mi horario** — lista en móvil, grilla semanal en desktop, detalle por clase
    accesible con teclado y touch, impresión apaisada y export ICS.
 3. **Inscripción** — un solo recorrido de tres etapas (plan → grupos → carrito y
-   ejecución) sobre un ciclo elegido una vez. Watcher de cupos, hora fija de
-   pre-matrícula e inscripción manual.
+   ejecución) sobre un ciclo elegido una vez. La unidad que se guarda es la
+   materia con su grupo y la práctica de ese grupo: el portal nunca elige el
+   laboratorio en silencio. Watcher de cupos, hora fija de pre-matrícula,
+   inscripción manual y la hoja para llevar a secretaría.
 4. **Notas y avance** — histórico, pénsum, trayectoria del índice acumulado y
    proyecciones que se suspenden si no reconcilian con el acumulado oficial.
 5. **Buscar materias** — ⌘K, resultados instantáneos del catálogo cacheado
@@ -48,6 +51,12 @@ recuerda:
 - **El aviso antes de clase.** El agente conoce tu horario y sobrevive al
   navegador cerrado: te avisa unos minutos antes con el aula. Nace apagado y no
   avisa de una clase que ya empezó.
+
+**La etapa del ciclo decide la pantalla.** Las fechas salen del calendario
+académico público de PUCMM y de la ventana que el portal publica para tu cuenta,
+y cada control apagado dice por cuál de las dos y desde cuándo. Una capacidad
+solo se apaga cuando existe una fecha real que lo diga: no saber advierte, nunca
+apaga.
 
 **Frescura.** Un solo orquestador decide qué está viejo: cada fuente declara sus
 dependencias, su TTL y cuándo aplica, y el control global explica qué actualizó,

@@ -200,3 +200,18 @@ function mergeHits(a: CalendarPhaseHit, b: CalendarPhaseHit): CalendarPhaseHit {
     title: a.title === b.title ? a.title : `${a.title} · ${b.title}`,
   };
 }
+
+// ── La preinscripción del próximo ciclo ─────────────────────────────────────
+// No es una etapa del ciclo en curso ni gobierna ninguna capacidad, así que no
+// entra en TERM_EVENT_IDS. Pero es la fecha que contesta la única pregunta que
+// queda cuando la oferta del próximo ciclo todavía no existe: "¿y cuándo voy a
+// poder armarlo?". PUCMM la publica nombrando el ciclo ("Período de
+// preinscripción para el Ciclo 1940"), así que se atribuye sin adivinar.
+const PREINSCRIPCION = /^periodo de preinscripcion para el ciclo (\d{4})$/;
+
+export function preinscriptionFor(rows: readonly CalendarRow[], termCode: string | null): CalendarRow | null {
+  if (!termCode) return null;
+  return (
+    rows.find((row) => normalizeTitle(row.title).match(PREINSCRIPCION)?.[1] === termCode) ?? null
+  );
+}
