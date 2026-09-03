@@ -5,6 +5,7 @@ import {
   fetchEnrollmentWindows,
   fetchHolds,
   fetchState,
+  fetchTermPhase,
   runSync,
   scheduleAt,
   setWatcher,
@@ -16,6 +17,7 @@ import {
 import type { TermInfo } from '../../../src/shared/schemas.ts';
 import { Countdown } from './Countdown.tsx';
 import { WatcherLive } from './WatcherLive.tsx';
+import { Capacidad, capabilityOf } from './Capacidad.tsx';
 import { ago } from '../lib/time.ts';
 
 // La columna contextual de Inscripción (P2 §5). Antes mezclaba tres cosas que
@@ -91,6 +93,15 @@ export function EnrollmentContext({
     queryFn: () => fetchEnrollmentWindows(termId),
     enabled: Boolean(termId),
   });
+  // La etapa del ciclo, que es quien decide si estas tarjetas tienen algo que
+  // hacer hoy. Antes esta columna no la consultaba: el watcher y el disparo
+  // programado se dibujaban igual en plena docencia, con la inscripción cerrada
+  // hacía meses, ofreciendo botones que el portal iba a rechazar.
+  const phase = useQuery({
+    queryKey: ['term-phase', termId],
+    queryFn: () => fetchTermPhase(termId),
+    enabled: Boolean(termId),
+  });
 
   const [manualAt, setManualAt] = useState('');
 
@@ -104,9 +115,16 @@ export function EnrollmentContext({
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
   });
 
+  const programar = capabilityOf(phase.data, 'programar-inscripcion');
+  const vigilar = capabilityOf(phase.data, 'vigilar-cupo');
+
   const enrollmentWindow = windows.data?.windows[0] ?? null;
   const scheduledAt = state.data?.schedule?.atISO;
   const watcherOn = Boolean(state.data?.watcher);
+  // Ya hay algo vigilándose, o vigilar todavía sirve para este ciclo. La
+  // capacidad pasa a 'advertida' cuando la inscripción cerró, que es la señal
+  // de que la tarjeta dejó de tener sentido en esta etapa.
+  const mostrarWatcher = watcherOn || vigilar.state === 'habilitada';
   const autoEnrollOn = state.data?.watcher?.autoEnroll ?? false;
   const activeScope = state.data?.watcher?.scope ?? 'both';
   const [pendingScope, setPendingScope] = useState<WatcherScope>('both');
@@ -247,13 +265,17 @@ export function EnrollmentContext({
         ) : portalAppointment ? (
           <div className="space-y-2">
             <p className="text-sm">{new Date(portalAppointment).toLocaleString('es-DO')}</p>
-            <button
-              onClick={() => schedule.mutate()}
-              disabled={schedule.isPending}
-              className="bg-accent text-accent-fg w-full rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:opacity-50"
-            >
-              Programar inscripción
-            </button>
+            <Capacidad state={programar}>
+              {(blocked) => (
+                <button
+                  onClick={() => schedule.mutate()}
+                  disabled={blocked || schedule.isPending}
+                  className="bg-accent text-accent-fg w-full rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                >
+                  Programar inscripción
+                </button>
+              )}
+            </Capacidad>
           </div>
         ) : (
           <div className="space-y-2">
@@ -270,13 +292,17 @@ export function EnrollmentContext({
               aria-label="Hora de inscripción comunicada por tu escuela"
               className="border-line bg-bg w-full rounded-[var(--radius)] border px-2 py-1.5 text-sm"
             />
-            <button
-              disabled={!manualAt || schedule.isPending}
-              onClick={() => schedule.mutate()}
-              className="bg-accent text-accent-fg w-full rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:opacity-50"
-            >
-              Programar inscripción
-            </button>
+            <Capacidad state={programar}>
+              {(blocked) => (
+                <button
+                  disabled={blocked || !manualAt || schedule.isPending}
+                  onClick={() => schedule.mutate()}
+                  className="bg-accent text-accent-fg w-full rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                >
+                  Programar inscripción
+                </button>
+              )}
+            </Capacidad>
           </div>
         )}
         {schedule.error && <p className="text-closed text-xs">{(schedule.error as Error).message}</p>}
@@ -324,6 +350,12 @@ export function EnrollmentContext({
       </Card>
 
       {/* ── 4. Watcher ─────────────────────────────────────────────────── */}
+      {/* Se oculta, no se deshabilita. Con la inscripción del ciclo cerrada y
+          cero materias vigiladas, esta tarjeta no puede hacer nada útil hoy y
+          un control sin nada que hacer no gana pixeles. Si YA hay un watcher
+          corriendo se queda: un cupo se libera cuando alguien da de baja, y
+          apagarle la vigilancia a quien la encendió sería peor que el ruido. */}
+      {mostrarWatcher && (
       <Card title="Watcher de cupos">
         {watcherBlocker ? (
           <div className="space-y-2">
@@ -456,6 +488,7 @@ export function EnrollmentContext({
         )}
         {watch.error && <p className="text-closed text-xs">{(watch.error as Error).message}</p>}
       </Card>
+      )}
     </aside>
   );
 }

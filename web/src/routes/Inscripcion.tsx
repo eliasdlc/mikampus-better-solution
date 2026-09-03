@@ -13,9 +13,11 @@ import {
   fetchMySchedule,
   fetchEnrollmentWindows,
   fetchHolds,
+  fetchTermPhase,
   removeCartRow,
 } from '../lib/api.ts';
 import type { CartRow, CatalogCourse, TermInfo } from '../../../src/shared/schemas.ts';
+import type { CapabilityState } from '../../../src/shared/termPhase.ts';
 import { sectionToBlocks, hasCollisions, type Block } from '../lib/grid.ts';
 import { ClassDetail } from '../components/ClassDetail.tsx';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
@@ -26,6 +28,7 @@ import { StalenessTag } from '../components/StalenessTag.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
 import { CourseSearchBox } from '../components/CourseSearchBox.tsx';
 import { EnrollmentContext, useTermDiscovery } from '../components/EnrollmentContext.tsx';
+import { capabilityOf } from '../components/Capacidad.tsx';
 import { DropCoursePanel } from '../components/DropCoursePanel.tsx';
 import { Planner } from './Planner.tsx';
 import { Builder } from './Builder.tsx';
@@ -82,6 +85,23 @@ type Gate =
   | { can: false; reason: string; detail: string | null }
   | { can: true; warn: string | null };
 
+// Una fecha sin hora se agota al final de SU día en Santo Domingo. Se calcula
+// desde el texto y no con `new Date(iso)`, que lo leería como medianoche UTC y
+// correría el borde cuatro horas hacia atrás.
+const SANTO_DOMINGO_UTC_OFFSET_H = 4;
+
+function endOfDay(iso: string): number {
+  const [year, month, day] = iso.slice(0, 10).split('-').map(Number);
+  return Date.UTC(year, month - 1, day, 23 + SANTO_DOMINGO_UTC_OFFSET_H, 59, 59, 999);
+}
+
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+function readableDay(iso: string): string {
+  const [year, month, day] = iso.slice(0, 10).split('-').map(Number);
+  return `${day} de ${MESES[month - 1] ?? '?'} de ${year}`;
+}
+
 function enrollmentGate(input: {
   rows: number;
   holds: number;
@@ -91,6 +111,11 @@ function enrollmentGate(input: {
   hasWindowData: boolean;
   hasCollision: boolean;
   hasClosedSection: boolean;
+  // Lo que la etapa del ciclo dice sobre inscribir. Es una SEGUNDA fuente sobre
+  // la misma pregunta, y por eso entra acá en vez de decidir aparte: cuando
+  // este gate miraba solo enrollment_windows, el carrito y la pantalla del
+  // ciclo se contradecían sobre el mismo ciclo y nada las reconciliaba.
+  inscribir: CapabilityState;
   now: number;
 }): Gate {
   if (input.rows === 0) {
@@ -101,6 +126,17 @@ function enrollmentGate(input: {
       can: false,
       reason: `Tenés ${input.holds} hold(s) activos`,
       detail: 'PeopleSoft bloquea la inscripción con holds abiertos. Resolvelos primero.',
+    };
+  }
+
+  // La etapa manda sobre la ventana cuando dice que cerró: sus fechas salen del
+  // calendario oficial y de la ventana del portal juntas, y siguen vivas cuando
+  // el scrape de Enrollment Dates lleva días fallando.
+  if (input.inscribir.state === 'cerrada') {
+    return {
+      can: false,
+      reason: 'La inscripción de este ciclo está cerrada',
+      detail: input.inscribir.reason,
     };
   }
 
@@ -117,11 +153,17 @@ function enrollmentGate(input: {
         detail: `Abre el ${new Date(opens).toLocaleString('es-DO')}.`,
       };
     }
-    if (input.now > closes) {
+    // Con precisión de día, "2026-09-03" es medianoche UTC, que en Santo Domingo
+    // (UTC-4) son las 8 de la noche del día ANTERIOR: comparar contra eso
+    // apagaba el botón durante todo el último día hábil de la ventana, diciendo
+    // encima que había cerrado ayer. Un día cerrado se termina de agotar al
+    // final de ese día, no al empezarlo.
+    const closesAt = input.windowPrecision === 'datetime' ? closes : endOfDay(input.windowEndsAt);
+    if (input.now > closesAt) {
       return {
         can: false,
         reason: 'El período de inscripción cerró',
-        detail: `Cerró el ${new Date(closes).toLocaleDateString('es-DO')}. PeopleSoft ya no acepta cambios de este ciclo.`,
+        detail: `Cerró el ${readableDay(input.windowEndsAt)}. PeopleSoft ya no acepta cambios de este ciclo.`,
       };
     }
   }
@@ -203,6 +245,11 @@ export function Inscripcion() {
     queryFn: () => fetchEnrollmentWindows(termId),
     enabled: Boolean(termId),
   });
+  const phase = useQuery({
+    queryKey: ['term-phase', termId],
+    queryFn: () => fetchTermPhase(termId),
+    enabled: Boolean(termId),
+  });
 
   const discovery = useTermDiscovery();
   const enroll = useMutation({
@@ -267,6 +314,7 @@ export function Inscripcion() {
   const gate = enrollmentGate({
     rows: rows.length,
     holds: holds.data?.holds.length ?? 0,
+    inscribir: capabilityOf(phase.data, 'inscribir'),
     windowStartsAt: enrollmentWindow?.startsAt ?? null,
     windowEndsAt: enrollmentWindow?.endsAt ?? null,
     windowPrecision: enrollmentWindow?.precision ?? null,
