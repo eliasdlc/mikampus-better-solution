@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { CLI_COMMANDS } from './cliCommands.js';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -188,6 +189,8 @@ async function main() {
   if (command === 'backup') return backup(); if (command === 'restore') return restore(process.argv[3]);
   if (command === 'erase-data') return eraseData(); if (command === 'uninstall') return uninstall();
   if (command === 'diagnostics') return diagnostics(); if (command === 'update') return update();
-  throw new Error(`Comando desconocido: ${command}`);
+  // La lista de CLI_COMMANDS y este dispatch tienen que decir lo mismo: si se
+  // agrega un comando arriba y no a la lista, el launcher lo manda al server.
+  throw new Error(`Comando desconocido: ${command}. Comandos: ${CLI_COMMANDS.join(', ')}`);
 }
 main().catch((error) => { console.error(`mikampus: ${error.message}`); process.exitCode = 1; });
