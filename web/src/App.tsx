@@ -4,7 +4,6 @@ import { Layout } from './components/Layout.tsx';
 import { Dashboard } from './routes/Dashboard.tsx';
 import { Horario } from './routes/Horario.tsx';
 import { Inscripcion } from './routes/Inscripcion.tsx';
-import { Mesa } from './routes/Mesa.tsx';
 import { Ciclo } from './routes/Ciclo.tsx';
 import { Academico } from './routes/Academico.tsx';
 import { Trayectoria } from './routes/Trayectoria.tsx';
@@ -74,15 +73,15 @@ export function App() {
               <Route path="/planear" element={<LegacyPlanRedirect />} />
               <Route path="/planner" element={<LegacyPlanRedirect />} />
               <Route path="/builder" element={<LegacyPlanRedirect />} />
+              {/* La mesa se absorbió en la etapa "grupos" del recorrido. Era el
+                  mismo trabajo en otro destino, y encima abría siempre en el
+                  ciclo siguiente sin selector: el día que cerraba tu
+                  modificación, "Armar el ciclo" te llevaba a un ciclo con cinco
+                  materias publicadas. */}
+              <Route path="/mesa" element={<LegacyPlanRedirect />} />
               <Route path="/buscar" element={<Navigate to="/" replace />} />
               <Route path="/horario" element={<Horario />} />
               <Route path="/inscripcion" element={<Inscripcion />} />
-              {/* La mesa se solapa con /inscripcion: las dos deciden qué
-                  inscribir. Conviven mientras se decide cuál absorbe a cuál;
-                  lo que la mesa tiene y el recorrido no es el agrupado por
-                  campus, el par teórica más práctica, las condiciones de
-                  horario y la hoja para la secretaría. */}
-              <Route path="/mesa" element={<Mesa />} />
               <Route path="/ciclo" element={<Ciclo />} />
               <Route path="/trayectoria" element={<Trayectoria />} />
               <Route path="/academico" element={<Academico />} />

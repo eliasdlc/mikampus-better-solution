@@ -156,10 +156,13 @@ const CAPACIDADES = {
   'vigilar-cupo': { label: 'Vigilar un cupo', donde: '/inscripcion' },
   'dar-de-baja': { label: 'Dar de baja una materia', donde: '/horario' },
   'retiro-total': { label: 'Retirar el ciclo completo', donde: null },
-  planear: { label: 'Planear el ciclo', donde: '/mesa' },
-  recomendar: { label: 'Pedir recomendaciones', donde: '/mesa' },
+  // Apuntaban a /mesa, que no tenía ni recomendador ni export: la pantalla de
+  // capacidades prometía algo que el destino no cumplía. Los tres viven en la
+  // etapa 'plan' del recorrido.
+  planear: { label: 'Planear el ciclo', donde: '/inscripcion' },
+  recomendar: { label: 'Pedir recomendaciones', donde: '/inscripcion' },
   'buscar-catalogo': { label: 'Buscar en el catálogo', donde: '/' },
-  'exportar-plan': { label: 'Exportar el plan e imprimirlo', donde: '/mesa' },
+  'exportar-plan': { label: 'Exportar el plan e imprimirlo', donde: '/inscripcion' },
   sincronizar: { label: 'Traer tus datos del portal', donde: '/ajustes' },
   'ver-notas': { label: 'Ver tus notas', donde: '/academico' },
 } as const satisfies Record<CapabilityId, { label: string; donde: string | null }>;

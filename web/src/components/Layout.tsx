@@ -1,14 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
-  CalendarClock,
   CalendarDays,
   ChartLine,
   GraduationCap,
   House,
   Search,
   Settings,
-  Table2,
   type LucideIcon,
 } from 'lucide-react';
 import { useSSE } from '../lib/sse.tsx';
@@ -19,15 +17,16 @@ import { SyncControl } from './SyncControl.tsx';
 
 // La navegación nombra las tareas, no las pantallas que el proyecto fue
 // acumulando. Buscar, holds y elegir grupos siguen existiendo donde se usan.
-// Planear salió de la navegación primaria: planificar e inscribirse eran el
-// mismo trabajo partido en dos, y mantenerlos separados obligaba a llevar dos
-// contextos de ciclo en la cabeza. Ahora es la primera etapa de /inscripcion.
+//
+// Decidir qué cursar el próximo ciclo llegó a tener TRES destinos hermanos:
+// "Armar el ciclo", "Inscripción" y "El ciclo". En el teléfono salían pegados y
+// no había forma de saber cuál tocaba primero; peor, hablaban de ciclos
+// distintos entre sí. Ahora es uno solo con tres pasos, y la etapa del ciclo se
+// consulta desde Inicio y desde el propio recorrido, que es donde importa.
 const NAV: Array<{ to: string; label: string; short: string; icon: LucideIcon; end?: boolean }> = [
   { to: '/', label: 'Inicio', short: 'Inicio', icon: House, end: true },
   { to: '/horario', label: 'Mi horario', short: 'Horario', icon: CalendarDays },
-  { to: '/mesa', label: 'Armar el ciclo', short: 'Armar', icon: Table2 },
   { to: '/inscripcion', label: 'Inscripción', short: 'Inscribir', icon: GraduationCap },
-  { to: '/ciclo', label: 'El ciclo', short: 'Etapa', icon: CalendarClock },
   { to: '/academico', label: 'Notas y avance', short: 'Notas', icon: ChartLine },
   { to: '/ajustes', label: 'Ajustes', short: 'Ajustes', icon: Settings },
 ];

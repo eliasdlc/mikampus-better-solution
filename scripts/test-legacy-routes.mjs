@@ -52,4 +52,18 @@ assert.ok(isStage('plan') && isStage('grupos') && isStage('carrito'));
 assert.ok(!isStage('materias'), 'la etapa vieja ya no es válida');
 assert.ok(!isStage(null) && !isStage(undefined) && !isStage('horario'));
 
-console.log('✓ rutas legadas: planear/planner/builder caen en su etapa del workspace sin perder plan ni ciclo');
+// /mesa se absorbió en la etapa "grupos". Era un destino primario con
+// bookmarks propios, y llevaba el ciclo en `?term`, no en `?ciclo`.
+assert.equal(legacyPlanTarget('/mesa'), '/inscripcion?etapa=grupos', 'la mesa es la etapa de grupos');
+assert.equal(
+  legacyPlanTarget('/mesa', '?term=1930'),
+  '/inscripcion?etapa=grupos&ciclo=1930',
+  'y su ciclo viaja aunque se llamara distinto'
+);
+assert.equal(
+  legacyPlanTarget('/mesa', '?plan=7&ciclo=1940'),
+  '/inscripcion?etapa=grupos&plan=7&ciclo=1940',
+  'el plan abierto no se pierde en el camino'
+);
+
+console.log('✓ rutas legadas: planear/planner/builder/mesa caen en su etapa del workspace sin perder plan ni ciclo');

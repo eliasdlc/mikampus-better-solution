@@ -4,6 +4,7 @@ import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { readCart, removeFromCart, saveCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
+import { lectureSections } from './shared/sections.ts';
 import { readCatalog, seatHistory, syncCatalogCourse, applyPlanFacts, readHomeCampus, setHomeCampus } from './peoplesoft/catalog.js';
 import { readTermEvents, saveTermEvents, termPhase } from './termEvents.js';
 import { readMesa, mesaPlan } from './mesa.js';
@@ -1136,9 +1137,22 @@ app.post('/api/search/add', async (req, res) => {
       userId: req.userId,
       action: 'add-to-cart',
       detail: `${career} ${courseNumber} · NRC ${classNbr} (${term})`,
-      response: result.alreadyInCart ? 'ya estaba en el carrito' : 'agregada al carrito',
+      response: result.alreadyInCart
+        ? 'ya estaba en el carrito'
+        : result.autoPicked
+          ? `agregada al carrito · el portal eligió la práctica: ${result.autoPicked}`
+          : 'agregada al carrito',
       ok: true,
     });
+    // Que el portal haya elegido la práctica no es un detalle de log: cambia el
+    // horario que vas a cursar, así que se anuncia donde se ve.
+    if (result.autoPicked) {
+      scheduler.emitEvent({
+        userId: req.userId,
+        type: 'log',
+        message: `⚠ No elegiste práctica para ${courseNumber}: el portal marcó ${result.autoPicked}`,
+      });
+    }
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1154,7 +1168,11 @@ app.post('/api/search/add', async (req, res) => {
 app.get('/api/mesa', (req, res) => {
   try {
     const term = planningTerm(req.query.term ? String(req.query.term) : null, latestScheduledTerm(req.userId));
-    res.json(readMesa(req.userId, term));
+    // `plan` explícito es el que la etapa de grupos está armando. Sin él se cae
+    // en el plan del ciclo, que es lo que la mesa hacía cuando era su propia
+    // pantalla.
+    const planId = Number(req.query.plan);
+    res.json(readMesa(req.userId, term, { planId: Number.isSafeInteger(planId) && planId > 0 ? planId : null }));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -1217,8 +1235,7 @@ app.post('/api/mesa/armar', (req, res) => {
       // Solo los teóricos entran al solver: la práctica se elige después,
       // contra el horario que la teórica ya fijó. Meterlas juntas multiplicaría
       // el árbol por combinaciones que el portal ni siquiera acepta sueltas.
-      sections: course.sections
-        .filter((section) => section.component !== 'PRA')
+      sections: lectureSections(course.sections)
         .map((section) => ({
           id: section.id,
           courseId: course.courseId,
@@ -1474,9 +1491,20 @@ app.post('/api/plans/:id/to-cart', async (req, res) => {
           userId: req.userId,
           action: 'add-to-cart',
           detail: `${item.code} · NRC ${etiqueta} (${plan.term})`,
-          response: alreadyInCart ? 'ya estaba en el carrito' : 'agregada al carrito',
+          response: alreadyInCart
+            ? 'ya estaba en el carrito'
+            : r.autoPicked
+              ? `agregada al carrito · el portal eligió la práctica: ${r.autoPicked}`
+              : 'agregada al carrito',
           ok: true,
         });
+        if (r.autoPicked) {
+          scheduler.emitEvent({
+            userId: req.userId,
+            type: 'log',
+            message: `⚠ ${item.title} no tenía práctica elegida: el portal marcó ${r.autoPicked}`,
+          });
+        }
         out.push({ itemId: item.id, code: item.code, title: item.title, ok: true, alreadyInCart, error: null });
         scheduler.emitEvent({
           type: 'log',

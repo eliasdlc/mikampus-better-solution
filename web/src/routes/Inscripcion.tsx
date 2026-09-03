@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CircleDot, ClipboardList, LayoutGrid, ShoppingCart, Table2, Trash2, Zap, type LucideIcon } from 'lucide-react';
+import { CircleDot, ClipboardList, LayoutGrid, Printer, ShoppingCart, Trash2, X, Zap, type LucideIcon } from 'lucide-react';
 import {
   fetchCart,
   syncCart,
@@ -13,6 +13,7 @@ import {
   fetchMySchedule,
   fetchEnrollmentWindows,
   fetchHolds,
+  fetchMesa,
   fetchTermPhase,
   removeCartRow,
 } from '../lib/api.ts';
@@ -30,6 +31,7 @@ import { CourseSearchBox } from '../components/CourseSearchBox.tsx';
 import { EnrollmentContext, useTermDiscovery } from '../components/EnrollmentContext.tsx';
 import { capabilityOf } from '../components/Capacidad.tsx';
 import { DropCoursePanel } from '../components/DropCoursePanel.tsx';
+import { HojaSecretaria } from '../components/HojaSecretaria.tsx';
 import { Planner } from './Planner.tsx';
 import { Builder } from './Builder.tsx';
 
@@ -271,6 +273,15 @@ export function Inscripcion() {
   // esto alimentaba un ícono que latía; el estado deshabilitado ya dice lo
   // mismo y no repinta.
   const [removing, setRemoving] = useState<string | null>(null);
+  const [hoja, setHoja] = useState(false);
+  // La hoja para secretaría se arma sobre /api/mesa, que ya sabe de campus y del
+  // par teórica+práctica. Solo se pide cuando se abre: es una consulta de
+  // pantalla, no algo que el carrito necesite para dibujarse.
+  const mesa = useQuery({
+    queryKey: ['mesa', termId, activePlanId],
+    queryFn: () => fetchMesa(termId ?? undefined, activePlanId),
+    enabled: hoja,
+  });
   const remove = useMutation({
     mutationFn: removeCartRow,
     onSuccess: (fresh) => qc.setQueryData(['cart'], fresh),
@@ -423,7 +434,6 @@ export function Inscripcion() {
             arriba. Van fuera de la barra de etapas a propósito, porque no son
             un cuarto paso del recorrido: se consultan, no se recorren. */}
         <div className="flex flex-wrap items-center gap-2">
-          <SideTrip to="/mesa" icon={Table2} label="Mesa de inscripción" hint="La hoja que se lleva a la mesa" />
           <SideTrip to="/ciclo" icon={CircleDot} label="El ciclo" hint="En qué etapa está y qué se puede hacer" />
         </div>
 
@@ -461,7 +471,7 @@ export function Inscripcion() {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-5">
           {stage === 'plan' && (
-            <Planner activePlanId={activePlanId} onActivePlanChange={(id) => patchParams({ plan: id ? String(id) : null })} embedded />
+            <Planner activePlanId={activePlanId} onActivePlanChange={(id) => patchParams({ plan: id ? String(id) : null })} termId={termId} embedded />
           )}
 
           {stage === 'grupos' && (
@@ -505,16 +515,31 @@ export function Inscripcion() {
                     {!gate.can && <p className="text-waitlist mt-0.5 text-xs">{gate.reason}</p>}
                     {gate.can && gate.warn && <p className="text-waitlist mt-0.5 text-xs">Se puede someter, con reparos</p>}
                   </div>
-                  <button
-                    type="button"
-                    disabled={!gate.can || enroll.isPending}
-                    onClick={submit}
-                    title={gate.can ? (gate.warn ?? 'Somete el carrito a PeopleSoft') : `${gate.reason}. ${gate.detail ?? ''}`}
-                    className="bg-accent text-accent-fg flex min-h-9 items-center gap-2 rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Zap className="size-4" aria-hidden />
-                    {enroll.isPending ? 'Sometiendo…' : 'Inscribir ahora'}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* La salida presencial vive al lado de la digital porque es
+                        la misma acción por otro canal, y es la que queda cuando
+                        el portal ya cerró. Antes vivía en otra pantalla, así que
+                        el día que más falta hacía había que ir a buscarla. */}
+                    <button
+                      type="button"
+                      onClick={() => setHoja(true)}
+                      title="La lista para llevar impresa a secretaría"
+                      className="border-line hover:bg-surface-2 flex min-h-9 items-center gap-2 rounded-[var(--radius)] border px-3 py-1.5 text-sm"
+                    >
+                      <Printer className="size-4" aria-hidden />
+                      Hoja para secretaría
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!gate.can || enroll.isPending}
+                      onClick={submit}
+                      title={gate.can ? (gate.warn ?? 'Somete el carrito a PeopleSoft') : `${gate.reason}. ${gate.detail ?? ''}`}
+                      className="bg-accent text-accent-fg flex min-h-9 items-center gap-2 rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Zap className="size-4" aria-hidden />
+                      {enroll.isPending ? 'Sometiendo…' : 'Inscribir ahora'}
+                    </button>
+                  </div>
                 </header>
 
                 {!gate.can && gate.detail && (
@@ -642,6 +667,36 @@ export function Inscripcion() {
       <ActivityFeed />
 
       <ClassDetail block={detalleClase} onClose={() => setDetalleClase(null)} />
+
+      {/* La lista para llevar impresa. Es la salida que queda cuando el portal
+          ya no inscribe, así que vive pegada al botón de someter y no en otra
+          pantalla. */}
+      {hoja && (
+        <div className="bg-bg/80 fixed inset-0 z-50 overflow-auto p-4 print:static print:overflow-visible print:p-0">
+          <div className="border-line bg-surface mx-auto max-w-3xl rounded-[var(--radius)] border p-4 print:border-0">
+            <div className="mb-3 flex items-center justify-between print:hidden">
+              <h2 className="text-sm font-medium">Hoja para secretaría</h2>
+              <button
+                type="button"
+                onClick={() => setHoja(false)}
+                className="text-muted hover:text-fg flex min-h-9 items-center gap-1.5 px-2 text-xs"
+              >
+                <X className="size-4" aria-hidden />
+                Cerrar
+              </button>
+            </div>
+            {mesa.isPending ? (
+              <p className="text-muted text-sm">Armando la hoja…</p>
+            ) : mesa.data ? (
+              <HojaSecretaria mesa={mesa.data} />
+            ) : (
+              <p className="text-closed text-sm">
+                {(mesa.error as Error)?.message ?? 'No se pudo armar la hoja'}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

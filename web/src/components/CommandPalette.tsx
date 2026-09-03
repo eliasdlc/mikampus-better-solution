@@ -19,11 +19,16 @@ import { courseColor } from '../lib/color.ts';
 // segunda no se podía seleccionar con el teclado.
 const NAV: Array<{ to: string; label: string; keywords?: string[] }> = [
   { to: '/', label: 'Inicio', keywords: ['hoy', 'agenda', 'próxima clase'] },
-  { to: '/inscripcion', label: 'Inscripción', keywords: ['carrito', 'grupos', 'plan', 'inscribir', 'cupos'] },
+  // La mesa se absorbió acá, así que sus palabras vienen con ella: escribir
+  // "armar" o "secretaria" tiene que seguir llevando a algún lado.
+  {
+    to: '/inscripcion',
+    label: 'Inscripción',
+    keywords: ['carrito', 'grupos', 'plan', 'inscribir', 'cupos', 'mesa', 'armar', 'elegir', 'materias', 'campus', 'secretaria', 'hoja', 'imprimir', 'presencial'],
+  },
   { to: '/horario', label: 'Mi horario', keywords: ['clases', 'aula', 'semana'] },
   { to: '/academico', label: 'Notas y avance', keywords: ['índice', 'gpa', 'pénsum', 'metas'] },
-  { to: '/trayectoria', label: 'Trayectoria y ruta a graduación', keywords: ['graduación', 'ciclos', 'carrera', 'atraso'] },
-  { to: '/mesa', label: 'Armar el ciclo', keywords: ['mesa', 'elegir', 'materias', 'campus', 'secretaria', 'hoja', 'imprimir', 'presencial'] },
+  { to: '/trayectoria', label: 'Trayectoria y ruta a graduación', keywords: ['graduación', 'carrera', 'atraso'] },
   { to: '/ciclo', label: 'El ciclo y sus etapas', keywords: ['etapa', 'fase', 'fechas', 'retiro', 'modificación', 'calendario', 'cierre'] },
   { to: '/ajustes', label: 'Ajustes', keywords: ['cuenta', 'notificaciones', 'respaldos'] },
 ];
