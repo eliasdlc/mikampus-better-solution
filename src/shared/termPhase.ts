@@ -48,8 +48,18 @@ export const TERM_EVENT_LABELS = {
 // Quién dijo la fecha. Es lo que permite que un scrape no pise una corrección
 // hecha a mano y que un motivo pueda decir "según el calendario que cargaste":
 // el estudiante tiene que poder desconfiar de su propio dato.
-export const TERM_EVENT_SOURCES = ['portal', 'usuario'] as const;
+// 'calendario' es el calendario académico público de pucmm.edu.do, y es una
+// procedencia propia y no un tipo de 'portal' porque no vale lo mismo: el
+// portal publica TU ventana, con tu hora y tu carrera; el calendario publica la
+// fecha institucional, que es cierta pero no personal. Un motivo que apaga un
+// control tiene que poder decir de cuál de las dos salió.
+export const TERM_EVENT_SOURCES = ['portal', 'calendario', 'usuario'] as const;
 export type TermEventSource = (typeof TERM_EVENT_SOURCES)[number];
+
+// De más a menos autoritativa. Se usa para dos cosas distintas: al fundir dos
+// ventanas, el motivo advierte por la MENOS autoritativa; al deduplicar filas
+// de la misma etapa, gana la más específica para vos.
+const SOURCE_AUTHORITY: Record<TermEventSource, number> = { portal: 3, calendario: 2, usuario: 1 };
 
 export type TermEvent = {
   event: TermEventId;
@@ -156,7 +166,11 @@ function readableDate(iso: string): string {
 // poder dudar de su propio dato.
 function attributed(iso: string, source: TermEventSource): string {
   const date = readableDate(iso);
-  return source === 'usuario' ? `${date}, según el calendario que cargaste` : date;
+  if (source === 'usuario') return `${date}, según el calendario que cargaste`;
+  // La fecha institucional es cierta y a la vez no es tuya: la ventana personal
+  // del portal puede diferir, y quien lee tiene que saber cuál está mirando.
+  if (source === 'calendario') return `${date}, según el calendario académico de PUCMM`;
+  return date;
 }
 
 // ── Estado de cada ventana ──────────────────────────────────────────────────
@@ -187,7 +201,7 @@ function widen(a: DateWindow | undefined, b: DateWindow): DateWindow {
   return {
     startsOn: earliest(a.startsOn, b.startsOn),
     endsOn: latest(a.endsOn, b.endsOn),
-    source: a.source === 'usuario' || b.source === 'usuario' ? 'usuario' : 'portal',
+    source: SOURCE_AUTHORITY[a.source] <= SOURCE_AUTHORITY[b.source] ? a.source : b.source,
   };
 }
 
@@ -310,7 +324,12 @@ function titleOf(
   todayNum: number,
   hasUpcoming: boolean
 ): { phase: PhaseId; confidence: PhaseResolution['confidence']; since: string | null; until: string | null } {
-  const leading = PHASE_PRECEDENCE.find((id) => open.includes(id));
+  // Solo titula una ventana que sepa cuándo EMPEZÓ. El calendario publica casi
+  // todo como "fecha límite para X", o sea media ventana sin apertura: eso
+  // alcanza para decidir si todavía se puede hacer X, pero no para decir que
+  // estás en esa etapa. Sin este filtro, un plazo de retiro que vence en
+  // noviembre titulaba "Retiro total" desde septiembre, encima de la docencia.
+  const leading = PHASE_PRECEDENCE.find((id) => open.includes(id) && at(id).startsOn !== null);
   if (leading) {
     const window = at(leading);
     return { phase: leading, confidence: 'fechada', since: window.startsOn, until: window.endsOn };

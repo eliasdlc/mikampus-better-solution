@@ -219,15 +219,22 @@ const CASES = [
     },
   },
   {
+    // Media ventana gobierna la CAPACIDAD pero no titula la ETAPA, y la
+    // distinción no es cosmética: el calendario de PUCMM publica casi todo como
+    // "fecha límite para X", o sea siempre media ventana. Si un plazo sin
+    // apertura pudiera titular, el ciclo entero se llamaría "Retiro parcial"
+    // desde septiembre hasta el 15 de octubre, tapando la docencia. El título
+    // dice DÓNDE ESTÁS, y un plazo lejano no te ubica en ningún lado.
     name: 'media ventana conocida: solo sé cuándo cierra el retiro',
     today: '2026-09-20',
     term: TERM,
     events: [INSCRIPCION, ev('retiro-parcial', null, '2026-10-15')],
-    phase: 'retiro-parcial',
-    confidence: 'fechada',
+    phase: 'docencia',
+    confidence: 'inferida',
     expect: (r) => {
-      assert.equal(r.since, null, 'no se inventa la fecha de apertura que falta');
+      assert.ok(r.open.includes('retiro-parcial'), 'la ventana sigue contando como abierta');
       assert.equal(state(r, 'dar-de-baja'), 'habilitada', 'con la apertura desconocida y el cierre por venir, sigue abierta');
+      assert.equal(r.since, TERM.startDate, 'el título cae en docencia por las fechas del ciclo, no por una apertura inventada');
     },
   },
   {

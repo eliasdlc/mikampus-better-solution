@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { readTerms, termAliases } from './terms.js';
 import { termEventSchema, termEventInputSchema } from './shared/schemas.ts';
 import { resolveTermPhase } from './shared/termPhase.ts';
+import { calendarEventsForTerm } from './shared/calendarPhases.ts';
 
 // La capa de disco del calendario del ciclo. shared/termPhase.ts decide la etapa
 // y las capacidades sin tocar nada; acá se lee y se escribe la tabla term_events,
@@ -40,6 +41,31 @@ function projectedEnrollmentWindows(userId, terms) {
     }));
 }
 
+// El calendario académico oficial, proyectado a etapas del ciclo. Misma
+// decisión que con Enrollment Dates y por la misma razón: `academic_calendar`
+// ya es el registro crudo de ese scrape, y copiar sus filas a term_events
+// obligaría a mantener dos escrituras en sincronía para siempre. Se traduce al
+// leer, que es barato y no puede desincronizarse.
+//
+// El módulo que decide qué título es qué etapa es puro (shared/calendarPhases.ts):
+// acá solo se le pasan las filas y las fechas del ciclo.
+function projectedCalendarEvents(termCode, termWindow) {
+  const rows = db
+    .prepare('SELECT event_id AS id, title, starts_on AS startsOn, ends_on AS endsOn FROM academic_calendar')
+    .all();
+  if (!rows.length) return [];
+  return calendarEventsForTerm(rows, { termCode, termWindow }).map((hit) => ({
+    event: hit.event,
+    session: 'Regular Academic Session',
+    startsOn: hit.startsOn,
+    endsOn: hit.endsOn,
+    precision: 'date',
+    source: 'calendario',
+    sourceNote: hit.title,
+    updatedAt: null,
+  }));
+}
+
 function storedEvents(userId, terms) {
   if (!terms.length) return [];
   const placeholders = terms.map(() => '?').join(', ');
@@ -75,16 +101,35 @@ function storedEvents(userId, terms) {
  * proyecta el portal. Si corrigió una fecha a mano, un scrape no se la pisa; la
  * divergencia se ve porque ambas filas declaran su procedencia.
  */
-export function readTermEvents(userId, term) {
+export function readTermEvents(userId, term, termWindow = null) {
   const aliases = termAliases(term);
+  const window = termWindow ?? termDates(term);
+  const code = aliases.find((alias) => /^\d{4}$/.test(alias)) ?? null;
   const byKey = new Map();
-  for (const row of [...projectedEnrollmentWindows(userId, aliases), ...storedEvents(userId, aliases)]) {
+  // El orden es de menos a más específico para vos: el calendario institucional
+  // primero, después la ventana que el portal publica para tu cuenta, y al
+  // final lo que escribiste a mano. Cada capa solo pisa a la anterior.
+  for (const row of [
+    ...projectedCalendarEvents(code, window),
+    ...projectedEnrollmentWindows(userId, aliases),
+    ...storedEvents(userId, aliases),
+  ]) {
     const key = `${row.session}|${row.event}`;
     const previous = byKey.get(key);
     if (previous && previous.source === 'usuario' && row.source !== 'usuario') continue;
     byKey.set(key, row);
   }
   return [...byKey.values()].map((row) => termEventSchema.parse(row));
+}
+
+// Las fechas del ciclo, para atribuirle las filas del calendario que no lo
+// nombran. Se leen acá y no en readTerms entero porque readTermEvents también
+// se llama desde el endpoint, donde no hay una resolución de ciclo a mano.
+function termDates(term) {
+  const row = db
+    .prepare('SELECT start_date AS startDate, end_date AS endDate FROM terms WHERE code = ? OR label = ?')
+    .get(term, term);
+  return { startDate: row?.startDate ?? null, endDate: row?.endDate ?? null };
 }
 
 const upsertEventStmt = db.prepare(`
@@ -156,7 +201,9 @@ export function resolveTermTarget(requested = null, today = new Date()) {
  */
 export function termPhase(userId, { term = null, today = new Date() } = {}) {
   const target = resolveTermTarget(term, today);
-  const events = target.term ? readTermEvents(userId, target.term) : [];
+  const events = target.term
+    ? readTermEvents(userId, target.term, { startDate: target.startDate, endDate: target.endDate })
+    : [];
   const resolution = resolveTermPhase(events, { startDate: target.startDate, endDate: target.endDate }, today);
   return { ...target, ...resolution, events };
 }
