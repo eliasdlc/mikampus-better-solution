@@ -95,6 +95,49 @@ assert.ok(
   'toda pendiente del pénsum es obligatoria de algún grupo, no una candidata'
 );
 
+// ── Una materia que estás cursando pertenece a tu pénsum ──────────────────
+// El informe clasifica una electiva como "candidata" aunque estés inscrito en
+// ella, y su estado ahí sigue siendo pendiente. Sin cruzar contra grades, una
+// materia en curso desaparecía del pénsum si era candidata, o quedaba como
+// pendiente sin término si era obligatoria, y el recomendador te la volvía a
+// proponer. Pasó de verdad: ICC-233, cursándose, se cayó del pénsum entero.
+const enCurso = candidatasPuras[0];
+assert.ok(enCurso, 'el fixture tiene al menos una candidata pura para el caso');
+db.prepare(
+  `INSERT INTO grades (user_id, term, course_code, subject, catalog_nbr, title, grade, credits, status, captured_at)
+   VALUES (1, 'Septiembre de 2026', ?, 'ICC', '000', NULL, NULL, 4, 'in_progress', datetime('now'))`
+).run(enCurso);
+saveRequirementTree(1, tree, { cohortStartTerm: 'Septiembre de 2023' });
+
+const conHistorial = new Map(readPensum(1).map((row) => [row.code, row]));
+assert.ok(conHistorial.has(enCurso), 'la candidata que estás cursando SÍ entra al pénsum');
+assert.equal(conHistorial.get(enCurso).status, 'in_progress', 'y entra con el estado que dice el histórico');
+assert.equal(
+  conHistorial.get(enCurso).taken_term,
+  'Septiembre de 2026',
+  'con el término en que la estás cursando, no vacío'
+);
+assert.ok(
+  !pendingCourses(1).includes(enCurso),
+  'y deja de proponerse como pendiente: ya la estás cursando'
+);
+
+// El informe sigue mandando cuando sabe MÁS que el histórico: una fila vieja
+// de grades no degrada una materia que el informe ya da por aprobada.
+const aprobadaSegunInforme = readPensum(1).find((row) => row.status === 'taken');
+if (aprobadaSegunInforme) {
+  db.prepare(
+    `INSERT INTO grades (user_id, term, course_code, subject, catalog_nbr, title, grade, credits, status, captured_at)
+     VALUES (1, 'Enero de 2024', ?, 'ICC', '001', NULL, NULL, 4, 'in_progress', datetime('now'))`
+  ).run(aprobadaSegunInforme.code);
+  saveRequirementTree(1, tree, { cohortStartTerm: 'Septiembre de 2023' });
+  assert.equal(
+    readPensum(1).find((row) => row.code === aprobadaSegunInforme.code).status,
+    'taken',
+    'una aprobada no se degrada a en curso por una fila vieja del histórico'
+  );
+}
+
 // ── El perfil se guarda; la cohorte que aporta grades se conserva. ──
 const profile = readProfile(1);
 assert.equal(profile.pensum_no, '2020', 'el número de pénsum se guarda');

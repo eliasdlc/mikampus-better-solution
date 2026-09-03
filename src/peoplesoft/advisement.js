@@ -514,6 +514,31 @@ function userPlanId(userId) {
 // Entre copias del mismo código gana el estado más avanzado (una aprobada no
 // puede quedar como pending por reaparecer de candidata); la nota y el término
 // los aporta la copia que la cursó.
+// Lo que el histórico sabe y el informe no: qué estás cursando AHORA.
+//
+// El informe clasifica una materia como "candidata" de una electiva aunque
+// estés inscrito en ella, y su estado ahí sigue siendo pendiente. Sin este
+// cruce, una materia que estás cursando desaparecía del pénsum (si era
+// candidata) o quedaba como pendiente sin término (si era obligatoria), y el
+// recomendador te la volvía a proponer. `grades` sí sabe que estás inscrito.
+//
+// Lee la tabla directo, como earliestGradeTerm: importar grades.js desde acá
+// cerraría un ciclo, porque grades.js ya importa de este módulo.
+function historyByCode(userId) {
+  const byCode = new Map();
+  for (const row of db
+    .prepare('SELECT course_code AS code, status, term, grade FROM grades WHERE user_id = ?')
+    .all(userId)) {
+    // 'transferred' no está en la precedencia y una convalidada está cursada:
+    // sin esta traducción indexOf devuelve -1 y perdería contra cualquier cosa.
+    const status = row.status === 'transferred' ? 'taken' : row.status;
+    const previous = byCode.get(row.code);
+    if (previous && STATUS_PRECEDENCE.indexOf(status) <= STATUS_PRECEDENCE.indexOf(previous.status)) continue;
+    byCode.set(row.code, { status, takenTerm: row.term, grade: row.grade });
+  }
+  return byCode;
+}
+
 function derivePensum(userId, courses) {
   const byCode = new Map();
   for (const r of courses) {
@@ -538,6 +563,18 @@ function derivePensum(userId, courses) {
     e.subject ??= r.subject;
     e.catalogNbr ??= r.catalogNbr;
     if (!r.isCandidate) e.obligatoria = true;
+  }
+
+  // El histórico manda sobre el informe cuando sabe más. Nunca al revés: si el
+  // informe ya la da por aprobada, una fila vieja de grades no la degrada.
+  const historial = historyByCode(userId);
+  for (const e of byCode.values()) {
+    const real = historial.get(e.code);
+    if (!real) continue;
+    if (STATUS_PRECEDENCE.indexOf(real.status) <= STATUS_PRECEDENCE.indexOf(e.status)) continue;
+    e.status = real.status;
+    e.takenTerm ??= real.takenTerm;
+    if (real.grade) e.grade ??= real.grade;
   }
 
   db.prepare('DELETE FROM pensum WHERE user_id = ?').run(userId);
