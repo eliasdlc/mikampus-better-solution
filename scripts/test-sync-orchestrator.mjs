@@ -130,9 +130,17 @@ try {
   const conFallo = await orchestrator.runSync(USER, { force: true, emit: () => {} });
   assert.equal(statusOf(conFallo, 'grades').status, 'error');
   const avance = statusOf(conFallo, 'advisement');
-  assert.equal(avance.status, 'skipped', 'el avance no se recalcula contra notas que no se pudieron traer');
+  assert.equal(avance.status, 'blocked', 'el avance no se recalcula contra notas que no se pudieron traer');
+  assert.equal(avance.blockedBy, 'grades', 'y se sabe cuál dependencia lo arrastró, no solo que se omitió');
   assert.match(avance.reason, /Notas/, 'la omisión nombra la dependencia que falló');
   assert.ok(!calls.includes('advisement'), 'una dependencia rota no ejecuta al dependiente');
+
+  // Lo que se omite también se guarda. Antes esta rama salía sin escribir y la
+  // fila conservaba el motivo de una corrida vieja: la pantalla decía "en pausa,
+  // iniciá sesión" sobre una fuente que en realidad esperaba a Notas.
+  const filaAvance = orchestrator.syncState(USER).sources.find((source) => source.key === 'advisement');
+  assert.equal(filaAvance.lastStatus, 'blocked', 'el estado omitido se persiste, no se deja el anterior');
+  assert.match(filaAvance.error, /Notas/, 'y el motivo guardado nombra a la dependencia');
 
   // El error queda persistido por fuente, no solo en la respuesta HTTP.
   const estadoTrasFallo = orchestrator.syncState(USER);

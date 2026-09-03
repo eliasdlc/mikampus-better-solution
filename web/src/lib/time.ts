@@ -22,5 +22,19 @@ export function ago(raw: string): string {
   if (mins < 60) return `hace ${mins} min`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `hace ${hrs} h`;
-  return `hace ${Math.floor(hrs / 24)} d`;
+  const days = Math.floor(hrs / 24);
+  // "hace 9 d" se lee como ruido; "hace 9 días" es la frase que hace reaccionar.
+  return days === 1 ? 'hace 1 día' : `hace ${days} días`;
+}
+
+// "en 12 min" — cuánto falta para algo que el backend ya agendó (el reintento
+// de una fuente que falló). Nunca dice "en 0 min": por debajo del minuto es
+// inminente, y un cero se lee como que ya debería haber pasado.
+export function until(raw: string): string {
+  const secs = (parseServerDate(raw).getTime() - Date.now()) / 1000;
+  if (secs <= 60) return 'en instantes';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `en ${mins} min`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 24 ? `en ${hrs} h` : `en ${Math.round(hrs / 24)} días`;
 }

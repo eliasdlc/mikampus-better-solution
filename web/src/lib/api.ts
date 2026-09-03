@@ -572,7 +572,17 @@ const statusSchema = z.object({
     })
     .nullable(),
   schedule: z.object({ atISO: z.string(), state: z.string(), lastError: z.string().nullable() }).nullable(),
-  monitoringGap: z.object({ from: z.string(), to: z.string(), ms: z.number(), detail: z.string().nullable() }).nullable(),
+  monitoringGap: z
+    .object({
+      from: z.string(),
+      to: z.string(),
+      ms: z.number(),
+      // Cuántos watchers quedaron a oscuras. Sin al menos uno, el backend no
+      // manda el hueco: un corte sin nada vigilándose no le costó un cupo a nadie.
+      watchers: z.number().default(1),
+      detail: z.string().nullable(),
+    })
+    .nullable(),
   credential: z.object({ reason: z.string().nullable(), expiresAt: z.string(), store: z.string() }).nullable(),
   backup: z.object({
     lastSuccessfulAt: z.string().nullable(),
@@ -728,11 +738,13 @@ export async function fetchErasePreview(): Promise<ErasePreview> {
 const syncResultSchema = z.object({
   key: z.string(),
   label: z.string(),
-  status: z.enum(['fresh', 'updated', 'skipped', 'paused', 'error']),
+  status: z.enum(['fresh', 'updated', 'skipped', 'blocked', 'paused', 'error']),
   syncedAt: z.string().nullable(),
   detail: z.string().nullable().optional(),
   reason: z.string().optional(),
   error: z.string().optional(),
+  // Qué fuente arrastró a esta. Solo viaja con status 'blocked'.
+  blockedBy: z.string().optional(),
   invalidates: z.array(z.string()).optional(),
 });
 export type SyncResult = z.infer<typeof syncResultSchema>;
@@ -762,6 +774,10 @@ const syncStateSchema = z.object({
       lastSuccessAt: z.string().nullable(),
       lastStatus: z.string().nullable(),
       error: z.string().nullable(),
+      // El backend ya los calculaba y el esquema los tiraba: sin ellos la UI no
+      // puede decir "reintenta en 12 min" y un error se lee como dato viejo.
+      retryAt: z.string().nullable().default(null),
+      cooling: z.boolean().default(false),
     })
   ),
 });
@@ -771,17 +787,28 @@ export type SyncState = z.infer<typeof syncStateSchema>;
 // Fechas públicas de PUCMM, cacheadas en SQLite. No es PeopleSoft y no lleva
 // datos personales: es lo mismo que ve cualquiera en la web de la universidad.
 
+const calendarEventSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  startsOn: z.string(),
+  endsOn: z.string(),
+  url: z.string().nullable(),
+  sourceUrl: z.string(),
+});
+
 const academicCalendarSchema = z.object({
-  events: z.array(
-    z.object({
-      id: z.string(),
-      title: z.string(),
-      startsOn: z.string(),
-      endsOn: z.string(),
-      url: z.string().nullable(),
-      sourceUrl: z.string(),
+  events: z.array(calendarEventSchema),
+  // El mismo calendario partido contra hoy. `events` sigue siendo solo lo que
+  // viene, para lo que ya lo consume; `timeline` es lo que permite ubicarse:
+  // esto pasó, esto está pasando, esto viene.
+  timeline: z
+    .object({
+      today: z.string(),
+      past: z.array(calendarEventSchema),
+      current: z.array(calendarEventSchema),
+      future: z.array(calendarEventSchema),
     })
-  ),
+    .default({ today: '', past: [], current: [], future: [] }),
   total: z.number(),
   syncedAt: z.string().nullable(),
 });

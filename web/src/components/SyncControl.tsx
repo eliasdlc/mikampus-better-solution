@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { fetchSyncState, runSync, setSyncInterval, type SyncResult, type SyncState } from '../lib/api.ts';
-import { ago } from '../lib/time.ts';
+import { ago, until } from '../lib/time.ts';
 
 // El control global de sincronización (P1). Antes "actualizar" era un botón que
 // no decía qué hacía: no se sabía qué estaba viejo, qué se había omitido ni por
@@ -16,6 +16,7 @@ const STATUS_LABEL: Record<SyncResult['status'], string> = {
   updated: 'actualizado',
   fresh: 'ya estaba al día',
   skipped: 'omitido',
+  blocked: 'no se intentó',
   paused: 'en pausa',
   error: 'falló',
 };
@@ -23,7 +24,7 @@ const STATUS_LABEL: Record<SyncResult['status'], string> = {
 // Los colores de alarma se reservan para lo que de verdad exige una acción: un
 // dato viejo o una fuente que no aplica hoy no son un problema.
 function dotClass(status: string | null, expired: boolean, relevant: boolean) {
-  if (status === 'error') return 'bg-closed';
+  if (status === 'error' || status === 'blocked') return 'bg-closed';
   if (!relevant) return 'bg-line';
   if (status === 'paused') return 'bg-waitlist';
   if (expired) return 'bg-waitlist';
@@ -44,11 +45,32 @@ const INTERVAL_OPTIONS: { ms: number; label: string }[] = [
   { ms: 0, label: 'natural' },
 ];
 
-function sourceNote(source: SyncState['sources'][number]) {
-  if (source.error) return source.error;
-  if (!source.relevant) return 'no aplica en este momento del ciclo';
-  if (source.syncedAt) return `actualizado ${ago(source.syncedAt)}`;
-  return 'sin datos aún';
+// El estado de una fuente en una frase, más el detalle crudo del portal cuando
+// lo hay. Antes esto devolvía `source.error` de una y nada más: un parser roto
+// hacía nueve días se leía igual que uno roto hace un minuto, y la antigüedad
+// del último dato bueno —lo único que dice cuánto duele— no aparecía.
+//
+// El orden es por lo que exige acción, no por lo que ocurrió último.
+function sourceNote(source: SyncState['sources'][number]): { state: string; detail: string | null } {
+  const detail = source.error ?? null;
+  if (source.lastStatus === 'error') {
+    const since = source.lastSuccessAt
+      ? `último dato bueno ${ago(source.lastSuccessAt)}`
+      : 'nunca se pudo traer';
+    const retry = source.cooling && source.retryAt ? ` · reintenta ${until(source.retryAt)}` : '';
+    return { state: `falla · ${since}${retry}`, detail };
+  }
+  // 'blocked' guarda su motivo en el mismo campo que un error del portal, y ese
+  // motivo ya nombra a la fuente que la arrastró.
+  if (source.lastStatus === 'blocked') return { state: detail ?? 'no se pudo intentar', detail: null };
+  if (source.lastStatus === 'paused') {
+    const edad = source.syncedAt ? ` · dato de ${ago(source.syncedAt)}` : '';
+    return { state: `en pausa${edad}`, detail };
+  }
+  if (!source.relevant) return { state: 'no aplica en este momento del ciclo', detail };
+  if (!source.syncedAt) return { state: 'sin datos aún', detail };
+  if (source.expired) return { state: `toca actualizar · ${ago(source.syncedAt)}`, detail };
+  return { state: `al día · ${ago(source.syncedAt)}`, detail };
 }
 
 export function SyncControl() {
@@ -62,7 +84,7 @@ export function SyncControl() {
   });
 
   const sync = useMutation({
-    mutationFn: (force: boolean) => runSync({ force }),
+    mutationFn: (input: { force: boolean; keys?: string[] }) => runSync(input),
     onSuccess: ({ state }) => {
       queryClient.setQueryData(['sync'], state);
       // Las invalidaciones finas ya llegaron por SSE (`sync-source`); esto cubre
@@ -81,26 +103,33 @@ export function SyncControl() {
   const failing = sources.filter((source) => source.lastStatus === 'error');
   const busy = sync.isPending || Boolean(data?.running);
 
-  const summary = data?.hold
-    ? data.hold
-    : failing.length
-      ? `${failing.length} fuente(s) con error`
-      : pending.length
-        ? `${pending.length} por actualizar`
-        : 'todo al día';
+  // El resumen se ordena por lo que exige acción, y nunca dice "todo al día"
+  // por encima de una fuente rota. Una falla vieja se nombra por su antigüedad
+  // porque es lo que la vuelve urgente: "Notas falla desde hace 9 días" es una
+  // frase que se actúa, "1 fuente con error" no.
+  const worst = [...failing].sort((a, b) => (a.lastSuccessAt ?? '').localeCompare(b.lastSuccessAt ?? ''))[0];
+  const summary = busy
+    ? 'actualizando…'
+    : worst
+      ? `${worst.label} falla${worst.lastSuccessAt ? ` · último dato ${ago(worst.lastSuccessAt)}` : ''}`
+      : data?.hold
+        ? data.hold
+        : pending.length
+          ? `${pending.length} por actualizar`
+          : 'todo al día';
 
   return (
     <details className="group order-5 w-full md:order-none">
       <summary className="text-muted hover:text-fg flex cursor-pointer list-none items-center gap-1.5 text-xs marker:content-none">
         <RefreshCw className="size-3 shrink-0" aria-hidden />
-        <span className="truncate">{busy ? 'actualizando…' : summary}</span>
+        <span className="truncate">{summary}</span>
       </summary>
 
       <div className="border-line mt-2 space-y-3 rounded-[var(--radius)] border p-2.5">
         <div className="flex flex-wrap gap-1.5">
           <button
             type="button"
-            onClick={() => sync.mutate(false)}
+            onClick={() => sync.mutate({ force: false })}
             disabled={busy}
             className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2 py-1 text-xs disabled:opacity-50"
           >
@@ -108,7 +137,7 @@ export function SyncControl() {
           </button>
           <button
             type="button"
-            onClick={() => sync.mutate(true)}
+            onClick={() => sync.mutate({ force: true })}
             disabled={busy}
             className="border-line hover:bg-surface-2 rounded-[var(--radius)] border px-2 py-1 text-xs disabled:opacity-50"
           >
@@ -150,19 +179,34 @@ export function SyncControl() {
             dice exactamente qué falta para volver a consultar. */}
         {data?.hold && <p className="text-waitlist text-xs">{data.hold}</p>}
 
+        {/* Cada fuente se puede reintentar sola. El botón universal sigue siendo
+            el gesto principal, pero cuando lo que falla es una sola cosa, salir
+            al portal por las ocho para arreglar una es castigar al portal. */}
         <ul className="space-y-1.5">
-          {sources.map((source) => (
-            <li key={source.key} className="flex items-start gap-2 text-xs">
-              <span
-                className={`mt-1 size-1.5 shrink-0 rounded-full ${dotClass(source.lastStatus, source.expired, source.relevant)}`}
-                aria-hidden
-              />
-              <span className="min-w-0 flex-1">
-                <span className="text-fg">{source.label}</span>
-                <span className="text-muted block truncate">{sourceNote(source)}</span>
-              </span>
-            </li>
-          ))}
+          {sources.map((source) => {
+            const note = sourceNote(source);
+            return (
+              <li key={source.key} className="flex items-start gap-2 text-xs">
+                <span
+                  className={`mt-1 size-1.5 shrink-0 rounded-full ${dotClass(source.lastStatus, source.expired, source.relevant)}`}
+                  aria-hidden
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="text-fg">{source.label}</span>
+                  <span className="text-muted block">{note.state}</span>
+                  {note.detail && <span className="text-muted/70 block break-words">{note.detail}</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => sync.mutate({ force: true, keys: [source.key] })}
+                  disabled={busy}
+                  className="hover:text-fg text-muted shrink-0 underline underline-offset-2 disabled:opacity-50"
+                >
+                  actualizar
+                </button>
+              </li>
+            );
+          })}
         </ul>
 
         {/* Qué hizo la última corrida, fuente por fuente: qué actualizó, qué
