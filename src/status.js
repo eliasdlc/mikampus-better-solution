@@ -30,7 +30,19 @@ function agentInfo() {
 // El intervalo que nadie vigiló: el agente se cayó, el equipo durmió o hubo un
 // reboot. Es parte del producto, no un detalle técnico — si un cupo abrió y
 // cerró acá adentro, mikampus no lo puede reconstruir después.
-function monitoringGap() {
+//
+// Tres condiciones, y las tres existen porque sin ellas el aviso se volvió
+// permanente y falso: un reinicio ordenado de minuto y medio quedaba fijo en la
+// barra, en rojo, prometiendo un cupo perdido en una instalación que no estaba
+// vigilando nada.
+
+// Por debajo de esto no es un hueco de vigilancia, es un reinicio. El watcher
+// consulta cada 45 s y ya se recupera solo de unos ticks perdidos.
+const GAP_MIN_MS = 10 * 60_000;
+// Un hueco de la semana pasada no informa ninguna decisión de hoy.
+const GAP_MAX_AGE_MS = 24 * 60 * 60_000;
+
+function monitoringGap(now = new Date()) {
   const row = db
     .prepare("SELECT started_at AS startedAt, ended_at AS endedAt, detail FROM runtime_events WHERE kind = 'agent' ORDER BY id DESC LIMIT 2")
     .all();
@@ -38,8 +50,14 @@ function monitoringGap() {
   const current = row[0];
   if (!previous?.endedAt || !current?.startedAt) return null;
   const ms = new Date(current.startedAt).getTime() - new Date(previous.endedAt).getTime();
-  if (!Number.isFinite(ms) || ms <= 0) return null;
-  return { from: previous.endedAt, to: current.startedAt, ms, detail: current.detail ?? null };
+  if (!Number.isFinite(ms) || ms < GAP_MIN_MS) return null;
+  if (now.getTime() - new Date(current.startedAt).getTime() > GAP_MAX_AGE_MS) return null;
+  // Y sobre todo: solo hay "intervalo no vigilado" si había algo vigilándose.
+  // recordRuntimeStart marca 'monitoring-gap' exactamente a los watchers que el
+  // corte interrumpió; sin ninguno, nadie perdió un cupo.
+  const interrupted = db.prepare("SELECT COUNT(*) AS n FROM watchers WHERE status = 'monitoring-gap'").get();
+  if (!interrupted?.n) return null;
+  return { from: previous.endedAt, to: current.startedAt, ms, watchers: interrupted.n, detail: current.detail ?? null };
 }
 
 function watcherInfo(userId) {
@@ -85,7 +103,7 @@ export function fullStatus(userId, { now = new Date() } = {}) {
     schema: { version: SCHEMA_VERSION, applied: schemaState.applied, migratedFrom: schemaState.from, preUpgradeBackup: schemaState.backup },
     watcher,
     schedule,
-    monitoringGap: monitoringGap(),
+    monitoringGap: monitoringGap(now),
     credential: credential ? { reason: credential.reason, expiresAt: credential.expiresAt, store: credential.store ?? 'vault' } : null,
     backup: backupState(now),
     update: { policy: updatePolicy(), lastCheck: lastUpdateCheck(), inProgress: updateState() },

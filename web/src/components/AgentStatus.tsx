@@ -55,9 +55,13 @@ export function AgentStatusBar() {
         {watcher && watcher.consecutiveFailures > 0 ? ` · ${watcher.consecutiveFailures} fallo(s) seguidos` : ''}
       </span>
 
+      {/* El backend solo lo manda cuando de verdad quedó un watcher a oscuras:
+          un reinicio corto sin nada vigilándose no es un hueco, y decirlo en
+          rojo cada vez que arranca el agente enseñaba a ignorar la barra. */}
       {data.monitoringGap && (
         <span className="text-closed">
-          intervalo no vigilado de {humanGap(data.monitoringGap.ms)}: no se puede reconstruir un cupo que abrió y cerró ahí
+          {data.monitoringGap.watchers === 1 ? 'una materia vigilada quedó' : `${data.monitoringGap.watchers} materias vigiladas quedaron`} sin
+          consultar por {humanGap(data.monitoringGap.ms)}: no se puede reconstruir un cupo que abrió y cerró ahí
         </span>
       )}
 

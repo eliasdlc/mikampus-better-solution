@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DB_PATH } from './db.js';
 import { db } from './db.js';
+import { readMeta, writeMeta } from './appMeta.js';
 import { dataPaths } from './paths.js';
 
 // El lock pertenece al agente, no a una pestaña. Es un archivo pequeño y
@@ -68,6 +69,17 @@ export function agentHealthAuthorized(req) {
   return actual.length === wanted.length && crypto.timingSafeEqual(actual, wanted);
 }
 
+// El latido del agente. Existe para poder medir un corte sucio: sin él, el
+// arranque siguiente cierra el evento abierto con SU PROPIA hora, el hueco da
+// cero y el único corte que la app podía reportar era el limpio, que es
+// justamente el que no le costó nada a nadie.
+export const HEARTBEAT_KEY = 'agent.heartbeatAt';
+
+export function recordHeartbeat(at = new Date()) {
+  writeMeta(HEARTBEAT_KEY, at.toISOString());
+  return at;
+}
+
 // Un apagado limpio cierra su evento; si el último quedó abierto hubo crash,
 // reboot o suspensión larga. El watcher no "reproduce" ticks: deja la marca
 // durable y el scheduler hará una única lectura fresca al arrancar.
@@ -77,9 +89,15 @@ export function recordRuntimeStart() {
   if (previous) {
     db.prepare("UPDATE watchers SET status = 'monitoring-gap', pause_reason = ?, next_check_at = NULL WHERE status IN ('running', 'backing-off', 'monitoring-gap')")
       .run(`Agente no disponible desde ${previous.started_at}`);
-    db.prepare('UPDATE runtime_events SET ended_at = ? WHERE id = ?').run(now, previous.id);
+    // El corte terminó cuando el agente dejó de latir, no cuando volvió. Si no
+    // hay latido (base vieja, o murió en el primer minuto) se cae en la hora de
+    // arranque, que al menos no inventa un hueco más largo del que hubo.
+    const heartbeat = readMeta(HEARTBEAT_KEY);
+    const endedAt = heartbeat && heartbeat > previous.started_at && heartbeat < now ? heartbeat : previous.started_at;
+    db.prepare('UPDATE runtime_events SET ended_at = ? WHERE id = ?').run(endedAt, previous.id);
   }
   db.prepare("INSERT INTO runtime_events (kind, detail, started_at) VALUES ('agent', ?, ?)").run(previous ? 'reinicio con intervalo no vigilado' : 'inicio del agente', now);
+  recordHeartbeat(new Date(now));
   return { hadGap: Boolean(previous), startedAt: now };
 }
 

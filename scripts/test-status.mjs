@@ -45,14 +45,40 @@ try {
   assert.equal(status.watcher.consecutiveFailures, 3);
   assert.equal(status.power.mustStayAwake, true, 'un watcher en backoff sigue siendo trabajo pendiente');
 
-  // Un intervalo no vigilado (crash/reboot) queda visible y medido.
+  // Un intervalo no vigilado (crash/reboot) queda visible y medido. El reloj
+  // entra por parámetro: el aviso caduca a las 24 h, así que una fecha fija sin
+  // un "hoy" fijo se apagaría sola con el calendario.
+  const alVolver = new Date('2026-07-20T15:05:00.000Z');
   recordRuntimeStart();
   recordRuntimeStop();
   db.prepare("UPDATE runtime_events SET started_at = '2026-07-20T10:00:00.000Z', ended_at = '2026-07-20T11:00:00.000Z' WHERE id = 1").run();
   db.prepare("INSERT INTO runtime_events (kind, detail, started_at) VALUES ('agent', 'reinicio', '2026-07-20T15:00:00.000Z')").run();
-  status = fullStatus(1);
+  // El corte solo cuenta si dejó a alguien sin vigilar: es lo que marca
+  // recordRuntimeStart sobre los watchers que interrumpió.
+  db.prepare("UPDATE watchers SET status = 'monitoring-gap' WHERE user_id = 1").run();
+  status = fullStatus(1, { now: alVolver });
   assert.ok(status.monitoringGap, 'el gap se expone, no se esconde');
   assert.equal(status.monitoringGap.ms, 4 * 60 * 60 * 1000, 'y se mide de verdad');
+  assert.equal(status.monitoringGap.watchers, 1, 'y dice cuántas materias quedaron a oscuras');
+
+  // Sin nada vigilándose, el mismo corte no es noticia: nadie perdió un cupo.
+  db.prepare("UPDATE watchers SET status = 'stopped' WHERE user_id = 1").run();
+  assert.equal(fullStatus(1, { now: alVolver }).monitoringGap, null, 'un corte sin watcher no se anuncia');
+
+  // Un reinicio ordenado de minuto y medio tampoco: por debajo del umbral es
+  // un arranque, no un hueco de vigilancia.
+  db.prepare("UPDATE watchers SET status = 'monitoring-gap' WHERE user_id = 1").run();
+  db.prepare("UPDATE runtime_events SET ended_at = '2026-07-20T14:58:24.000Z' WHERE id = 1").run();
+  assert.equal(fullStatus(1, { now: alVolver }).monitoringGap, null, 'un reinicio corto no es un intervalo no vigilado');
+
+  // Y un hueco de la semana pasada deja de gritar: ya no informa nada.
+  db.prepare("UPDATE runtime_events SET ended_at = '2026-07-20T11:00:00.000Z' WHERE id = 1").run();
+  assert.equal(
+    fullStatus(1, { now: new Date('2026-07-25T15:00:00.000Z') }).monitoringGap,
+    null,
+    'el aviso caduca en vez de quedarse fijo en la barra'
+  );
+  db.prepare("UPDATE watchers SET status = 'backing-off' WHERE user_id = 1").run();
 
   // Home Server no le pide a nadie que deje una laptop despierta.
   chooseMode('home-server');
