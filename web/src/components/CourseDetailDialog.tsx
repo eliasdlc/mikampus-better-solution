@@ -4,6 +4,7 @@ import { Check, Plus, X } from 'lucide-react';
 import { addPlanItem, addToCart, fetchPlans } from '../lib/api.ts';
 import { portalCatalogNbr } from '../../../src/shared/courseCode.ts';
 import { normalizeSeatStatus, type CatalogCourse, type CatalogSection } from '../../../src/shared/schemas.ts';
+import { hasPractice, lectureSections } from '../../../src/shared/sections.ts';
 import { SeatBadge } from './SeatBadge.tsx';
 import { StalenessTag } from './StalenessTag.tsx';
 
@@ -47,7 +48,8 @@ export function CourseDetailDialog({
               {course.title}
             </h2>
             <p className="text-muted mt-1 text-sm">
-              {course.credits != null ? `${course.credits} créditos · ` : ''}{course.sections.length} grupos publicados
+              {course.credits != null ? `${course.credits} créditos · ` : ''}
+              {lectureSections(course.sections).length} grupos publicados
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-muted hover:text-fg -mr-1 -mt-1 p-2" aria-label="Cerrar detalle">
@@ -68,11 +70,21 @@ export function CourseDetailDialog({
           </button>
         )}
 
+        {/* Grupos y prácticas van separados. Mezclarlos hacía que agregar "un
+            grupo" pudiera mandar un laboratorio al carrito como si fuera la
+            clase, y el portal completaba el par por su cuenta. */}
         <ul className="border-line divide-line mt-4 divide-y rounded-[var(--radius)] border">
-          {course.sections.map((section) => (
+          {lectureSections(course.sections).map((section) => (
             <SectionActions key={section.id} course={course} section={section} />
           ))}
         </ul>
+
+        {hasPractice(course.sections) && (
+          <p className="border-waitlist/40 bg-waitlist/10 text-waitlist mt-3 rounded-[var(--radius)] border px-3 py-2 text-xs">
+            Esta materia tiene práctica. Desde acá se agrega solo el grupo: el portal va a elegir el laboratorio y te
+            va a avisar cuál marcó. Para elegirlo vos, mandala a un plan y elegí la práctica en Inscripción.
+          </p>
+        )}
       </section>
     </div>
   );

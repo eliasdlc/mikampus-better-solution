@@ -31,6 +31,7 @@ import type {
   ScheduleCourse,
 } from '../../../src/shared/schemas.ts';
 import { sectionToBlocks } from '../lib/grid.ts';
+import { lectureSections, practiceSections } from '../../../src/shared/sections.ts';
 import { downloadICS } from '../lib/ics.ts';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
 import { CourseChip } from '../components/CourseChip.tsx';
@@ -108,10 +109,16 @@ export function Planner({
   activePlanId,
   onActivePlanChange,
   embedded = false,
+  termId = null,
 }: {
   activePlanId?: number | null;
   onActivePlanChange?: (planId: number | null) => void;
   embedded?: boolean;
+  // El ciclo elegido arriba, en el header del recorrido. Sin esto el planner
+  // resolvía su propio ciclo (el primero plannable) y se podía tener elegido
+  // "Septiembre de 2026" en la cabecera y generar un plan para "Enero de 2027",
+  // con secciones que la etapa siguiente no encontraba.
+  termId?: string | null;
 }) {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -168,6 +175,7 @@ export function Planner({
     },
   });
   const recommendationTerm =
+    termId ??
     termsQ.data?.find((term) => term.isNext && term.hasSections)?.term ??
     termsQ.data?.find((term) => term.hasSections)?.term ??
     null;
@@ -842,12 +850,22 @@ function PlanItemRow({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [note, setNote] = useState(item.note ?? '');
 
+  // La unidad de este plan es la fila entera: materia, grupo y práctica del
+  // grupo. Separar teóricas de prácticas se decide en shared/sections.ts, que
+  // es la misma regla que usan la mesa y el solver del servidor.
+  const grupos = lectureSections(course?.sections ?? []);
+  const practicas = practiceSections(course?.sections ?? [], item.section);
+  const faltaPractica = Boolean(item.section) && practicas.length > 0 && !item.relatedSection;
+
   const patch = useMutation({
-    mutationFn: (p: { sectionId?: number | null; note?: string | null }) =>
+    mutationFn: (p: { sectionId?: number | null; relatedSectionId?: number | null; note?: string | null }) =>
       updatePlanItem(planId, item.id, p),
     onSuccess: (detail) => {
       onDetail(detail);
-      setPickerOpen(false);
+      // Elegir la teórica NO cierra el selector cuando la materia tiene
+      // laboratorio: la elección está a medias y cerrar acá era lo que dejaba
+      // items sin práctica que después el portal completaba por su cuenta.
+      if (!faltaPractica) setPickerOpen(false);
     },
   });
   const remove = useMutation({
@@ -904,13 +922,13 @@ function PlanItemRow({
 
       {pickerOpen && (
         <div className="border-line divide-line divide-y border-t">
-          {!course || course.sections.length === 0 ? (
+          {!course || grupos.length === 0 ? (
             <p className="text-muted px-3 py-2 text-xs">
               Sin grupos publicados este término: queda como deseada.
             </p>
           ) : (
             <>
-              {course.sections.map((section) => (
+              {grupos.map((section) => (
                 <SectionOption
                   key={section.id}
                   section={section}
@@ -918,6 +936,31 @@ function PlanItemRow({
                   onPick={() => patch.mutate({ sectionId: section.id })}
                 />
               ))}
+              {/* La práctica se elige acá y no la elige el portal. Antes esta
+                  lista mezclaba las PRA con los grupos, así que elegir "el
+                  grupo" podía guardar un laboratorio como si fuera la clase, y
+                  al mandar al carrito PeopleSoft marcaba la primera práctica
+                  que encontrara. */}
+              {item.section && practicas.length > 0 && (
+                <div className="bg-surface-2/40 px-3 py-2">
+                  <p className="mb-1 text-xs font-medium">
+                    Práctica
+                    {faltaPractica && <span className="text-closed font-normal"> · falta elegir una</span>}
+                  </p>
+                  <p className="text-muted mb-1.5 text-[11px]">
+                    Se muestran las del mismo campus que el grupo. El portal confirma cuál corresponde al agregarla.
+                  </p>
+                </div>
+              )}
+              {item.section &&
+                practicas.map((section) => (
+                  <SectionOption
+                    key={section.id}
+                    section={section}
+                    chosen={item.relatedSection?.id === section.id}
+                    onPick={() => patch.mutate({ relatedSectionId: section.id })}
+                  />
+                ))}
               {item.section && (
                 <button
                   onClick={() => patch.mutate({ sectionId: null })}

@@ -240,7 +240,7 @@ export function addToCart(input: {
   career: string;
   courseNumber: string;
   classNbr: string;
-  relatedClassNbr?: string;
+  relatedClassNbr?: string | null;
 }) {
   return send('/api/search/add', 'POST', input) as Promise<{ ok?: boolean; alreadyInCart?: boolean }>;
 }
@@ -287,9 +287,12 @@ export async function duplicatePlan(id: number): Promise<PlanDetail> {
   return planDetailSchema.parse(await send(`/api/plans/${id}/duplicate`, 'POST'));
 }
 
+// `relatedSectionId` es la práctica del grupo. El backend la soporta desde que
+// existe el par en plan_items; el cliente no la exponía, así que ninguna
+// pantalla podía elegirla y el portal terminaba marcando la primera del listado.
 export async function addPlanItem(
   planId: number,
-  input: { courseId: number; sectionId?: number | null; note?: string | null }
+  input: { courseId: number; sectionId?: number | null; relatedSectionId?: number | null; note?: string | null }
 ): Promise<PlanDetail> {
   return planDetailSchema.parse(await send(`/api/plans/${planId}/items`, 'POST', input));
 }
@@ -297,7 +300,7 @@ export async function addPlanItem(
 export async function updatePlanItem(
   planId: number,
   itemId: number,
-  patch: { sectionId?: number | null; note?: string | null; locked?: boolean }
+  patch: { sectionId?: number | null; relatedSectionId?: number | null; note?: string | null; locked?: boolean }
 ): Promise<PlanDetail> {
   return planDetailSchema.parse(await send(`/api/plans/${planId}/items/${itemId}`, 'PATCH', patch));
 }
@@ -814,8 +817,8 @@ const academicCalendarSchema = z.object({
 });
 export type AcademicCalendar = z.infer<typeof academicCalendarSchema>;
 
-export async function fetchAcademicCalendar(limit = 5): Promise<AcademicCalendar> {
-  return academicCalendarSchema.parse(await getJSON(`/api/academic-calendar?limit=${limit}`));
+export async function fetchAcademicCalendar(limit = 5, past = 3): Promise<AcademicCalendar> {
+  return academicCalendarSchema.parse(await getJSON(`/api/academic-calendar?limit=${limit}&pasados=${past}`));
 }
 
 // ── Ritmo de cupo (feature nueva) ───────────────────────────────────────────
@@ -902,9 +905,16 @@ export async function runSync(input: { force?: boolean; keys?: string[] } = {}) 
 // mesa entera y no un fragmento: así la pantalla nunca queda con la selección
 // nueva y los totales viejos.
 
-export async function fetchMesa(term?: string): Promise<MesaResponse> {
-  const query = term ? `?term=${encodeURIComponent(term)}` : '';
-  return mesaResponseSchema.parse(await getJSON(`/api/mesa${query}`));
+// `planId` es el plan que la etapa de grupos está armando. Sin él el backend
+// cae en el plan del ciclo, que es lo que la mesa usaba cuando era una pantalla
+// aparte: la hoja para secretaría tiene que mostrar lo que elegiste, no otra
+// selección paralela.
+export async function fetchMesa(term?: string, planId?: number | null): Promise<MesaResponse> {
+  const params = new URLSearchParams();
+  if (term) params.set('term', term);
+  if (planId != null) params.set('plan', String(planId));
+  const query = params.toString();
+  return mesaResponseSchema.parse(await getJSON(`/api/mesa${query ? `?${query}` : ''}`));
 }
 
 export async function setMesaSelection(input: {
