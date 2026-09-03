@@ -1,5 +1,5 @@
 import { db, logSync, lastSync } from './db.js';
-import { parseCalendarEvents, upcomingEvents, todayInSantoDomingo } from './shared/academicCalendar.ts';
+import { parseCalendarEvents, upcomingEvents, timelineEvents, todayInSantoDomingo } from './shared/academicCalendar.ts';
 
 // El adaptador del calendario académico oficial (P3). Read-only, público y sin
 // credenciales: son páginas abiertas de pucmm.edu.do. No pasa por la sesión de
@@ -69,15 +69,19 @@ export function saveCalendarEvents(events, { now = new Date() } = {}) {
   return events.length;
 }
 
-export function readCalendar({ limit = 5, today = todayInSantoDomingo() } = {}) {
+export function readCalendar({ limit = 5, past = 3, today = todayInSantoDomingo() } = {}) {
   const rows = db
     .prepare(
       `SELECT event_id AS id, title, starts_on AS startsOn, ends_on AS endsOn, url, source_url AS sourceUrl
        FROM academic_calendar ORDER BY starts_on, title`
     )
     .all();
+  // `events` se conserva porque es lo que consume todo lo que ya existe; la
+  // línea de tiempo se agrega al lado, sobre las MISMAS filas. El pasado nunca
+  // estuvo en la base de otro modo: se descartaba acá al leer.
   return {
     events: upcomingEvents(rows, { today, limit }),
+    timeline: timelineEvents(rows, { today, past, future: limit }),
     total: rows.length,
     syncedAt: lastSync('academicCalendar'),
   };

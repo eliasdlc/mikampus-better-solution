@@ -158,3 +158,36 @@ export function upcomingEvents(
     .sort((a, b) => a.startsOn.localeCompare(b.startsOn) || a.title.localeCompare(b.title))
     .slice(0, limit);
 }
+
+export type CalendarTimeline = {
+  today: string;
+  past: CalendarEvent[];
+  current: CalendarEvent[];
+  future: CalendarEvent[];
+};
+
+/**
+ * El calendario partido contra hoy: lo que pasó, lo que está pasando y lo que
+ * viene.
+ *
+ * Existe porque una lista de "próximas fechas" no ubica a nadie en el tiempo.
+ * Ver que la modificación de inscripción cerró ayer explica por qué el carrito
+ * está en solo lectura; ver solo lo que viene deja esa pregunta sin responder.
+ *
+ * `past` sale en orden inverso —lo más reciente primero— y después se invierte
+ * para dibujarla: de las trece fechas que ya pasaron, las que informan algo son
+ * las últimas, no las de agosto.
+ */
+export function timelineEvents(
+  events: CalendarEvent[],
+  { today = todayInSantoDomingo(), past = 3, future = 6 }: { today?: string; past?: number; future?: number } = {}
+): CalendarTimeline {
+  const byDate = [...events].sort((a, b) => a.startsOn.localeCompare(b.startsOn) || a.title.localeCompare(b.title));
+  return {
+    today,
+    past: byDate.filter((event) => event.endsOn < today).slice(-past),
+    // Un rango que contiene a hoy es presente aunque haya empezado hace dos días.
+    current: byDate.filter((event) => event.startsOn <= today && event.endsOn >= today),
+    future: byDate.filter((event) => event.startsOn > today).slice(0, future),
+  };
+}

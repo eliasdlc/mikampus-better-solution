@@ -1054,7 +1054,13 @@ app.get('/api/seat-trend', (req, res) => {
 // es, en vez de quedarse vacía.
 app.get('/api/academic-calendar', (req, res) => {
   const limit = Number(req.query.limit);
-  res.json(readCalendar({ limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 5 }));
+  const past = Number(req.query.pasados);
+  res.json(
+    readCalendar({
+      limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 5,
+      past: Number.isInteger(past) && past >= 0 ? Math.min(past, 20) : 3,
+    })
+  );
 });
 
 app.get('/api/holds', (req, res) => {

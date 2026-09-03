@@ -179,11 +179,23 @@ export function duplicatePlan(userId, planId) {
     const { lastInsertRowid: newId } = db
       .prepare('INSERT INTO plans (user_id, term, name) VALUES (?, ?, ?)')
       .run(userId, source.term, `${source.name} (copia)`);
+    // La práctica va en la copia. Sin ella el plan duplicado se veía idéntico y
+    // al mandarlo al carrito el portal volvía a elegir el laboratorio por su
+    // cuenta, que es justo lo que el par explícito existe para evitar.
     const insert = db.prepare(
-      'INSERT INTO plan_items (plan_id, course_id, section_id, status, note, locked) VALUES (?, ?, ?, ?, ?, ?)'
+      `INSERT INTO plan_items (plan_id, course_id, section_id, related_section_id, status, note, locked)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
     for (const item of source.items) {
-      insert.run(newId, item.courseId, item.section?.id ?? null, item.status, item.note, item.locked ? 1 : 0);
+      insert.run(
+        newId,
+        item.courseId,
+        item.section?.id ?? null,
+        item.relatedSection?.id ?? null,
+        item.status,
+        item.note,
+        item.locked ? 1 : 0
+      );
     }
     db.exec('COMMIT');
     return readPlan(userId, newId);
@@ -250,9 +262,15 @@ export function updatePlanItem(userId, planId, itemId, { sectionId, relatedSecti
   // Pedir una práctica sin teórica es un error del que llama y se dice. Que la
   // teórica se vaya y arrastre la práctica NO lo es: es la cascada correcta,
   // porque una práctica huérfana no se puede mandar al carrito.
+  //
+  // Cambiar de teórica también arrastra: el laboratorio del grupo anterior no
+  // es el del grupo nuevo, y a menudo ni siquiera es del mismo campus.
+  // Conservarlo dejaba guardado un par que el portal iba a rechazar, o peor,
+  // uno que iba a aceptar y no era el que se eligió.
+  const changedSection = sectionId !== undefined && sectionId !== item.section_id;
   const nextRelated =
     relatedSectionId === undefined
-      ? nextSection == null
+      ? nextSection == null || changedSection
         ? null
         : item.related_section_id
       : relatedSectionId;
