@@ -1,3 +1,4 @@
+import { SEAT_FRESH_HOURS, seatAgeHours } from './shared/sections.ts';
 import { readCatalog, readHomeCampus } from './peoplesoft/catalog.js';
 import { readGrades } from './peoplesoft/grades.js';
 import { readRequirementTree } from './peoplesoft/advisement.js';
@@ -18,18 +19,15 @@ import * as plans from './plans.js';
 // composición, y a equivocarse distinto en cada una.
 
 // Cuánto puede envejecer una observación de cupo antes de dejar de dibujarse
-// como estado. No es una constante caprichosa: el class search publica el cupo
-// como un ícono, sin números, así que lo único que sostiene "está abierta" es
-// que la observación sea reciente. Pasado esto la UI dice "sin dato reciente"
-// con su fecha, que es la verdad.
-export const SEAT_FRESH_HOURS = 24;
+// como estado. El número y la regla viven en shared/sections.ts porque la etapa
+// de grupos del cliente aplica exactamente la misma: dos definiciones hacían que
+// la misma sección se leyera "Abierta" en una pantalla y "sin dato reciente" en
+// la otra, y la que mentía era justo aquella desde la que se decide.
+export { SEAT_FRESH_HOURS };
 
 function ageHours(capturedAt, now) {
-  if (!capturedAt) return null;
-  // Las marcas de la DB son UTC sin sufijo ('2026-07-22 15:16:36'): sin la Z,
-  // Date las lee como hora local y el cálculo se corre por el offset.
-  const then = Date.parse(`${capturedAt.replace(' ', 'T')}Z`);
-  return Number.isFinite(then) ? Math.max(0, (now.getTime() - then) / 3_600_000) : null;
+  const hours = seatAgeHours(capturedAt, now);
+  return hours == null ? null : Math.max(0, hours);
 }
 
 // La sección tal como la mesa la muestra: la del catálogo más el veredicto de
@@ -66,18 +64,34 @@ function enrolledForTerm(userId, term, now) {
   }));
 }
 
-// El plan que hace de selección viva de la mesa. Hay uno por ciclo y se crea al
-// primer toque: obligar a nombrar un plan antes de poder elegir una materia era
-// justo la fricción que hizo que la tabla `plans` siguiera vacía.
+// El plan sobre el que trabaja la mesa. Hay uno por ciclo y se crea al primer
+// toque: obligar a nombrar un plan antes de poder elegir una materia era justo
+// la fricción que hizo que la tabla `plans` siguiera vacía.
+//
+// `planId` explícito manda sobre todo lo demás, y es lo que hace que la hoja
+// para secretaría muestre EL plan que estás armando. Cuando la mesa vivía en su
+// propia pantalla se conformaba con un plan propio llamado "Mesa"; desde que
+// elegir el grupo y armar el plan son el mismo paso, ese plan aparte sería una
+// segunda selección que contradice la que estás viendo.
 export const MESA_PLAN_NAME = 'Mesa';
 
-export function mesaPlan(userId, term, { create = false } = {}) {
+export function mesaPlan(userId, term, { create = false, planId = null } = {}) {
+  if (planId != null) {
+    const explicito = plans.readPlan(userId, planId);
+    // Un plan de otro ciclo no describe esta mesa: se ignora en vez de mezclar
+    // dos términos en la misma pantalla.
+    if (explicito && explicito.term === term) return explicito;
+  }
   const row = db
-    .prepare('SELECT id FROM plans WHERE user_id = ? AND term = ? AND name = ? ORDER BY id LIMIT 1')
+    .prepare('SELECT id FROM plans WHERE user_id = ? AND term = ? ORDER BY (name = ?) DESC, id LIMIT 1')
     .get(userId, term, MESA_PLAN_NAME);
   if (row) return plans.readPlan(userId, row.id);
   if (!create) return null;
-  return plans.createPlan(userId, { term, name: MESA_PLAN_NAME });
+  // "Mi ciclo" y no "Mesa": desde que elegir el grupo es un paso del recorrido y
+  // no una pantalla aparte, un plan que lleva el nombre de la pantalla que lo
+  // creó no le dice nada a nadie. MESA_PLAN_NAME se conserva para reconocer los
+  // que ya existen en bases viejas.
+  return plans.createPlan(userId, { term, name: 'Mi ciclo' });
 }
 
 /**
@@ -87,7 +101,7 @@ export function mesaPlan(userId, term, { create = false } = {}) {
  * cupo y la fase del ciclo dependen de la fecha, y un cálculo que consulta el
  * reloj por dentro no se puede probar contra un día fijo.
  */
-export function readMesa(userId, term, { now = new Date() } = {}) {
+export function readMesa(userId, term, { now = new Date(), planId = null } = {}) {
   if (!term?.trim()) throw new Error('No hay un ciclo para armar la mesa');
   const cycle = term.trim();
 
@@ -122,7 +136,7 @@ export function readMesa(userId, term, { now = new Date() } = {}) {
   const creditsByCourse = new Map(pending.map((course) => [course.courseId, course.credits]));
   const creditsOf = (item) => creditsByCourse.get(item.courseId) ?? item.credits ?? null;
 
-  const rawPlan = mesaPlan(userId, cycle);
+  const rawPlan = mesaPlan(userId, cycle, { planId });
   const plan = rawPlan
     ? { ...rawPlan, items: rawPlan.items.map((item) => ({ ...item, credits: creditsOf(item) })) }
     : null;

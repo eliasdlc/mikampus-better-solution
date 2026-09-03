@@ -1,4 +1,5 @@
 import type { CatalogCourse, CatalogSection, RequirementGroup } from './schemas.ts';
+import { lectureSections } from './sections.ts';
 import { solveCombinations, DEFAULT_WEIGHTS, type CandidateCourse, type CandidateSection, type Weights } from './solver.ts';
 import type { PensumPlan } from './pensumRules.ts';
 import { coreqClosure, evaluate, missingCoreqs, unlockCount, type CourseStanding, type Eligibility } from './eligibility.ts';
@@ -125,12 +126,15 @@ function candidateSection(course: CatalogCourse, section: CatalogSection): Candi
   };
 }
 
+// El solver elige UN grupo por materia, así que solo puede ver teóricas. Sin
+// este filtro podía devolver una práctica como la sección de la materia, y el
+// plan recomendado salía con un laboratorio donde iba la clase.
 function solverCourse(option: Option): CandidateCourse {
   return {
     courseId: option.course.id,
     code: option.course.code,
     title: option.course.title,
-    sections: option.course.sections.map((section) => candidateSection(option.course, section)),
+    sections: lectureSections(option.course.sections).map((section) => candidateSection(option.course, section)),
   };
 }
 

@@ -117,8 +117,11 @@ export async function addExactSectionToCart(
   const row = rows.find((r) => r.classNbr === classNbr);
   if (!row) throw new Error('No se encontró esa clase en los resultados de búsqueda');
   if (row.inCart) return { alreadyInCart: true };
-  await addClassToCart(page, row.index, { relatedClassNbr });
-  return { ok: true };
+  // `autoPicked` viaja hasta la UI: si el portal tuvo que elegir la práctica
+  // porque nadie la eligió, la pantalla lo dice en vez de dejar creer que el
+  // laboratorio inscrito fue una decisión tuya.
+  const { autoPicked } = await addClassToCart(page, row.index, { relatedClassNbr });
+  return { ok: true, autoPicked };
 }
 
 // Busca el radio de la sección relacionada exacta en el paso "Select" del
@@ -146,9 +149,13 @@ export function findRelatedSectionRadio(relatedClassNbr) {
 //
 // Cuando el paso pide elegir una sección relacionada (práctico/lab), se marca
 // la que la UI eligió (`relatedClassNbr`); sin elección explícita, o si esa
-// sección no aparece, cae a la primera disponible — el comportamiento de
-// siempre, para que un practico lleno no deje la materia fuera del carrito.
+// sección no aparece, cae a la primera disponible — para que un práctico lleno
+// no deje la materia fuera del carrito. Esa caída ahora se DEVUELVE en
+// `autoPicked`: sigue ocurriendo, pero deja de ser invisible. Que el portal
+// elija tu laboratorio sin decirlo es cómo la gente termina inscrita en una
+// práctica de otro campus.
 export async function addClassToCart(page, index, { relatedClassNbr = null } = {}) {
+  let autoPicked = null;
   let frame = await findFrame(page, `input[name="SSR_PB_SELECT$${index}"]`);
   await frame.click(`input[name="SSR_PB_SELECT$${index}"]`);
   await page.waitForTimeout(5000);
@@ -170,7 +177,16 @@ export async function addClassToCart(page, index, { relatedClassNbr = null } = {
       } else {
         const anyChecked = await frame.locator('input.PSRADIOBUTTON[type="radio"]:checked').count();
         if (anyChecked === 0) {
+          // Nadie eligió, así que elige el portal. Se hace para no dejar el
+          // flujo colgado a mitad, pero se REPORTA: hasta ahora esta rama era
+          // silenciosa y era la que te inscribía en un laboratorio que nunca
+          // elegiste, a veces de otro día o de otro campus.
+          const label = await frame.evaluate(() => {
+            const radio = document.querySelector('input.PSRADIOBUTTON[type="radio"]');
+            return radio?.closest('tr')?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 120) ?? null;
+          });
           await radios.first().check();
+          autoPicked = label ?? 'la primera opción del portal';
           await page.waitForTimeout(1000);
         }
       }
@@ -181,4 +197,5 @@ export async function addClassToCart(page, index, { relatedClassNbr = null } = {
     await nextBtn.click();
     await page.waitForTimeout(5000);
   }
+  return { autoPicked };
 }
