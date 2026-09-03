@@ -305,6 +305,23 @@ function writeRow(userId, key, { status, error, touchRun = true }) {
   ).run(userId, key, runAt, successAt, status, setError ? error : null, setError ? 1 : 0);
 }
 
+/**
+ * Registra que una fuente se trajo bien, desde fuera de la cola.
+ *
+ * Los botones por pantalla (Notas, Avance, Horario, Carrito, Holds, ventana)
+ * llaman al scraper directo y no pasan por `executeSync`, así que no escribían
+ * nada acá: `sync_log` decía que Notas se actualizó hoy y `sync_sources` seguía
+ * diciendo 25 de agosto, con el error de ese día pegado. Dos verdades sobre lo
+ * mismo, y la que se mostraba dependía de qué campo mirara cada pantalla.
+ *
+ * No sustituye a la cola: el refresco sigue saliendo por el camino de siempre.
+ * Lo único que hace es que el estado guardado no quede mintiendo.
+ */
+export function markSourceSynced(userId, key) {
+  if (!BY_KEY.has(key)) throw new Error(`Fuente de sincronización desconocida: ${key}`);
+  writeRow(userId, key, { status: 'ok', error: null });
+}
+
 // ── Cada cuánto se refresca lo que se scrapea ───────────────────────────────
 //
 // Cada fuente declara su frescura NATURAL: cada cuánto cambia el dato allá

@@ -60,6 +60,13 @@ function sourceNote(source: SyncState['sources'][number]): { state: string; deta
     const retry = source.cooling && source.retryAt ? ` · reintenta ${until(source.retryAt)}` : '';
     return { state: `falla · ${since}${retry}`, detail };
   }
+  // El dato al día manda sobre no haber salido al portal. 'paused', 'blocked' y
+  // 'skipped' dicen qué pasó con el ÚLTIMO intento, no qué tan viejo está lo que
+  // tenés: una fuente que se actualizó hace diez minutos y después se saltó por
+  // falta de sesión se leía "en pausa", como si no sirviera. Un error sí gana,
+  // porque ahí el último intento falló y eso hay que saberlo aunque el dato
+  // guardado siga siendo reciente.
+  if (source.syncedAt && !source.expired) return { state: `al día · ${ago(source.syncedAt)}`, detail: null };
   // 'blocked' guarda su motivo en el mismo campo que un error del portal, y ese
   // motivo ya nombra a la fuente que la arrastró.
   if (source.lastStatus === 'blocked') return { state: detail ?? 'no se pudo intentar', detail: null };
@@ -69,8 +76,7 @@ function sourceNote(source: SyncState['sources'][number]): { state: string; deta
   }
   if (!source.relevant) return { state: 'no aplica en este momento del ciclo', detail };
   if (!source.syncedAt) return { state: 'sin datos aún', detail };
-  if (source.expired) return { state: `toca actualizar · ${ago(source.syncedAt)}`, detail };
-  return { state: `al día · ${ago(source.syncedAt)}`, detail };
+  return { state: `toca actualizar · ${ago(source.syncedAt)}`, detail };
 }
 
 export function SyncControl() {

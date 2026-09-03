@@ -50,7 +50,7 @@ import { erasePreview, eraseLocalArtifacts } from './erase.js';
 import { exportDiagnostics, listDiagnostics } from './diagnostics.js';
 import { checkForUpdate, setUpdatePolicy } from './updates.js';
 import { requireScraperMutationSupport } from './scraperSupport.js';
-import { pendingSync, runSync, setSyncIntervalMs, startSyncLoop, stopSyncLoop, syncState } from './syncOrchestrator.js';
+import { markSourceSynced, pendingSync, runSync, setSyncIntervalMs, startSyncLoop, stopSyncLoop, syncState } from './syncOrchestrator.js';
 import { readCalendar } from './academicCalendar.js';
 import { seatTrend, describeTrend } from './shared/seatTrend.ts';
 import { setReminderSettings, reminderStatus, startClassReminders, stopClassReminders } from './classReminders.js';
@@ -417,6 +417,7 @@ app.post('/api/cart/sync', async (req, res) => {
     await withPage(req.userId, (page) => syncCart(page, { userId: req.userId }));
     const cart = readCart(req.userId);
     scheduler.emitEvent({ type: 'cart-status', rows: cart.rows, syncedAt: cart.syncedAt });
+    markSourceSynced(req.userId, 'cart');
     res.json(cart);
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el carrito: ${err.message}` });
@@ -495,6 +496,7 @@ app.post('/api/enrollment-windows/sync', async (req, res) => {
       })
     );
     scheduler.emitEvent({ type: 'log', message: `Ventana de inscripción actualizada: ${windows.length} sesión(es)` });
+    markSourceSynced(req.userId, 'enrollmentWindows');
     res.json(readEnrollmentWindows(req.userId, req.body?.term ? String(req.body.term) : null));
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo Enrollment Dates: ${err.message}` });
@@ -658,6 +660,7 @@ app.post('/api/my-schedule/sync', async (req, res) => {
       type: 'log',
       message: `Horario actualizado: ${schedule.courses.length} materia(s) inscritas`,
     });
+    markSourceSynced(req.userId, 'mySchedule');
     res.json(readSchedule(req.userId, schedule.term));
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el horario: ${err.message}` });
@@ -758,6 +761,7 @@ app.post('/api/grades/sync', async (req, res) => {
       });
     }
     scheduler.emitEvent({ type: 'log', message: `Notas actualizadas: ${courses.length} materia(s)` });
+    markSourceSynced(req.userId, 'grades');
     res.json({
       generatedAt: new Date().toISOString(),
       syncedAt: lastSync('grades', { userId: req.userId }),
@@ -832,6 +836,7 @@ app.post('/api/pensum/sync', async (req, res) => {
       type: 'log',
       message: `Pénsum actualizado: ${saved.groups} grupos, ${saved.pensum} materia(s)`,
     });
+    markSourceSynced(req.userId, 'advisement');
     res.json({ ok: true, ...saved });
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el pénsum: ${err.message}` });
@@ -1080,6 +1085,7 @@ app.post('/api/holds/sync', async (req, res) => {
       type: 'log',
       message: parsed.holds.length ? `${parsed.holds.length} hold(s) activos` : 'Sin holds ni pendientes',
     });
+    markSourceSynced(req.userId, 'holds');
     res.json({
       generatedAt: new Date().toISOString(),
       syncedAt: lastSync('holds', { userId: req.userId }),
