@@ -33,8 +33,8 @@ export function Login() {
         <Link to="/" className="font-display text-lg font-semibold tracking-tight">mikampus</Link>
         <h1 className="font-display mt-8 text-3xl font-semibold tracking-tight">Entrá con tu cuenta PUCMM</h1>
         <p className="text-muted mt-2 text-sm leading-6">
-          Verificamos tu cuenta directamente con micampus. Si entra, queda guardada en un archivo tuyo y no tenés que volver a
-          escribirla hasta que cierres sesión.
+          Verificamos tu cuenta directamente con micampus. Si entra, queda guardada en un archivo tuyo para que mikampus
+          pueda volver al portal por vos sin pedírtela de nuevo.
         </p>
         <form className="mt-6 space-y-4" onSubmit={submit}>
           <label className="block space-y-1.5">

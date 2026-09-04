@@ -5,9 +5,10 @@ import { verifyPortalCredentials, adoptSession, resetSession } from './session.j
 import { readCredential, writeCredential, deleteCredential } from './credentialStore.js';
 
 // El login de mikampus ES el login del portal: no hay cuenta paralela. El
-// estudiante entra con sus credenciales de micampus, mikampus las verifica
-// logueándose a PeopleSoft, las escribe en el archivo de credencial del
-// usuario y emite una sesión propia por cookie. Esa cookie solo vale mientras
+// estudiante entra por el formulario con sus credenciales de micampus, mikampus
+// las verifica logueándose a PeopleSoft, las escribe en el archivo de
+// credencial del usuario (con eso Playwright re-loguea solo después de un
+// reinicio) y emite una sesión propia por cookie. Esa cookie solo vale mientras
 // el archivo tenga credencial: vaciarlo (cerrar sesión, edición manual o un
 // rechazo del portal) saca al usuario en la próxima request.
 
@@ -234,25 +235,18 @@ export function localRequestGuard(req, res, next) {
   next();
 }
 
-// La sesión de mikampus existe mientras el archivo tenga credencial. Con
-// credencial y sin cookie válida (primer arranque, cookie vencida, archivo
-// escrito a mano) se emite una cookie nueva en el momento: abrir la app es
-// entrar. Sin credencial, ninguna cookie vale, aunque esté vigente en la DB.
+// Entrar es siempre el formulario: la cookie solo la emite el login. Pero la
+// cookie vale únicamente mientras el archivo tenga credencial: vaciarlo (cerrar
+// sesión, edición a mano, rechazo del portal) saca en la próxima request aunque
+// la cookie siga vigente en la DB.
 export function authMiddleware(req, res, next) {
   if (PUBLIC_API.has(req.path)) return next();
 
-  const credential = readCredential();
-  if (!credential) return res.status(401).json({ error: 'No hay credencial guardada: iniciá sesión' });
+  if (!readCredential()) return res.status(401).json({ error: 'No hay credencial guardada: iniciá sesión' });
 
-  let token = cookieValue(req.headers.cookie, SESSION_COOKIE);
-  let session = sessionFor(token);
-  if (!session) {
-    adoptIdentity(credential.username);
-    const issued = createSession(LOCAL_USER_ID);
-    token = issued.token;
-    session = { userId: LOCAL_USER_ID, csrfToken: issued.csrfToken };
-    res.set('Set-Cookie', sessionCookieHeader(token, { secure: secureCookies(req) }));
-  }
+  const token = cookieValue(req.headers.cookie, SESSION_COOKIE);
+  const session = sessionFor(token);
+  if (!session) return res.status(401).json({ error: 'Sesión inválida o vencida: iniciá sesión' });
 
   if (!SAFE_METHODS.has(req.method) && req.headers[CSRF_HEADER] !== session.csrfToken) {
     return res.status(403).json({ error: 'Falta o no coincide el token CSRF' });

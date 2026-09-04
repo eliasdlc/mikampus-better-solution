@@ -76,9 +76,9 @@ noteLoginSuccess('ana');
 for (let i = 0; i < 4; i++) noteLoginFailure('ana');
 assert.equal(loginBlocked('ana'), false, 'el éxito reinicia el contador');
 
-// ── Middleware: la sesión existe mientras el archivo tenga credencial. ──
-// Sin credencial ninguna cookie vale; con credencial y sin cookie se emite una
-// en el momento; una mutación sigue exigiendo CSRF.
+// ── Middleware: cookie del login Y credencial en el archivo, las dos. ──
+// Sin credencial ninguna cookie vale; con credencial pero sin cookie tampoco se
+// entra (la cookie solo la emite el formulario); una mutación exige CSRF.
 const fakeRes = () => {
   const res = { statusCode: 200, body: null, headers: {} };
   res.status = (code) => ((res.statusCode = code), res);
@@ -101,15 +101,12 @@ assert.ok(out.passed, '/health es público');
 
 writeCredential({ username: 'ana', password: 'secreta' });
 out = call({ path: '/grades', method: 'GET', headers: {} });
-assert.ok(out.passed, 'con credencial en el archivo, abrir la app es entrar');
-assert.equal(out.req.userId, 1, 'la identidad es la del operador local');
-assert.match(out.res.headers['Set-Cookie'] ?? '', new RegExp(`${SESSION_COOKIE}=`), 'y se emite la cookie en el momento');
-assert.equal(db.prepare('SELECT portal_username FROM users WHERE id = 1').get().portal_username, 'ana', 'el usuario del archivo es el de la instalación');
+assert.equal(out.res.statusCode, 401, 'con credencial pero sin cookie tampoco: la cookie la emite el formulario');
 
 const live = createSession(1);
 out = call({ path: '/grades', method: 'GET', headers: { cookie: `${SESSION_COOKIE}=${live.token}` } });
-assert.ok(out.passed, 'con sesión viva un GET pasa');
-assert.equal(out.res.headers['Set-Cookie'], undefined, 'y no se reemite la cookie');
+assert.ok(out.passed, 'con cookie del login y credencial en el archivo un GET pasa');
+assert.equal(out.req.userId, 1, 'el middleware resuelve el dueño');
 
 deleteCredential();
 out = call({ path: '/grades', method: 'GET', headers: { cookie: `${SESSION_COOKIE}=${live.token}` } });
