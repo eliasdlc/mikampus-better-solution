@@ -100,10 +100,16 @@ async function inventario(frame) {
         if (looksLikeDate(celdas[i])) pares.push({ etiqueta: celdas[i - 1], valor: celdas[i], via: 'grilla' });
       }
     }
-    for (const box of document.querySelectorAll('div[id^="win0div"]')) {
-      const label = strip(box.querySelector('label, .ps-label, .ps_box-label'));
-      const value = strip(box.querySelector('.ps-text, .ps_box-value, span'));
-      if (label && looksLikeDate(value)) pares.push({ etiqueta: label, valor: value, via: 'fluid' });
+    // Se itera por VALOR y se sube a buscar su etiqueta, no al revés. Pedir
+    // `querySelector('.ps-text, .ps_box-value, span')` devolvía el primer
+    // elemento que matcheara CUALQUIERA de los tres en orden del documento, y
+    // ese es el <span class="ps-label"> de la etiqueta: el valor nunca se leía
+    // y la pantalla parecía no tener fechas cuando tenía tres.
+    for (const value of document.querySelectorAll('.ps_box-value, .ps-text')) {
+      const box = value.closest('.ps_box-edit') ?? value.parentElement;
+      const label = box ? strip(box.querySelector('.ps-label')) : '';
+      const texto = strip(value);
+      if (label && looksLikeDate(texto)) pares.push({ etiqueta: label, valor: texto, via: 'fluid' });
     }
 
     return {
