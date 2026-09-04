@@ -1,7 +1,10 @@
 import { db, logSync } from '../db.js';
 import { portalDateToISO } from './enrollmentWindows.js';
-import { termAliases } from '../terms.js';
-import { termEventSchema } from '../shared/schemas.ts';
+import {
+  mapDropDeadlineLabel,
+  numericDateToISO,
+  resolveNumericDateOrder,
+} from '../shared/dropDeadlines.ts';
 import {
   MANAGE_CLASSES_START_URL,
   VIEW_MY_CLASSES_URL,
@@ -10,27 +13,35 @@ import {
   ENROLLMENT_DEADLINES_MODAL_FRAME,
 } from './constants.js';
 
-// Los plazos POR CLASE del calendario académico.
+// Los plazos de baja POR CLASE, de la pantalla "Enrollment Deadlines".
 //
-// Por qué existe este scraper habiendo ya enrollmentWindows.js: la pantalla de
-// Enrollment Dates publica exactamente dos fechas del ciclo (cuándo empieza la
-// sesión y hasta cuándo se inscribe) y nada más. La modificación de
-// inscripción, la inscripción tardía, el retiro y las notas no están ahí, y sin
-// ellas shared/termPhase.ts solo puede advertir. Esas fechas sí viven en la
-// pantalla de plazos por clase, a la que se llega por el enlace "Enrollment
-// Deadlines" de View My Classes (Fluid) o por el icono de deadlines del
-// Student Center clásico.
+// Este módulo se escribió a ciegas suponiendo que esa pantalla traía las etapas
+// del ciclo que a enrollmentWindows.js le faltan (modificación, tardía, retiro,
+// notas). El recon del 2026-09-03 contra la pantalla real desmintió la premisa
+// entera, y por eso lo que hay acá hoy no se parece a lo que se planeó.
 //
-// ESTADO HONESTO DE ESTE MÓDULO: no hay fixture de esa pantalla, así que no
-// está confirmado ni el selector del panel ni qué etiquetas publica PUCMM. Lo
-// que sí es sólido y ya está probado es todo lo que ocurre después de tener el
-// HTML: el extractor es una función pura que corre con evaluate() y se prueba
-// contra HTML armado a mano (scripts/test-enrollment-deadlines.mjs), el mapeo
-// de etiqueta a etapa es una tabla explícita, y nada que no matche se acomoda a
-// la regla más parecida: se reporta. El día que se capture la pantalla real con
-// scripts/make-fixture.mjs quedan por confirmar dos cosas, ambas marcadas abajo
-// con el comentario "PENDIENTE DE FIXTURE": los selectores de navegación y las
-// etiquetas literales de DEADLINE_RULES.
+// Lo que la pantalla publica son TRES fechas de UNA clase:
+//
+//   Drop - Delete Record   hasta acá la baja borra la clase de tu récord
+//   Drop - Retain Record   hasta acá queda con estado 'dropped'
+//   Drop with Penalty      desde acá la baja lleva penalidad
+//
+// Nada de eso es una etapa del ciclo, y forzarlo habría sido caro: mapear
+// "Drop with Penalty" (5 de septiembre en la captura) a retiro-parcial habría
+// cerrado el botón de dar de baja dos meses antes del plazo institucional real
+// (6 de noviembre). Un control apagado por una fecha mal traducida es el peor
+// resultado posible de este scraper.
+//
+// Así que estas fechas NO alimentan term_events. Viven en class_drop_deadlines,
+// por clase y por sesión, y contestan lo único que el calendario institucional
+// no puede: si la doy de baja hoy, ¿queda en mi récord?
+//
+// Se llega por el enlace "Enrollment Deadlines" de View My Classes, uno por
+// clase inscrita. Ese enlace no navega: dispara submitAction y PeopleSoft abre
+// un modal Fluid cuyo contenido vive en un iframe aparte (ptModFrame_N).
+//
+// Confirmado contra fixtures/recon-enrollment-deadlines.html, capturada de una
+// sesión real y saneada.
 
 /**
  * Extrae los pares etiqueta/fecha que muestre la pantalla de plazos.
@@ -109,10 +120,23 @@ export function extractEnrollmentDeadlines() {
   // guardaría los plazos bajo una sesión que no existe.
   const session = pairs.find((pair) => !pair.isDate && /^(session|sesi[oó]n)( name| de clase)?$/i.test(pair.label))?.value ?? null;
 
+  // De qué clase son estos plazos. El modal lo dice en dos lugares: el NRC en
+  // "Full Class Specifications" ("Class 5225") y el código de materia en el
+  // encabezado. Sin el NRC no se puede guardar la fila, porque los plazos son
+  // por clase y dos clases distintas se pisarían.
+  const classSpecs = strip(document.getElementById('DERIVED_SSR_FL_SSR_CLASS_SPECS'));
+  const classNbr = (classSpecs.match(/(\d{3,6})/) ?? [])[1] ?? null;
+  const heading = [...document.querySelectorAll('.ps_box-value, .ps-text, h1, h2')]
+    .map(strip)
+    .find((text) => /^[A-Z]{2,5}\s+[A-Z]{2,5}\d{2,4}\b/.test(text)) ?? null;
+
   return {
     // Mismo truco que enrollmentWindows: el STRM viaja en el estado de la
-    // página, no en una celda visible.
+    // página, no en una celda visible. En este modal no está, así que el ciclo
+    // lo aporta quien llama.
     termCode: (document.documentElement.innerHTML.match(/STRM:"(\d+)"/) ?? [])[1] ?? null,
+    classNbr,
+    classLabel: heading,
     session,
     title: clean(document.title),
     rows: pairs.filter((pair) => pair.isDate).map(({ label, value, shape }) => ({ label, value, shape })),
@@ -122,258 +146,109 @@ export function extractEnrollmentDeadlines() {
   };
 }
 
-// ── Etiqueta del portal a etapa del ciclo ───────────────────────────────────
-
-// Cada regla nombra una etiqueta de la pantalla y la etapa que le corresponde en
-// el vocabulario de shared/termPhase.ts. `edge` dice si la fecha abre o cierra
-// la ventana: casi todos los plazos por clase son un "hasta cuándo", y media
-// ventana conocida es un dato válido en term_events.
-//
-// PENDIENTE DE FIXTURE: las etiquetas salen del juego que PeopleSoft entrega de
-// fábrica para el calendario académico y de su traducción al español del portal.
-// Hasta que se capture la pantalla real de PUCMM no está confirmado cuáles
-// publica ni con qué texto exacto. Por eso el orden importa (lo específico va
-// antes que lo general) y por eso lo que no matcha se reporta como desconocido
-// en vez de caer en la regla más parecida.
-//
-// El texto se compara sin acentos y en minúsculas, así que los patrones se
-// escriben sin acentos a propósito.
-const DEADLINE_RULES = [
-  {
-    pattern: /modificacion de (inscripcion|seleccion)|last date to swap|swap deadline|add ?\/ ?drop|cambio de (asignatura|seccion)/,
-    event: 'modificacion-inscripcion',
-    edge: 'end',
-  },
-  {
-    pattern: /inscripcion tardia|late enroll|enroll with (instructor )?permission|last date to enroll with/,
-    event: 'inscripcion-tardia',
-    edge: 'end',
-  },
-  {
-    pattern: /last date to enroll|last day to enroll|ultima fecha (de|para) inscri|ultimo dia (de|para) inscri|fecha limite de inscripcion/,
-    event: 'inscripcion-regular',
-    edge: 'end',
-  },
-  // El retiro del ciclo completo va antes que el parcial: "withdraw from all
-  // classes" también contiene "withdraw".
-  {
-    pattern: /retiro total|withdraw from all|term withdrawal|withdrawal from (the )?term|cancelacion del (ciclo|semestre|cuatrimestre)/,
-    event: 'retiro-total',
-    edge: 'end',
-  },
-  {
-    pattern: /retiro parcial|last date to drop|last day to drop|drop deadline|dar de baja|baja de (asignatura|materia)/,
-    event: 'retiro-parcial',
-    edge: 'end',
-  },
-  // La etapa de notas empieza cuando el portal las publica, de ahí 'start'.
-  {
-    pattern: /publicacion de notas|entrega de notas|grades? (posted|available|posting)/,
-    event: 'notas',
-    edge: 'start',
-  },
-];
-
-// Etiquetas que sí se entienden y aun así no se guardan, con el porqué. Sin esta
-// lista el reporte gritaría por fechas que ya tenemos en otra tabla o que no
-// pertenecen al vocabulario de etapas.
-const IGNORED_RULES = [
-  { pattern: /session (begins|ends)|begins on|ends on|fecha de (inicio|termino|fin)|inicio de (docencia|clases)/, reason: 'fecha del ciclo, ya vive en la tabla terms' },
-  { pattern: /wait ?list/, reason: 'la lista de espera no es una etapa del ciclo' },
-  { pattern: /refund|reembolso|devolucion/, reason: 'plazo de dinero, no de inscripción' },
-  { pattern: /census|reporting date/, reason: 'fecha administrativa, sin efecto sobre lo que el estudiante puede hacer' },
-];
-
-// Un "withdraw" a secas en una pantalla POR CLASE puede ser el retiro de esa
-// materia (retiro parcial con constancia) o el del ciclo entero, y de cuál sea
-// depende qué control se apaga. Elegir uno sería inventar: se reporta y el
-// estudiante carga la fecha a mano si la necesita.
-const AMBIGUOUS_RULES = [
-  {
-    pattern: /withdraw|retiro|retirar/,
-    reason: 'no dice si es el retiro de esta materia o el del ciclo completo',
-  },
-];
-
-const withoutAccents = (value) =>
-  (value ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+// ── De la pantalla a los plazos de baja de una clase ────────────────────────
 
 /**
- * Qué etapa nombra una etiqueta del portal.
- *
- * Devuelve la etapa y el borde de la ventana cuando la reconoce; 'ignorada' con
- * su motivo cuando la entiende y no corresponde guardarla; 'ambigua' cuando el
- * texto admite dos lecturas incompatibles; y null cuando no la conoce.
- */
-export function mapDeadlineLabel(label) {
-  const text = withoutAccents(label);
-  if (!text) return null;
-  for (const rule of DEADLINE_RULES) {
-    if (rule.pattern.test(text)) return { status: 'mapeada', event: rule.event, edge: rule.edge };
-  }
-  for (const rule of AMBIGUOUS_RULES) {
-    if (rule.pattern.test(text)) return { status: 'ambigua', reason: rule.reason };
-  }
-  for (const rule of IGNORED_RULES) {
-    if (rule.pattern.test(text)) return { status: 'ignorada', reason: rule.reason };
-  }
-  return null;
-}
-
-const SPANISH_MONTHS = new Map(
-  ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'].map(
-    (month, index) => [month, index + 1]
-  )
-);
-
-/**
- * La fecha de un plazo, en ISO.
- *
- * Acepta las tres formas que sí se pueden leer sin adivinar: "September 3,
- * 2026" (la que ya usa Enrollment Dates), "3 de septiembre de 2026" e ISO. La
- * forma numérica corta se rechaza a propósito: 03/09/2026 es marzo o septiembre
- * según la configuración regional del portal, y una fecha equivocada acá apaga
- * un control el día que no debía.
- */
-export function deadlineDateToISO(raw) {
-  const value = (raw ?? '').trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  const spanish = withoutAccents(value).match(/^(\d{1,2})\s+de\s+([a-z]+)\s+de\s+(\d{4})$/);
-  if (spanish) {
-    const month = SPANISH_MONTHS.get(spanish[2]);
-    if (!month) throw new Error(`Mes no reconocido en el plazo: ${value}`);
-    return `${spanish[3]}-${String(month).padStart(2, '0')}-${String(Number(spanish[1])).padStart(2, '0')}`;
-  }
-  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(value)) {
-    throw new Error(`Fecha ambigua, no se sabe si es día/mes o mes/día: ${value}`);
-  }
-  return portalDateToISO(value);
-}
-
-/**
- * Convierte lo extraído en filas de term_events, y en un reporte de lo que no se
- * pudo convertir.
+ * Convierte lo extraído en los plazos de baja de UNA clase, más el reporte de
+ * lo que no se pudo interpretar.
  *
  * No toca la base ni el reloj: se prueba con un objeto en la mano.
  *
- * `aliases` son los identificadores equivalentes del ciclo que se pidió. Si la
- * pantalla declara un STRM que no está entre ellos, la sincronización falla en
- * vez de escribir los plazos de un ciclo bajo el código de otro.
+ * El orden de las fechas numéricas se resuelve con el conjunto entero (ver
+ * shared/dropDeadlines.ts) en vez de asumir una configuración regional. Si las
+ * dos lecturas siguen siendo posibles, las fechas se reportan ilegibles: una
+ * fecha equivocada acá le diría al estudiante que su baja no deja rastro
+ * cuando sí lo deja.
  */
-export function parseEnrollmentDeadlines(raw, { term = null, aliases = [] } = {}) {
-  const termCode = raw.termCode ?? term ?? null;
-  if (!termCode) throw new Error('La pantalla de plazos no indicó el código de ciclo y no se pidió uno');
-  if (raw.termCode && aliases.length && !aliases.includes(raw.termCode)) {
-    throw new Error(`La pantalla de plazos es del ciclo ${raw.termCode}, no del pedido (${term})`);
-  }
-
-  const session = raw.session || 'Regular Academic Session';
-  const merged = new Map();
+export function parseEnrollmentDeadlines(raw, { classNbr = null } = {}) {
+  const rows = raw.rows ?? [];
+  const order = resolveNumericDateOrder(rows.map((row) => row.value));
   const unmapped = [];
-  const ignored = [];
   const unreadable = [];
+  const found = new Map();
 
-  for (const row of raw.rows ?? []) {
-    const mapping = mapDeadlineLabel(row.label);
-    if (!mapping) {
-      unmapped.push({ label: row.label, value: row.value, reason: null });
+  for (const row of rows) {
+    const id = mapDropDeadlineLabel(row.label);
+    if (!id) {
+      unmapped.push({ label: row.label, value: row.value });
       continue;
     }
-    if (mapping.status === 'ambigua') {
-      unmapped.push({ label: row.label, value: row.value, reason: mapping.reason });
+    const iso = /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(row.value.trim())
+      ? order && numericDateToISO(row.value, order)
+      : safeISO(row.value);
+    if (!iso) {
+      unreadable.push({
+        label: row.label,
+        value: row.value,
+        error: order
+          ? 'no se pudo leer la fecha'
+          : 'fecha numérica ambigua: ninguna de las tres resuelve si es día/mes o mes/día',
+      });
       continue;
     }
-    if (mapping.status === 'ignorada') {
-      ignored.push({ label: row.label, value: row.value, reason: mapping.reason });
-      continue;
-    }
-
-    let date;
-    try {
-      date = deadlineDateToISO(row.value);
-    } catch (error) {
-      unreadable.push({ label: row.label, value: row.value, error: error.message });
-      continue;
-    }
-
-    // Dos etiquetas pueden caer en la misma etapa (el retiro "sin penalidad" y
-    // el retiro "con penalidad" son los dos el retiro parcial). Se queda la
-    // ventana más ancha, que es hasta cuándo el portal de verdad deja actuar, y
-    // el source_note conserva las dos etiquetas para que la diferencia no se
-    // pierda.
-    const current = merged.get(mapping.event) ?? { startsOn: null, endsOn: null, labels: [] };
-    if (mapping.edge === 'start') {
-      current.startsOn = current.startsOn === null || date < current.startsOn ? date : current.startsOn;
-    } else {
-      current.endsOn = current.endsOn === null || date > current.endsOn ? date : current.endsOn;
-    }
-    if (!current.labels.includes(row.label)) current.labels.push(row.label);
-    merged.set(mapping.event, current);
+    found.set(id, iso);
   }
 
-  const events = [...merged.entries()].map(([event, window]) =>
-    termEventSchema.parse({
-      event,
-      session,
-      startsOn: window.startsOn,
-      endsOn: window.endsOn,
-      // El calendario académico se publica por día: la pantalla no trae hora y
-      // acá no se inventa una.
-      precision: 'date',
-      source: 'portal',
-      sourceNote: `enrollment-deadlines: ${window.labels.join('; ')}`,
-    })
-  );
+  const deadlines = {
+    classNbr: classNbr ?? raw.classNbr ?? null,
+    session: raw.session || 'Regular Academic Session',
+    deleteBy: found.get('delete-record') ?? null,
+    retainBy: found.get('retain-record') ?? null,
+    penaltyFrom: found.get('with-penalty') ?? null,
+  };
 
-  return { termCode, session, events, unmapped, ignored, unreadable };
+  return { deadlines, unmapped, unreadable, title: raw.title ?? null };
 }
 
-// El portal no pisa una corrección hecha a mano: el WHERE del upsert protege las
-// filas source='usuario', que es la misma regla que readTermEvents aplica al
-// leer. Sin él, un scrape borraría en silencio la fecha que el estudiante
-// corrigió en secretaría.
-const upsertDeadline = db.prepare(`
-  INSERT INTO term_events (user_id, term_code, session, event, starts_on, ends_on, precision, source, source_note, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, 'date', 'portal', ?, datetime('now'))
-  ON CONFLICT(user_id, term_code, session, event) DO UPDATE SET
-    starts_on = excluded.starts_on,
-    ends_on = excluded.ends_on,
-    precision = 'date',
-    source = 'portal',
-    source_note = excluded.source_note,
+// Las formas con mes escrito siguen aceptándose: la pantalla real usa la
+// numérica, pero el portal cambia de idioma según la sesión y una fecha con el
+// mes en letras nunca es ambigua.
+function safeISO(value) {
+  try {
+    return portalDateToISO(value);
+  } catch {
+    return null;
+  }
+}
+
+const upsertDropDeadlines = db.prepare(`
+  INSERT INTO class_drop_deadlines
+    (user_id, term_code, class_nbr, session, delete_by, retain_by, penalty_from, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  ON CONFLICT(user_id, term_code, class_nbr) DO UPDATE SET
+    session = excluded.session,
+    delete_by = excluded.delete_by,
+    retain_by = excluded.retain_by,
+    penalty_from = excluded.penalty_from,
     updated_at = datetime('now')
-  WHERE term_events.source <> 'usuario'
 `);
 
 /**
- * Guarda los plazos leídos del portal. Devuelve cuántas filas se escribieron de
- * verdad, que puede ser menos que los eventos recibidos: las que el estudiante
- * había corregido a mano no se tocan, y contarlas sería reportar una escritura
- * que no ocurrió.
+ * Guarda los plazos de una clase. Sin NRC no se guarda: la fila se identifica
+ * por la clase, y una sin identificar se pisaría con la siguiente.
  */
-export function saveEnrollmentDeadlines(userId, termCode, events) {
-  let written = 0;
-  db.exec('BEGIN');
-  try {
-    for (const event of events) {
-      const result = upsertDeadline.run(
-        userId,
-        termCode,
-        event.session,
-        event.event,
-        event.startsOn,
-        event.endsOn,
-        event.sourceNote
-      );
-      written += Number(result.changes);
-    }
-    db.exec('COMMIT');
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
-  }
-  logSync({ userId, kind: 'enrollmentDeadlines', term: termCode, status: 'ok', rows: written });
-  return written;
+export function saveClassDropDeadlines(userId, termCode, deadlines) {
+  if (!deadlines.classNbr) throw new Error('Los plazos de baja necesitan el NRC de la clase');
+  upsertDropDeadlines.run(
+    userId,
+    termCode,
+    deadlines.classNbr,
+    deadlines.session,
+    deadlines.deleteBy,
+    deadlines.retainBy,
+    deadlines.penaltyFrom
+  );
+  return deadlines;
+}
+
+export function readClassDropDeadlines(userId, termCode) {
+  return db
+    .prepare(
+      `SELECT class_nbr AS classNbr, session, delete_by AS deleteBy, retain_by AS retainBy,
+              penalty_from AS penaltyFrom, updated_at AS updatedAt
+       FROM class_drop_deadlines WHERE user_id = ? AND term_code = ? ORDER BY class_nbr`
+    )
+    .all(userId, termCode);
 }
 
 // El iframe del modal aparece después del submitAction y su nombre lleva el
@@ -418,7 +293,10 @@ async function findFrame(page, selector, timeout = 12_000) {
  * Classes no está implementado, porque no hay fixture con el que confirmar el
  * control.
  */
-export async function syncEnrollmentDeadlines(page, { userId, term = null, onStep = () => {} }) {
+export async function syncEnrollmentDeadlines(page, { userId, term, onStep = () => {} }) {
+  if (!term) throw new Error('Los plazos de baja son por ciclo: hace falta el STRM');
+  const leidos = [];
+  const problemas = [];
   try {
     onStep('abriendo View My Classes…');
     // El START del tile crea el navigation collection: abrir la hoja Fluid
@@ -428,52 +306,69 @@ export async function syncEnrollmentDeadlines(page, { userId, term = null, onSte
     await page.goto(VIEW_MY_CLASSES_URL, { waitUntil: 'commit' });
     await page.waitForTimeout(6_000);
 
-    let frame = await findFrame(page, ENROLLMENT_DEADLINES_LINK);
-    if (!frame) {
+    const listado = await findFrame(page, ENROLLMENT_DEADLINES_LINK);
+    if (!listado) {
       throw new Error(
         'View My Classes no mostró el enlace Enrollment Deadlines: sin materias inscritas en el ciclo, el portal no publica plazos por clase'
       );
     }
-    onStep('abriendo Enrollment Deadlines…');
-    await frame.locator(ENROLLMENT_DEADLINES_LINK).first().click();
+    // Hay un enlace por clase inscrita, no uno por ciclo. Confirmado con el
+    // recon: cuatro materias, cuatro enlaces.
+    const total = await listado.locator(ENROLLMENT_DEADLINES_LINK).count();
 
-    // El enlace dispara submitAction y PeopleSoft inserta un modal Fluid cuyo
-    // contenido vive en un IFRAME aparte (ptModFrame_N). Confirmado con el
-    // recon del 2026-09-03: el frame del enlace no cambia, así que buscar el
-    // panel ahí adentro leía siempre la pantalla anterior.
-    //
-    // Se espera al iframe y no a un timeout: es la única señal de que abrió.
-    const modal = await waitForModalFrame(page, 25_000);
-    if (!modal) {
-      throw new Error('El enlace de plazos no abrió su modal: PeopleSoft no insertó el iframe del panel');
-    }
-    // El iframe existe antes que su contenido, que llega por AJAX.
-    await modal.waitForSelector(ENROLLMENT_DEADLINES_PANEL, { timeout: 20_000 }).catch(() => {});
-    frame = modal;
+    for (let i = 0; i < total; i += 1) {
+      onStep(`leyendo los plazos de la clase ${i + 1} de ${total}…`);
+      // Se recarga la lista antes de cada clase en vez de cerrar el modal: el
+      // botón de cierre es otro selector sin confirmar, y una recarga es lenta
+      // pero no puede dejar la página en un estado a medias.
+      if (i > 0) {
+        await page.goto(VIEW_MY_CLASSES_URL, { waitUntil: 'commit' });
+        await page.waitForTimeout(6_000);
+      }
+      const frame = await findFrame(page, ENROLLMENT_DEADLINES_LINK);
+      if (!frame) break;
+      await frame.locator(ENROLLMENT_DEADLINES_LINK).nth(i).click();
 
-    onStep('leyendo los plazos publicados…');
-    const raw = await frame.evaluate(extractEnrollmentDeadlines);
-    if (!raw.rows.length) {
-      throw new Error('La pantalla de plazos abrió pero no mostró ninguna fecha legible: hace falta capturar el fixture con scripts/make-fixture.mjs');
+      // El enlace dispara submitAction y PeopleSoft inserta un modal Fluid cuyo
+      // contenido vive en un IFRAME aparte (ptModFrame_N). El frame del enlace
+      // no cambia, así que buscar el panel ahí adentro leía la pantalla vieja.
+      const modal = await waitForModalFrame(page, 25_000);
+      if (!modal) {
+        problemas.push({ index: i, error: 'el modal de plazos no abrió' });
+        continue;
+      }
+      // El iframe existe antes que su contenido, que llega por AJAX.
+      await modal.waitForSelector(ENROLLMENT_DEADLINES_PANEL, { timeout: 20_000 }).catch(() => {});
+      await page.waitForTimeout(1_500);
+
+      const raw = await modal.evaluate(extractEnrollmentDeadlines);
+      const parsed = parseEnrollmentDeadlines(raw);
+      for (const row of parsed.unmapped) {
+        console.warn(`Plazo sin mapear: "${row.label}" = ${row.value}`);
+      }
+      for (const row of parsed.unreadable) {
+        console.warn(`Plazo ilegible: "${row.label}" = ${row.value} (${row.error})`);
+      }
+      if (!parsed.deadlines.classNbr) {
+        problemas.push({ index: i, error: 'el modal no dijo de qué clase eran los plazos' });
+        continue;
+      }
+      const alguna = parsed.deadlines.deleteBy || parsed.deadlines.retainBy || parsed.deadlines.penaltyFrom;
+      if (!alguna) {
+        problemas.push({ index: i, classNbr: parsed.deadlines.classNbr, error: 'ninguna fecha legible' });
+        continue;
+      }
+      saveClassDropDeadlines(userId, term, parsed.deadlines);
+      leidos.push({ ...parsed.deadlines, classLabel: raw.classLabel ?? null });
     }
 
-    const parsed = parseEnrollmentDeadlines(raw, { term, aliases: term ? termAliases(term) : [] });
-    for (const row of parsed.unmapped) {
-      console.warn(`Plazo sin mapear: "${row.label}" = ${row.value}${row.reason ? ` (${row.reason})` : ''}`);
-    }
-    for (const row of parsed.unreadable) {
-      console.warn(`Plazo ilegible: "${row.label}" = ${row.value} (${row.error})`);
-    }
-    if (!parsed.events.length) {
+    if (!leidos.length) {
       throw new Error(
-        `La pantalla de plazos publicó ${raw.rows.length} fecha(s) y ninguna etiqueta corresponde a una etapa conocida: ${raw.rows
-          .map((row) => row.label)
-          .join(' | ')}`
+        `Ninguna de las ${total} clase(s) publicó plazos legibles${problemas.length ? `: ${problemas[0].error}` : ''}`
       );
     }
-
-    saveEnrollmentDeadlines(userId, parsed.termCode, parsed.events);
-    return parsed;
+    logSync({ userId, kind: 'enrollmentDeadlines', term, status: 'ok', rows: leidos.length });
+    return { term, classes: leidos, problemas };
   } catch (error) {
     logSync({ userId, kind: 'enrollmentDeadlines', term, status: 'error', detail: error.message });
     throw error;

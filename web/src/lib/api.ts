@@ -190,6 +190,40 @@ export async function syncMySchedule(termLabel?: string): Promise<ScheduleRespon
   );
 }
 
+// ── Plazos de baja por clase ────────────────────────────────────────────────
+// Tres fechas por NRC que contestan lo único que el calendario institucional no
+// puede: si das de baja HOY, ¿queda en tu récord? Salen de la pantalla
+// "Enrollment Deadlines" del portal, que las publica por clase y por sesión.
+
+const dropDeadlinesSchema = z.object({
+  term: z.string().nullable(),
+  classes: z.array(
+    z.object({
+      classNbr: z.string(),
+      session: z.string(),
+      deleteBy: z.string().nullable(),
+      retainBy: z.string().nullable(),
+      penaltyFrom: z.string().nullable(),
+      updatedAt: z.string().nullable(),
+    })
+  ),
+  syncedAt: z.string().nullable(),
+});
+export type DropDeadlines = z.infer<typeof dropDeadlinesSchema>;
+
+export async function fetchDropDeadlines(term?: string): Promise<DropDeadlines> {
+  const qs = term ? `?term=${encodeURIComponent(term)}` : '';
+  return dropDeadlinesSchema.parse(await getJSON(`/api/my-schedule/drop-deadlines${qs}`));
+}
+
+// Cuesta una navegación por clase inscrita, así que nunca es automático: lo
+// pide la persona y el banner dice lo que tarda.
+export async function syncDropDeadlines(term?: string): Promise<DropDeadlines> {
+  return dropDeadlinesSchema.parse(
+    await send('/api/my-schedule/drop-deadlines/sync', 'POST', term ? { term } : undefined)
+  );
+}
+
 export async function dropScheduleCourse(input: {
   term: string;
   courseCode: string;

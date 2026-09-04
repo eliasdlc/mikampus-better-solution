@@ -4,6 +4,7 @@ import express from 'express';
 import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
 import { readCart, removeFromCart, saveCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
+import { readClassDropDeadlines, syncEnrollmentDeadlines } from './peoplesoft/enrollmentDeadlines.js';
 import { lectureSections } from './shared/sections.ts';
 import { readCatalog, seatHistory, syncCatalogCourse, applyPlanFacts, readHomeCampus, setHomeCampus } from './peoplesoft/catalog.js';
 import { readTermEvents, saveTermEvents, termPhase } from './termEvents.js';
@@ -11,7 +12,7 @@ import { readMesa, mesaPlan } from './mesa.js';
 import { solveCombinations, NO_CONSTRAINTS } from './shared/solver.ts';
 import { portalCatalogNbr } from './shared/courseCode.ts';
 import { readSchedule, syncSchedule, latestScheduledTerm, removeEnrollmentCourse } from './peoplesoft/mySchedule.js';
-import { readTerms, reconcileTerms, planningTerm } from './terms.js';
+import { readTerms, reconcileTerms, planningTerm, currentTermCode } from './terms.js';
 import { fetchGrades, saveGrades, readGrades, termSummaries, diffPublishedGrades, readOfficialTotals } from './peoplesoft/grades.js';
 import {
   fetchAdvisement,
@@ -665,6 +666,47 @@ app.post('/api/my-schedule/sync', async (req, res) => {
   } catch (err) {
     scheduler.emitEvent({ type: 'log', message: `Error leyendo el horario: ${err.message}` });
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Los plazos de baja por clase, desde cache. Son tres fechas por NRC que dicen
+// qué le pasa a tu récord si das de baja HOY: lo único que el calendario
+// institucional no puede contestar, porque es por clase y por sesión.
+app.get('/api/my-schedule/drop-deadlines', (req, res) => {
+  const term = req.query.term ? String(req.query.term) : currentTermCode();
+  if (!term) return res.json({ term: null, classes: [], syncedAt: null });
+  const classes = readClassDropDeadlines(req.userId, term);
+  res.json({
+    term,
+    classes,
+    // La antigüedad viaja con el dato: son plazos que la universidad puede
+    // corregir, y el propio portal lo advierte al pie de la pantalla.
+    syncedAt: lastSync('enrollmentDeadlines', { userId: req.userId, term }),
+  });
+});
+
+// Leerlos cuesta una navegación por clase inscrita, así que es explícito y
+// nunca automático: no entra al orquestador ni al tick. Con cuatro materias son
+// unos cuarenta segundos de Playwright.
+app.post('/api/my-schedule/drop-deadlines/sync', async (req, res) => {
+  const term = req.body?.term ? String(req.body.term) : currentTermCode();
+  if (!term) return res.status(400).json({ error: 'No hay un ciclo en curso del que leer plazos' });
+  try {
+    const result = await withPage(req.userId, (page) =>
+      syncEnrollmentDeadlines(page, {
+        userId: req.userId,
+        term,
+        onStep: (message) => scheduler.emitEvent({ userId: req.userId, type: 'log', message }),
+      })
+    );
+    scheduler.emitEvent({
+      userId: req.userId,
+      type: 'log',
+      message: `Plazos de baja actualizados: ${result.classes.length} clase(s)`,
+    });
+    res.json({ term, classes: readClassDropDeadlines(req.userId, term), syncedAt: lastSync('enrollmentDeadlines', { userId: req.userId, term }) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

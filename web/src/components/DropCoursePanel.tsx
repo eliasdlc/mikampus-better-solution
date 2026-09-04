@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { dropScheduleCourse } from '../lib/api.ts';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { dropScheduleCourse, fetchDropDeadlines, syncDropDeadlines } from '../lib/api.ts';
+import { dropConsequence, type ClassDropDeadlines } from '../../../src/shared/dropDeadlines.ts';
+import { todayInSantoDomingo } from '../../../src/shared/academicCalendar.ts';
+import { ago } from '../lib/time.ts';
 import type { ScheduleCourse } from '../../../src/shared/schemas.ts';
 import { CourseChip } from './CourseChip.tsx';
 import { LiveOpBanner } from './LiveOpBanner.tsx';
@@ -16,6 +19,30 @@ import { LiveOpBanner } from './LiveOpBanner.tsx';
 // Extraído acá para que las dos pantallas usen el MISMO flujo, con el mismo
 // contrato de confirmación: escribir el código exacto. Una segunda copia de
 // una acción irreversible es una copia que se va a quedar atrás.
+
+// Qué le pasa a tu récord si la das de baja hoy.
+//
+// El calendario institucional dice hasta cuándo se puede dar de baja; esto dice
+// qué pasa si lo hacés. Son cosas distintas y la segunda es la que cambia la
+// decisión: entre el 25 de agosto y el 4 de septiembre la materia sigue
+// desapareciendo o no de tu expediente según el día.
+const NIVEL = {
+  delete: { clase: 'text-open', etiqueta: 'no queda rastro' },
+  retain: { clase: 'text-waitlist', etiqueta: 'queda como "dropped"' },
+  penalty: { clase: 'text-closed', etiqueta: 'con penalidad' },
+  desconocida: { clase: 'text-muted', etiqueta: 'sin plazos leídos' },
+} as const;
+
+function Consecuencia({ deadlines, hoy }: { deadlines: ClassDropDeadlines | null; hoy: string }) {
+  if (!deadlines) return null;
+  const resultado = dropConsequence(deadlines, hoy);
+  const { clase, etiqueta } = NIVEL[resultado.level];
+  return (
+    <span className={`text-[11px] ${clase}`} title={resultado.message}>
+      {etiqueta}
+    </span>
+  );
+}
 
 export function DropCoursePanel({
   courses,
@@ -56,6 +83,20 @@ export function DropCoursePanel({
     },
   });
 
+  // Los plazos por clase, desde cache. Leerlos del portal cuesta una navegación
+  // por materia, así que nunca se hace solo: se pide con el botón de abajo.
+  const deadlines = useQuery({
+    queryKey: ['drop-deadlines', termCode],
+    queryFn: () => fetchDropDeadlines(termCode ?? undefined),
+    enabled: Boolean(termCode),
+  });
+  const leer = useMutation({
+    mutationFn: () => syncDropDeadlines(termCode ?? undefined),
+    onSuccess: (data) => qc.setQueryData(['drop-deadlines', termCode], data),
+  });
+  const porClase = new Map((deadlines.data?.classes ?? []).map((fila) => [fila.classNbr, fila]));
+  const hoy = todayInSantoDomingo();
+
   const enrolled = courses.filter((course) => course.status === 'enrolled');
   if (!termCode || enrolled.length === 0) return null;
 
@@ -71,12 +112,20 @@ export function DropCoursePanel({
         <ul className="divide-line divide-y">
           {enrolled.map((course) => (
             <li key={course.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-              <CourseChip
-                code={course.code}
-                title={course.title}
-                classNbr={course.sections[0]?.classNbr ?? null}
-                size="sm"
-              />
+              <span className="min-w-0">
+                <CourseChip
+                  code={course.code}
+                  title={course.title}
+                  classNbr={course.sections[0]?.classNbr ?? null}
+                  size="sm"
+                />
+                <span className="mt-0.5 block">
+                  <Consecuencia
+                    deadlines={porClase.get(course.sections[0]?.classNbr ?? '') ?? null}
+                    hoy={hoy}
+                  />
+                </span>
+              </span>
               <button
                 type="button"
                 onClick={() => {
@@ -91,6 +140,24 @@ export function DropCoursePanel({
             </li>
           ))}
         </ul>
+        {/* Leer los plazos cuesta una navegación por materia inscrita, así que
+            es explícito: el portal decide cuánto tarda y no vale gastarlo solo. */}
+        <div className="border-line flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2">
+          <span className="text-muted text-xs">
+            {deadlines.data?.syncedAt
+              ? `plazos de baja · ${ago(deadlines.data.syncedAt)}`
+              : 'todavía no leíste los plazos de baja de estas clases'}
+          </span>
+          <button
+            type="button"
+            onClick={() => leer.mutate()}
+            disabled={leer.isPending}
+            className="text-accent text-xs font-medium underline underline-offset-2 disabled:opacity-50"
+          >
+            {leer.isPending ? 'leyendo del portal…' : 'leer plazos'}
+          </button>
+        </div>
+        {leer.error && <p className="text-closed px-4 pb-2 text-xs">{(leer.error as Error).message}</p>}
       </section>
 
       {target && (

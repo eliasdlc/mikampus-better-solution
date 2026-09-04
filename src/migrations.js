@@ -240,6 +240,13 @@ export const MIGRATIONS = [
     minCompatibleVersion: 1,
     up: createTermEvents,
   },
+  {
+    version: 13,
+    name: 'class-drop-deadlines',
+    // Misma forma que la anterior: una tabla nueva que nace vacía.
+    minCompatibleVersion: 1,
+    up: createClassDropDeadlines,
+  },
 ];
 
 
@@ -333,6 +340,36 @@ export function backfillSectionCampus(db) {
  * cifrada. Proyectar esa ventana a term_events es trabajo de la capa que lee
  * el portal, no de una migración que no puede saber si la fecha sigue vigente.
  */
+// Los plazos de baja POR CLASE que publica "Enrollment Deadlines".
+//
+// Tabla propia y no term_events, y la distinción es de fondo: term_events son
+// las ETAPAS del ciclo, que valen para todo el mundo y deciden qué controles se
+// apagan. Esto es por clase y por sesión, y solo dice qué le pasa a TU récord si
+// das de baja esa clase. Meterlo en term_events habría hecho que "Drop with
+// Penalty" del 5 de septiembre cerrara el retiro parcial que vence el 6 de
+// noviembre.
+export function createClassDropDeadlines(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS class_drop_deadlines (
+      user_id      INTEGER NOT NULL DEFAULT 1,
+      term_code    TEXT NOT NULL,
+      class_nbr    TEXT NOT NULL,                 -- el NRC: los plazos son de la clase, no de la materia
+      session      TEXT NOT NULL DEFAULT 'Regular Academic Session',
+      delete_by    TEXT,                          -- ISO. Hasta acá la baja BORRA la clase del récord
+      retain_by    TEXT,                          -- ISO. Hasta acá queda con estado 'dropped'
+      penalty_from TEXT,                          -- ISO. Desde acá la baja lleva penalidad
+      updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, term_code, class_nbr),
+      -- Una fila sin ninguna de las tres fechas no dice nada: el plazo
+      -- desconocido se representa con la ausencia de fila.
+      CHECK (delete_by IS NOT NULL OR retain_by IS NOT NULL OR penalty_from IS NOT NULL)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_class_drop_deadlines_term
+      ON class_drop_deadlines(user_id, term_code);
+  `);
+}
+
 export function createTermEvents(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS term_events (
