@@ -15,7 +15,7 @@ import {
 } from '../lib/api.ts';
 import { toBlocks, type Block } from '../lib/grid.ts';
 import { agendaFor, nextClass, type NextClass } from '../../../src/shared/agenda.ts';
-import { DAY_LABELS, toMinutes } from '../../../src/shared/meetings.ts';
+import { DAY_LABELS, formatRange12, formatTime12, toMinutes } from '../../../src/shared/meetings.ts';
 import type { EnrollmentWindow, TermInfo } from '../../../src/shared/schemas.ts';
 import { courseColor } from '../lib/color.ts';
 import { ago } from '../lib/time.ts';
@@ -252,7 +252,7 @@ function Hero({
               es lo que se busca corriendo entre dos clases, y estaba enterrada
               al final de una tirada monoespaciada junto al NRC. */}
           <p className="tabular mt-1.5 flex flex-wrap items-baseline gap-x-2 font-mono text-sm">
-            <span>{block.start}–{block.end}</span>
+            <span>{formatRange12(block.start, block.end)}</span>
             <span className="text-muted" aria-hidden>·</span>
             <span className="font-sans text-base font-medium">{block.room ?? 'Aula por definir'}</span>
           </p>
@@ -290,9 +290,9 @@ function Timeline({ blocks, now }: { blocks: Block[]; now: Date }) {
         const enCurso = !pasada && toMinutes(block.start) <= minutosAhora;
         return (
           <li key={block.id} className={`flex items-center gap-3 px-4 py-3 ${pasada ? 'opacity-45' : ''}`}>
-            <div className="tabular w-14 shrink-0 font-mono text-xs">
-              <div>{block.start}</div>
-              <div className="text-muted">{block.end}</div>
+            <div className="tabular w-20 shrink-0 font-mono text-xs whitespace-nowrap">
+              <div>{formatTime12(block.start)}</div>
+              <div className="text-muted">{formatTime12(block.end)}</div>
             </div>
             <span
               className="h-9 w-1 shrink-0 rounded-full"

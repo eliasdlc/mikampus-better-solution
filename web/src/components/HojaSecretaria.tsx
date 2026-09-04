@@ -1,4 +1,4 @@
-import { DAY_LABELS, type DayCode } from '../../../src/shared/meetings.ts';
+import { DAY_LABELS, formatRange12, type DayCode } from '../../../src/shared/meetings.ts';
 import { campusLabel } from '../../../src/shared/campus.ts';
 import type { CatalogSection, MesaResponse } from '../../../src/shared/schemas.ts';
 
@@ -28,7 +28,7 @@ function horario(section: CatalogSection): string {
     .filter((meeting) => meeting.start && meeting.end)
     .map((meeting) => {
       const dias = meeting.days.map((day) => DAY_LABELS[day as DayCode] ?? day).join(' y ');
-      return `${dias} ${meeting.start} a ${meeting.end}`;
+      return `${dias} ${formatRange12(meeting.start, meeting.end)}`;
     });
   // Sin horario publicado no se inventa uno: TBA es lo que dice el portal.
   return partes.length ? partes.join(' · ') : 'sin horario publicado';

@@ -18,6 +18,7 @@ import {
   removeCartRow,
 } from '../lib/api.ts';
 import type { CartRow, CatalogCourse, TermInfo } from '../../../src/shared/schemas.ts';
+import { formatRange12 } from '../../../src/shared/meetings.ts';
 import type { CapabilityState } from '../../../src/shared/termPhase.ts';
 import { sectionToBlocks, hasCollisions, type Block } from '../lib/grid.ts';
 import { ClassDetail } from '../components/ClassDetail.tsx';
@@ -579,7 +580,7 @@ export function Inscripcion() {
                         <CourseChip code={row.courseCode ?? row.classLabel} title={row.title} classNbr={row.classNbr} size="sm" />
                         <span className="flex items-center gap-3">
                           <span className="text-muted tabular font-mono text-xs">
-                            {row.meetings.map((m) => (m.start ? `${m.days.join('')} ${m.start}–${m.end}` : 'TBA')).join(' · ') ||
+                            {row.meetings.map((m) => (m.start ? `${m.days.join('')} ${formatRange12(m.start, m.end)}` : 'TBA')).join(' · ') ||
                               'Sin horario'}
                           </span>
                           {row.status && <SeatBadge status={row.status} />}

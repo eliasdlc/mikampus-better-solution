@@ -11,7 +11,7 @@ import { TermBadge } from '../components/TermBadge.tsx';
 import { DropCoursePanel } from '../components/DropCoursePanel.tsx';
 import { toBlocks } from '../lib/grid.ts';
 import { downloadICS } from '../lib/ics.ts';
-import { DAY_LABELS, WEEK_DAYS, toMinutes, type DayCode } from '../../../src/shared/meetings.ts';
+import { DAY_LABELS, WEEK_DAYS, formatTime12, toMinutes, type DayCode } from '../../../src/shared/meetings.ts';
 import type { ScheduleResponse } from '../../../src/shared/schemas.ts';
 
 // Mi horario (plan §5.5): el WeeklyGrid a pantalla completa, con toggle a vista
@@ -45,9 +45,9 @@ function Agenda({ data, onSelect }: { data: ScheduleResponse; onSelect: (block: 
                     onClick={() => onSelect(b)}
                     className="hover:bg-surface-2 focus-visible:outline-accent flex w-full min-h-11 items-start gap-3 px-3 py-2.5 text-left transition-colors duration-100 focus-visible:outline-2 focus-visible:-outline-offset-2"
                   >
-                    <span className="tabular w-14 shrink-0 pt-0.5 font-mono text-xs">
-                      <span className="block">{b.start}</span>
-                      <span className="text-muted block">{b.end}</span>
+                    <span className="tabular w-20 shrink-0 pt-0.5 font-mono text-xs whitespace-nowrap">
+                      <span className="block">{formatTime12(b.start)}</span>
+                      <span className="text-muted block">{formatTime12(b.end)}</span>
                     </span>
                     <span
                       className="mt-0.5 h-10 w-1 shrink-0 rounded-full"

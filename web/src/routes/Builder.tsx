@@ -21,7 +21,7 @@ import {
   type Combination,
   type Weights,
 } from '../../../src/shared/solver.ts';
-import { toMinutes } from '../../../src/shared/meetings.ts';
+import { formatRange12, toMinutes } from '../../../src/shared/meetings.ts';
 import { sectionToBlocks, type Block } from '../lib/grid.ts';
 import { lectureSections, practiceSections, seatsAreFresh } from '../../../src/shared/sections.ts';
 import { courseColor } from '../lib/color.ts';
@@ -648,7 +648,7 @@ function CandidateCard({
                 <span className="flex items-center gap-2">
                   <span className="tabular font-mono">{section.classNbr}</span>
                   <span className="text-muted tabular font-mono">
-                    {section.meetings.map((m) => `${m.days.join('')} ${m.start ?? 'TBA'}${m.end ? `–${m.end}` : ''}`).join(' · ') || 'TBA'}
+                    {section.meetings.map((m) => `${m.days.join('')} ${formatRange12(m.start, m.end)}`).join(' · ') || 'TBA'}
                   </span>
                 </span>
                 <span className="flex items-center gap-2">
@@ -689,7 +689,7 @@ function CandidateCard({
                     <span className="flex items-center gap-2">
                       <span className="tabular font-mono">{section.classNbr}</span>
                       <span className="text-muted tabular font-mono">
-                        {section.meetings.map((m) => `${m.days.join('')} ${m.start ?? 'TBA'}${m.end ? `–${m.end}` : ''}`).join(' · ') || 'TBA'}
+                        {section.meetings.map((m) => `${m.days.join('')} ${formatRange12(m.start, m.end)}`).join(' · ') || 'TBA'}
                       </span>
                     </span>
                     <span className="flex items-center gap-2">

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { MapPin, User, X } from 'lucide-react';
 import type { Block } from '../lib/grid.ts';
-import { DAY_LABELS } from '../../../src/shared/meetings.ts';
+import { DAY_LABELS, formatRange12 } from '../../../src/shared/meetings.ts';
 import { courseColor } from '../lib/color.ts';
 
 // El detalle de una clase del horario (P4 §5).
@@ -70,7 +70,7 @@ export function ClassDetail({
         <dl className="space-y-2.5 px-4 pb-4 text-sm">
           <Row label="Cuándo">
             <span className="tabular font-mono">
-              {DAY_LABELS[block.day]} · {block.start}–{block.end}
+              {DAY_LABELS[block.day]} · {formatRange12(block.start, block.end)}
             </span>
           </Row>
 

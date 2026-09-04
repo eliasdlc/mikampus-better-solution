@@ -32,6 +32,7 @@ import type {
 } from '../../../src/shared/schemas.ts';
 import { sectionToBlocks } from '../lib/grid.ts';
 import { lectureSections, practiceSections } from '../../../src/shared/sections.ts';
+import { formatRange12 } from '../../../src/shared/meetings.ts';
 import { downloadICS } from '../lib/ics.ts';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
 import { CourseChip } from '../components/CourseChip.tsx';
@@ -41,7 +42,7 @@ import { LiveOpBanner } from '../components/LiveOpBanner.tsx';
 
 const meetingSummary = (section: { meetings: Meeting[] }) =>
   section.meetings
-    .map((m) => (m.start ? `${m.days.join('')} ${m.start}–${m.end}` : 'TBA'))
+    .map((m) => (m.start ? `${m.days.join('')} ${formatRange12(m.start, m.end)}` : 'TBA'))
     .join(' · ') || 'Sin horario';
 
 // "Pendientes de tu pénsum" (plan §5.3): lo que te falta y se está ofertando

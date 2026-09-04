@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { DAY_LABELS, type DayCode } from '../../../src/shared/meetings.ts';
+import { DAY_LABELS, formatRange12, formatTime12, type DayCode } from '../../../src/shared/meetings.ts';
 import { hueColor } from '../lib/color.ts';
 import {
   FILAS_POR_HORA,
@@ -51,7 +51,9 @@ const FILA = '1.75em';
 // La tira de una banda plegada. Más baja que una hora real para que se lea como
 // lo que es: un salto, no tiempo.
 const FILA_PLEGADA = '2.9em';
-const GUTTER = '3.25rem';
+// La canaleta de horas. Con AM/PM la etiqueta más ancha es "12 a.m.", que a
+// 10px mono no entra en las 3.25rem que bastaban para "12:00".
+const GUTTER = '4.25rem';
 
 export type BloqueDetalle = PlacedBlock & { hue: number };
 
@@ -85,7 +87,7 @@ function Bloque({
   const choca = block.conflictsWith.length > 0;
   const etiqueta = [
     `${block.code} ${block.title}`,
-    `${block.start} a ${block.end}`,
+    formatRange12(block.start, block.end),
     block.room ?? 'aula no publicada',
     block.instructor ?? 'profesor no asignado',
     choca ? `choca con ${block.conflictsWith.join(', ')}` : '',
@@ -303,8 +305,13 @@ export function WeeklyGrid({
             </div>
           ))}
 
-          {/* Canaleta y hairlines. La etiqueta se monta SOBRE la línea que abre
-              su banda: centrada en la banda, "10:00" se leía a las 10:30. */}
+          {/* Canaleta y hairlines. La etiqueta vive DENTRO de su celda, pegada
+              a la línea que abre la hora. Antes se subía media altura con un
+              translate para montarse sobre la línea, salvo la primera, que se
+              dejaba sin subir para que la cabecera no la recortara: dos
+              tratamientos distintos en la misma columna, y la primera hora
+              alineaba distinto que las demás. Una matriz de celdas iguales no
+              tiene ese problema y no necesita excepciones. */}
           {bands.map((band, i) =>
             band.kind === 'plegada' ? (
               <Plegada
@@ -317,15 +324,10 @@ export function WeeklyGrid({
             ) : (
               <div key={`h${band.hour}`} className="contents">
                 <div
-                  className="bg-surface border-line/60 text-muted tabular sticky left-0 z-20 flex items-start justify-end border-t pr-2 text-right font-mono text-[10px]"
+                  className="bg-surface border-line/60 text-muted tabular sticky left-0 z-20 flex items-start justify-end border-t pt-0.5 pr-2 text-right font-mono text-[10px] whitespace-nowrap"
                   style={{ gridColumn: 1, gridRow: `${filaDe(i)} / span ${FILAS_POR_HORA}` }}
                 >
-                  {/* La etiqueta se monta sobre la línea que abre su banda,
-                      salvo la primera: ahí la línea ES el borde de la grilla y
-                      subirla la mete debajo de la cabecera, que la recorta. */}
-                  <span className={i === 0 ? '' : '-translate-y-1/2'}>
-                    {String(band.hour).padStart(2, '0')}:00
-                  </span>
+                  {formatTime12(`${String(band.hour).padStart(2, '0')}:00`)}
                 </div>
                 <div
                   className="border-line/60 pointer-events-none border-t"

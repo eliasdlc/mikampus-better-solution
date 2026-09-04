@@ -19,6 +19,7 @@ import {
   MIN_HORAS_PLEGABLES,
   FILAS_POR_HORA,
 } from '../web/src/lib/grid.ts';
+import { formatRange12, formatTime12 } from '../src/shared/meetings.ts';
 
 const block = (id, start, end, title = id) => ({
   id,
@@ -416,6 +417,26 @@ const enDia = (day, id, start, end) => ({ ...block(id, start, end), day });
   assert.deepEqual(visibleDays([]), ['Mo', 'Tu', 'We', 'Th', 'Fr'], 'sin bloques, la semana laboral');
 }
 
+// ── La hora como se lee acá: 12 horas con a.m./p.m. ────────────────────────
+// El portal entrega 24 horas y así se guarda (comparar "14:00" con "09:00" como
+// texto solo funciona con dos dígitos). La conversión es de presentación.
+{
+  assert.equal(formatTime12('00:00'), '12 a.m.', 'medianoche es 12 a.m., no 0');
+  assert.equal(formatTime12('12:00'), '12 p.m.', 'y mediodía es 12 p.m., no 0');
+  assert.equal(formatTime12('08:00'), '8 a.m.', 'sin minutos cuando son cero');
+  assert.equal(formatTime12('09:30'), '9:30 a.m.');
+  assert.equal(formatTime12('13:00'), '1 p.m.');
+  assert.equal(formatTime12('23:45'), '11:45 p.m.');
+  assert.equal(formatTime12(null), 'TBA', 'una reunión sin hora no inventa una');
+  assert.equal(formatTime12('no es hora'), 'no es hora', 'lo que no se entiende se pasa tal cual');
+
+  // En un rango dentro de la misma mitad del día el sufijo se dice una vez.
+  assert.equal(formatRange12('08:00', '10:00'), '8 a 10 a.m.');
+  assert.equal(formatRange12('11:00', '13:00'), '11 a.m. a 1 p.m.', 'cruzando el mediodía sí se repite');
+  assert.equal(formatRange12('18:45', '20:15'), '6:45 a 8:15 p.m.');
+  assert.equal(formatRange12('08:00', null), '8 a.m.', 'media reunión no inventa la otra punta');
+}
+
 console.log(
-  '✓ Layout del WeeklyGrid OK (carriles, choques, bordes, TBA, ventana horaria, paleta por conjunto, bandas plegadas y días visibles).'
+  '✓ Layout del WeeklyGrid OK (carriles, choques, bordes, TBA, ventana horaria, paleta, bandas plegadas, días visibles y horas en a.m./p.m.).'
 );

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Plus, X } from 'lucide-react';
 import { addPlanItem, addToCart, fetchPlans } from '../lib/api.ts';
 import { portalCatalogNbr } from '../../../src/shared/courseCode.ts';
+import { formatRange12 } from '../../../src/shared/meetings.ts';
 import { normalizeSeatStatus, type CatalogCourse, type CatalogSection } from '../../../src/shared/schemas.ts';
 import { hasPractice, lectureSections } from '../../../src/shared/sections.ts';
 import { SeatBadge } from './SeatBadge.tsx';
@@ -113,7 +114,7 @@ function SectionActions({ course, section }: { course: CatalogCourse; section: C
     },
   });
   const meeting = section.meetings
-    .map((item) => `${item.days.join(' ')} ${item.start ? `${item.start}–${item.end}` : 'TBA'}${item.room ? ` · ${item.room}` : ''}`)
+    .map((item) => `${item.days.join(' ')} ${item.start ? formatRange12(item.start, item.end) : 'TBA'}${item.room ? ` · ${item.room}` : ''}`)
     .join(' · ');
 
   return (
