@@ -141,7 +141,7 @@ function Bloque({
       </div>
       <div className="truncate opacity-80">{block.title}</div>
       <div className="tabular truncate font-mono text-[10px] opacity-70">
-        {block.start}–{block.end}
+        {formatRange12(block.start, block.end)}
       </div>
       {choca && (
         <div className="text-closed flex items-center gap-1 text-[10px] font-medium">
@@ -175,7 +175,7 @@ function Plegada({
       style={{ gridColumn: `1 / span ${columnas + 1}`, gridRow: fila }}
     >
       <span className="tabular font-mono">
-        {hh(band.fromHour)} a {hh(band.toHour)}
+        {formatRange12(hh(band.fromHour), hh(band.toHour))}
       </span>
       <span>· {band.hours} h sin clases · desplegar</span>
     </button>
@@ -294,24 +294,30 @@ export function WeeklyGrid({
             gridTemplateRows: `auto ${filas}`,
           }}
         >
-          <div className="bg-surface border-line sticky left-0 z-30 border-b" style={{ gridColumn: 1, gridRow: 1 }} />
+          {/* La cabecera reserva un poco de aire abajo (pb-3 en vez de py-1.5)
+              porque la etiqueta de la PRIMERA hora se monta sobre la línea que
+              es justo este borde: sin ese margen quedaba medio texto debajo de
+              la cabecera, que fue el motivo por el que la primera hora se
+              trataba distinto que las demás. */}
+          <div className="bg-surface border-line sticky left-0 z-10 border-b" style={{ gridColumn: 1, gridRow: 1 }} />
           {days.map((day, i) => (
             <div
               key={day}
-              className="bg-surface border-line text-muted border-b border-l px-2 py-1.5 text-center text-xs font-medium"
+              className="bg-surface border-line text-muted border-b border-l px-2 pt-1.5 pb-3 text-center text-xs font-medium"
               style={{ gridColumn: i + 2, gridRow: 1 }}
             >
               {DAY_LABELS[day]}
             </div>
           ))}
 
-          {/* Canaleta y hairlines. La etiqueta vive DENTRO de su celda, pegada
-              a la línea que abre la hora. Antes se subía media altura con un
-              translate para montarse sobre la línea, salvo la primera, que se
-              dejaba sin subir para que la cabecera no la recortara: dos
-              tratamientos distintos en la misma columna, y la primera hora
-              alineaba distinto que las demás. Una matriz de celdas iguales no
-              tiene ese problema y no necesita excepciones. */}
+          {/* Canaleta y hairlines.
+              La etiqueta se centra SOBRE la línea que abre su hora, que es
+              donde empieza el bloque de esa hora: "10 a.m." tiene que quedar a
+              la altura del borde superior de una clase que arranca a las 10.
+              Dejarla apoyada en el techo de su celda la hacía colgar quince
+              píxeles por debajo de esa línea, y ahí es donde se leía torcida.
+              Todas reciben el mismo trato, incluida la primera: el espacio para
+              ella lo da el pb-3 de la cabecera. */}
           {bands.map((band, i) =>
             band.kind === 'plegada' ? (
               <Plegada
@@ -324,10 +330,14 @@ export function WeeklyGrid({
             ) : (
               <div key={`h${band.hour}`} className="contents">
                 <div
-                  className="bg-surface border-line/60 text-muted tabular sticky left-0 z-20 flex items-start justify-end border-t pt-0.5 pr-2 text-right font-mono text-[10px] whitespace-nowrap"
+                  className="bg-surface border-line/60 relative sticky left-0 z-20 border-t"
                   style={{ gridColumn: 1, gridRow: `${filaDe(i)} / span ${FILAS_POR_HORA}` }}
                 >
-                  {formatTime12(`${String(band.hour).padStart(2, '0')}:00`)}
+                  <span className="text-muted tabular absolute -translate-y-1/2 pr-2 text-right font-mono text-[10px] leading-none whitespace-nowrap"
+                    style={{ right: 0 }}
+                  >
+                    {formatTime12(`${String(band.hour).padStart(2, '0')}:00`)}
+                  </span>
                 </div>
                 <div
                   className="border-line/60 pointer-events-none border-t"
@@ -376,7 +386,7 @@ export function WeeklyGrid({
           <ul className="mt-1 flex flex-col gap-0.5 pl-5">
             {[...new Map(choques.map((b) => [`${b.code}-${b.day}-${b.start}`, b])).values()].map((block) => (
               <li key={block.id}>
-                {block.code} el {DAY_LABELS[block.day]} de {block.start} a {block.end} se cruza con{' '}
+                {block.code} el {DAY_LABELS[block.day]} de {formatRange12(block.start, block.end)} se cruza con{' '}
                 {block.conflictsWith.join(', ')}.
               </li>
             ))}
