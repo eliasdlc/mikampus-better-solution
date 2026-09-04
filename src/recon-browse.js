@@ -1,4 +1,4 @@
-import { loginToPeopleSoft } from './login.js';
+import { loginForRecon } from './reconLogin.js';
 import { BROWSE_CATALOG_URL } from './peoplesoft/constants.js';
 import fs from 'node:fs/promises';
 
@@ -32,7 +32,7 @@ async function findFrame(page, selector, timeout = 10000) {
 const SUBJECT = (process.env.RECON_SUBJECT || 'ICC').toUpperCase();
 
 async function main() {
-  const { browser, page } = await loginToPeopleSoft({ headless: true });
+  const { browser, page } = await loginForRecon();
   try {
     await page.goto(BROWSE_CATALOG_URL, { waitUntil: 'commit' });
     await page.waitForTimeout(6000);

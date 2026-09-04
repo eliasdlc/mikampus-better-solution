@@ -34,7 +34,7 @@ export function Holds() {
       )}
 
       {isPending ? (
-        <div className="border-line h-32 animate-pulse rounded-[var(--radius)] border" />
+        <div className="border-line text-muted grid h-32 place-items-center rounded-[var(--radius)] border text-sm">Cargando…</div>
       ) : error ? (
         <p className="text-closed text-sm">No se pudo leer lo guardado: {error.message}</p>
       ) : !data?.syncedAt ? (

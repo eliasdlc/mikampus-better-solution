@@ -5,7 +5,7 @@ import { CourseChip } from './CourseChip.tsx';
 import { CourseDetailDialog } from './CourseDetailDialog.tsx';
 
 // Input de búsqueda con dropdown para agregar una materia (planner y builder).
-// Es la misma búsqueda instantánea de /buscar (índice MiniSearch en memoria),
+// Es la misma búsqueda instantánea del catálogo (índice MiniSearch en memoria),
 // acotada a elegir: escribe → aparecen hasta 8 materias → click y listo.
 export function CourseSearchBox({
   courses,

@@ -1,4 +1,4 @@
-import { loginToPeopleSoft } from './login.js';
+import { loginForRecon } from './reconLogin.js';
 import { SCHEDULE_URL } from './peoplesoft/constants.js';
 import fs from 'node:fs/promises';
 
@@ -36,7 +36,7 @@ async function dump(page, name) {
 }
 
 async function main() {
-  const { browser, page } = await loginToPeopleSoft({ headless: true });
+  const { browser, page } = await loginForRecon();
   try {
     console.log('Abriendo Mi Horario…');
     await page.goto(SCHEDULE_URL, { waitUntil: 'commit' });

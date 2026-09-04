@@ -1,4 +1,4 @@
-import { loginToPeopleSoft } from './login.js';
+import { loginForRecon } from './reconLogin.js';
 import { MANAGE_CLASSES_START_URL, VIEW_MY_CLASSES_URL } from './peoplesoft/constants.js';
 import fs from 'node:fs/promises';
 
@@ -69,7 +69,7 @@ async function inventory(frame) {
 }
 
 async function main() {
-  const { browser, page } = await loginToPeopleSoft({ headless: true });
+  const { browser, page } = await loginForRecon();
   try {
     // 1) Crear el navigation collection Fluid lanzando el START del tile.
     console.log('Creando el contexto Fluid (Manage Classes START)…');

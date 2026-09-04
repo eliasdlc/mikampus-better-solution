@@ -1,4 +1,4 @@
-import { loginToPeopleSoft } from './login.js';
+import { loginForRecon } from './reconLogin.js';
 import { CLASS_SEARCH_URL } from './peoplesoft/constants.js';
 import fs from 'node:fs/promises';
 
@@ -26,7 +26,7 @@ const CAREER = 'GRDO';
 const PREFIX = process.env.RECON_PREFIX || 'ICC';
 
 async function main() {
-  const { browser, page } = await loginToPeopleSoft({ headless: true });
+  const { browser, page } = await loginForRecon();
   try {
     console.log(`Recon: término ${TERM}, carrera ${CAREER}, catalog_nbr contains "${PREFIX}"`);
     await page.goto(CLASS_SEARCH_URL, { waitUntil: 'commit' });

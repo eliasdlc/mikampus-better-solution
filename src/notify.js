@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import { dispatchPush } from './webpush.js';
+import { recordNotification, shouldSend } from './notifications.js';
+import { dispatchToChannels } from './channels.js';
 
 // Notificaciones unificadas (plan §7, Fase 5). Antes cada operación decidía por
 // su cuenta si molestar al usuario: el enroll llamaba a notify() desde tres
@@ -10,17 +12,66 @@ import { dispatchPush } from './webpush.js';
 // merecen una notificación de escritorio y con qué urgencia. Un solo lugar que
 // leer para saber qué te va a interrumpir.
 
+const OPENERS = {
+  win32: (url) => ['cmd', ['/c', 'start', '', url]],
+  darwin: (url) => ['open', [url]],
+  linux: (url) => ['xdg-open', [url]],
+};
+
+function baseUrl() {
+  return `http://127.0.0.1:${process.env.PORT || 4173}`;
+}
+
+export function deepLink(link) {
+  if (!link) return null;
+  return link.startsWith('http') ? link : `${baseUrl()}${link}`;
+}
+
+function openLink(url) {
+  const opener = (OPENERS[process.platform] ?? OPENERS.linux)(url);
+  spawn(opener[0], opener[1], { stdio: 'ignore', detached: true }).on('error', () => {});
+}
+
 // notify-send ya está disponible en el entorno Hyprland/mako del usuario:
 // notificación de escritorio inmediata, sin depender de un bot externo.
-export function notify(title, body, { urgency = 'normal' } = {}) {
-  // Sin escritorio no hay popup que valga: el server hosted y los tests corren
+//
+// El deep-link es donde las plataformas dejan de ser iguales: en Linux la
+// notificación lleva un botón real que abre la pantalla correcta (notify-send
+// --wait devuelve la acción elegida). macOS con osascript y el toast de
+// PowerShell no exponen un click accionable sin empaquetar una app firmada, así
+// que ahí el enlace viaja en el cuerpo. No se promete lo que el OS no da.
+export function notify(title, body, { urgency = 'normal', link = null } = {}) {
+  // Sin escritorio no hay popup que valga: los tests corren
   // con MIKAMPUS_SILENT=1 y la política sigue siendo verificable en seco.
   if (process.env.MIKAMPUS_SILENT) return;
-  const child = spawn('notify-send', ['-u', urgency, '-a', 'mikampus', title, body], {
-    stdio: 'ignore',
+  // Home Server no intenta convertir su host en un proveedor push: el feed SSE
+  // local es el transporte base. Desktop elige el adaptador nativo disponible.
+  if (process.env.MIKAMPUS_RUNTIME_MODE === 'home-server') return;
+  const url = deepLink(link);
+  const linuxAction = process.platform === 'linux' && url;
+  const withLink = url && !linuxAction ? `${body}\n${url}` : body;
+
+  const command = process.platform === 'darwin'
+    ? ['osascript', ['-e', `display notification ${JSON.stringify(withLink)} with title ${JSON.stringify(title)}`]]
+    : process.platform === 'win32'
+      ? ['powershell.exe', ['-NoProfile', '-Command', `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('mikampus').Show([Windows.UI.Notifications.ToastNotification]::new(([Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier()).GetTemplateContent(0)))`]]
+      : ['notify-send', linuxAction
+        ? ['-u', urgency, '-a', 'mikampus', '--wait', '-A', 'default=Abrir mikampus', title, body]
+        : ['-u', urgency, '-a', 'mikampus', title, withLink]];
+
+  const child = spawn(command[0], command[1], {
+    stdio: linuxAction ? ['ignore', 'pipe', 'ignore'] : 'ignore',
+  });
+  // `notify-send --wait` no vuelve hasta que la notificación se cierra, y una
+  // urgencia `critical` en mako no se cierra sola. Sin unref, ese hijo
+  // mantendría vivo el event loop del agente indefinidamente.
+  child.unref();
+  // notify-send --wait imprime la acción elegida cuando el usuario hace click.
+  child.stdout?.on('data', (chunk) => {
+    if (String(chunk).trim() === 'default') openLink(url);
   });
   child.on('error', () => {
-    console.warn('[notify] notify-send no disponible, se omite notificación de escritorio');
+    console.warn('[notify] transporte de notificación nativo no disponible, el evento sigue en el feed local');
   });
 }
 
@@ -38,7 +89,15 @@ export function noticeFor(event) {
     const urgency = event.level === 'error' ? 'critical' : 'normal';
     // key agrupa lo repetible para el dedupe: sin ella, un watcher que falla
     // cada 45s son 80 popups por hora del mismo error.
-    return { title: event.title, body: event.body ?? '', urgency, key: event.key ?? `notice:${event.title}` };
+    return {
+      title: event.title,
+      body: event.body ?? '',
+      urgency,
+      key: event.key ?? `notice:${event.title}`,
+      // Una notificación sin destino obliga a buscar a mano qué la causó. El
+      // deep-link lleva a la pantalla donde se resuelve ese aviso.
+      link: event.link ?? '/ajustes',
+    };
   }
 
   if (event.type === 'enroll-result') {
@@ -53,6 +112,7 @@ export function noticeFor(event) {
         // desaparecer mientras estás en otra ventana.
         urgency: 'critical',
         key: `enroll-ok:${ok.map((r) => r.classLabel).join('|')}`,
+        link: '/horario',
       };
     }
     // Un intento sin cupo no es noticia: es lo esperado y el watcher reintenta
@@ -65,6 +125,7 @@ export function noticeFor(event) {
         body: fail.map((r) => `${r.classLabel}: ${r.message}`).join('\n'),
         urgency: 'critical',
         key: `enroll-lost:${fail.map((r) => r.classLabel).join('|')}`,
+        link: '/inscripcion',
       };
     }
   }
@@ -72,15 +133,11 @@ export function noticeFor(event) {
   return null;
 }
 
-// Misma notificación repetida dentro de esta ventana → se manda una sola vez.
-const DEDUPE_MS = 5 * 60 * 1000;
-const lastSent = new Map();
-
 export function notifyFromEvent(event, now = Date.now()) {
   const notice = noticeFor(event);
   if (!notice) return null;
 
-  // Web Push (§5.5): en hosted, un evento con dueño también va al teléfono de
+  // Web Push (§5.5): un evento con dueño también va al teléfono de
   // ESE usuario. Va antes del dedupe de escritorio y con su propio dedupe por
   // usuario (webpush.js) — el popup local es de una sola persona; la push es
   // por dueño y no puede quedar silenciada porque el server local no tenga
@@ -89,10 +146,14 @@ export function notifyFromEvent(event, now = Date.now()) {
     dispatchPush(event.userId, notice, event, now);
   }
 
-  const previo = lastSent.get(notice.key);
-  if (previo != null && now - previo < DEDUPE_MS) return null;
-  lastSent.set(notice.key, now);
+  // El dedupe consulta la base y no un Map del proceso: reiniciar el agente ya
+  // no vuelve a disparar la misma alerta que se acababa de mostrar.
+  if (!shouldSend(notice.key, now)) return null;
+  recordNotification(notice, { userId: event.userId ?? null, now: new Date(now) });
 
-  notify(notice.title, notice.body, { urgency: notice.urgency });
+  notify(notice.title, notice.body, { urgency: notice.urgency, link: notice.link });
+  // Los adaptadores externos son opt-in y viven apagados; si el usuario
+  // encendió alguno, recibe el mismo payload mínimo declarado.
+  dispatchToChannels(notice).catch((error) => console.warn(`[notify] adaptador externo falló: ${error.message}`));
   return notice;
 }

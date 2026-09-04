@@ -157,6 +157,41 @@ export function toMinutes(hhmm: string): number {
   return h * 60 + m;
 }
 
+// La hora como se lee en República Dominicana: 12 horas con a.m./p.m.
+//
+// El portal entrega 24 horas y así se guarda —comparar "14:00" con "09:00" como
+// texto solo funciona con dos dígitos—, pero nadie dice "mi clase es a las
+// catorce". La conversión es de presentación y vive acá para que el horario, la
+// agenda y la ficha de clase no terminen con tres formatos distintos.
+//
+// Los minutos se omiten cuando son cero, que es el caso de casi todas las
+// reuniones del catálogo: "8 a.m." se lee de un golpe y "8:00 a.m." hace ruido.
+export function formatTime12(hhmm: string | null | undefined): string {
+  if (!hhmm) return 'TBA';
+  const m = hhmm.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return hhmm;
+  const hour24 = Number(m[1]);
+  const minutes = Number(m[2]);
+  if (!Number.isFinite(hour24) || !Number.isFinite(minutes)) return hhmm;
+  // Medianoche es 12 a.m. y mediodía 12 p.m.: el resto del rango es el módulo.
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  const sufijo = hour24 < 12 ? 'a.m.' : 'p.m.';
+  return minutes === 0 ? `${hour12} ${sufijo}` : `${hour12}:${String(minutes).padStart(2, '0')} ${sufijo}`;
+}
+
+/**
+ * Un rango de horas. Cuando las dos puntas caen en la misma mitad del día el
+ * sufijo se dice una sola vez ("8 a 10 a.m."): repetirlo en un rango corto es
+ * ruido y quitarlo no crea ambigüedad, porque el fin nunca precede al inicio.
+ */
+export function formatRange12(start: string | null | undefined, end: string | null | undefined): string {
+  if (!start || !end) return formatTime12(start ?? end);
+  const desde = formatTime12(start);
+  const hasta = formatTime12(end);
+  const mismoSufijo = desde.slice(-4) === hasta.slice(-4);
+  return mismoSufijo ? `${desde.slice(0, -5)} a ${hasta}` : `${desde} a ${hasta}`;
+}
+
 // Dos reuniones chocan si comparten día y se solapan en el tiempo. Bordes
 // tocándose (una termina 10:00 y la otra empieza 10:00) no es choque.
 export function meetingsOverlap(a: Meeting, b: Meeting): boolean {

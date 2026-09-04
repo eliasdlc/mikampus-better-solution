@@ -1,13 +1,16 @@
 import crypto from 'node:crypto';
-import { db } from './db.js';
-import { ensureUser, touchLastLogin } from './users.js';
+import { db, deleteAllUserData } from './db.js';
+import { LOCAL_USER_ID, adoptLocalUsername, getUser, touchLastLogin } from './users.js';
 import { verifyPortalCredentials, adoptSession, resetSession } from './session.js';
+import { readCredential, writeCredential, deleteCredential } from './credentialStore.js';
 
-// El login de mikampus ES el login del portal (§5): no hay cuenta paralela.
-// El estudiante entra con sus credenciales de micampus, mikampus las verifica
-// logueándose a PeopleSoft, y recién ahí crea/encuentra el usuario y le emite
-// una sesión propia por cookie. La contraseña queda en RAM atada a su context
-// (regla 1 de §5) — nunca en la DB principal.
+// El login de mikampus ES el login del portal: no hay cuenta paralela. El
+// estudiante entra por el formulario con sus credenciales de micampus, mikampus
+// las verifica logueándose a PeopleSoft, las escribe en el archivo de
+// credencial del usuario (con eso Playwright re-loguea solo después de un
+// reinicio) y emite una sesión propia por cookie. Esa cookie solo vale mientras
+// el archivo tenga credencial: vaciarlo (cerrar sesión, edición manual o un
+// rechazo del portal) saca al usuario en la próxima request.
 
 export const SESSION_COOKIE = 'mikampus_session';
 export const CSRF_HEADER = 'x-csrf-token';
@@ -67,7 +70,7 @@ export function sessionCookieHeader(token, { secure, maxAgeSeconds = SESSION_DAY
     `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    'SameSite=Strict',
     `Max-Age=${maxAgeSeconds}`,
   ];
   if (secure) attrs.push('Secure');
@@ -78,25 +81,17 @@ export function clearedSessionCookieHeader({ secure } = {}) {
   return sessionCookieHeader('', { secure, maxAgeSeconds: 0 });
 }
 
+// Loopback es http; el proxy de identidad, si existe, termina TLS y lo declara.
+export function secureCookies(req) {
+  return String(req.headers['x-forwarded-proto'] ?? '').toLowerCase() === 'https';
+}
+
 // ── Rate-limit de intentos (§5): PeopleSoft bloquea cuentas por intentos
 // fallidos — mikampus no puede ser el vector. Por username, en memoria: 5
 // fallos → 15 minutos de espera. Un login exitoso limpia el contador.
 const attempts = new Map(); // usernameLower → { count, blockedUntil }
 const MAX_ATTEMPTS = 5;
 const BLOCK_MS = 15 * 60_000;
-
-// Hosted no es un directorio público de estudiantes. La lista se mantiene en
-// el entorno de la instancia, nunca en la base de datos ni en el bundle web.
-// Exigir que exista evita que publicar el DNS convierta por accidente la beta
-// de 10–20 personas en una puerta abierta para toda la universidad.
-export function isInvited(username) {
-  if ((process.env.MIKAMPUS_MODE ?? 'local') !== 'hosted') return true;
-  const invited = (process.env.MIKAMPUS_ALLOWLIST ?? '')
-    .split(',')
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-  return invited.includes(String(username ?? '').trim().toLowerCase());
-}
 
 export function loginBlocked(username, now = Date.now()) {
   const entry = attempts.get(username.toLowerCase());
@@ -124,9 +119,6 @@ export function noteLoginSuccess(username) {
 export async function loginWithPortal({ username, password }) {
   const user = String(username ?? '').trim();
   if (!user || !password) throw Object.assign(new Error('Faltan usuario o contraseña'), { status: 400 });
-  if (!isInvited(user)) {
-    throw Object.assign(new Error('Esta beta es solo por invitación'), { status: 403 });
-  }
   if (loginBlocked(user)) {
     throw Object.assign(
       new Error('Demasiados intentos fallidos: esperá 15 minutos antes de reintentar'),
@@ -147,28 +139,110 @@ export async function loginWithPortal({ username, password }) {
   }
 
   noteLoginSuccess(user);
-  const account = ensureUser(user);
+  adoptIdentity(user);
+  writeCredential({ username: user, password });
+  const account = getUser(LOCAL_USER_ID);
   touchLastLogin(account.id);
-  await adoptSession(account.id, live, { username: user, password });
+  await adoptSession(account.id, live);
   const session = createSession(account.id);
   return { user: account, ...session };
 }
 
+// Una instalación representa a una sola persona. Cambiar de cuenta no crea un
+// segundo espacio: los datos académicos de la cuenta anterior se purgan
+// completos y solo queda el registro local fijo con la identidad nueva.
+function adoptIdentity(username) {
+  const previous = getUser(LOCAL_USER_ID);
+  if (previous?.portalUsername && previous.portalUsername.toLowerCase() !== username.toLowerCase()) {
+    revokeAllSessions(LOCAL_USER_ID);
+    deleteAllUserData(LOCAL_USER_ID);
+    db.prepare('INSERT OR IGNORE INTO users (id) VALUES (?)').run(LOCAL_USER_ID);
+  }
+  adoptLocalUsername(username);
+}
+
+// Cerrar sesión vacía el archivo de credencial: sin eso, la próxima apertura
+// volvería a entrar sola.
 export async function logout(token) {
   const session = sessionFor(token);
   revokeSession(token);
+  deleteCredential();
   if (session) await resetSession(session.userId);
 }
 
 // ── Middleware ─────────────────────────────────────────────────────────────
-// Modo hosted: toda /api exige sesión salvo las rutas públicas, y toda
-// mutación exige además el CSRF header de esa sesión (la cookie viaja sola;
-// el header solo lo puede poner nuestra página).
-const PUBLIC_API = new Set(['/health', '/auth/login']);
+// Toda /api exige sesión salvo las rutas públicas, y toda mutación exige CSRF.
+// El onboarding es público por necesidad: elegir modo, ver prerequisitos e
+// instalar el browser ocurre ANTES de que exista una cuenta que autenticar. No
+// devuelve ni acepta datos académicos, y sigue detrás de localRequestGuard
+// (loopback + Origin), igual que el propio login.
+const PUBLIC_API = new Set([
+  '/health',
+  '/auth/login',
+  '/onboarding',
+  '/onboarding/mode',
+  '/onboarding/browser',
+]);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+// Hosts que este agente acepta ADEMÁS de loopback, separados por coma. Vacío
+// por defecto, y esa es la postura: dejar de ser solo-loopback es una decisión
+// explícita del operador, nunca un default que se hereda sin querer.
+//
+// Está pensado para un proxy de identidad en el mismo equipo —`tailscale serve`
+// es el caso— que termina TLS, autentica el dispositivo contra el tailnet y
+// reenvía a 127.0.0.1. La diferencia con abrir el puerto es real: el agente
+// nunca deja de escuchar solo en loopback, así que no hay superficie nueva en
+// la red; lo único que cambia es qué `Host` se considera legítimo.
+//
+// Se lee por request y no una sola vez, para que el operador pueda corregir un
+// hostname mal escrito reiniciando el servicio y no rebuildeando nada.
+function trustedHosts() {
+  return new Set(
+    String(process.env.MIKAMPUS_TRUSTED_HOSTS ?? '')
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+// El agente sirve loopback y, si el operador lo declaró, los hosts de confianza.
+// Validamos Host en todas las requests y Origin en las mutaciones, incluso antes
+// del login: así una página ajena no puede usar localhost como puente hacia
+// PeopleSoft ni intentar fijar sesión.
+export function localRequestGuard(req, res, next) {
+  const host = String(req.headers.host ?? '').toLowerCase();
+  const loopback = /^((localhost|127\.0\.0\.1)(:\d+)?)$/.test(host);
+  // El puerto no distingue confianza: el proxy llega sin él o con el suyo.
+  const hostname = host.replace(/:\d+$/, '');
+  if (!loopback && !trustedHosts().has(hostname)) {
+    return res.status(421).json({ error: 'mikampus solo acepta requests desde localhost' });
+  }
+  if (!SAFE_METHODS.has(req.method)) {
+    const origin = req.headers.origin;
+    // Las mutaciones de la SPA siempre llevan Origin. Exigirlo evita que un
+    // form/navegación cross-site use localhost como puente, incluso en rutas
+    // públicas como el login que todavía no tienen token CSRF.
+    //
+    // Sigue siendo igualdad estricta contra el Host de ESTA request: un sitio
+    // ajeno no puede fabricar Origin, así que agregar un host de confianza no
+    // afloja la protección CSRF. Los dos esquemas se aceptan porque loopback es
+    // http y el proxy de identidad es https.
+    if (origin !== `http://${host}` && origin !== `https://${host}`) {
+      return res.status(403).json({ error: 'El origen de esta operación no está autorizado' });
+    }
+  }
+  next();
+}
+
+// Entrar es siempre el formulario: la cookie solo la emite el login. Pero la
+// cookie vale únicamente mientras el archivo tenga credencial: vaciarlo (cerrar
+// sesión, edición a mano, rechazo del portal) saca en la próxima request aunque
+// la cookie siga vigente en la DB.
 export function authMiddleware(req, res, next) {
   if (PUBLIC_API.has(req.path)) return next();
+
+  if (!readCredential()) return res.status(401).json({ error: 'No hay credencial guardada: iniciá sesión' });
 
   const token = cookieValue(req.headers.cookie, SESSION_COOKIE);
   const session = sessionFor(token);

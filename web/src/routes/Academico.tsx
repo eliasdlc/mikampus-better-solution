@@ -12,6 +12,7 @@ import {
   fetchInsights,
 } from '../lib/api.ts';
 import { CourseChip } from '../components/CourseChip.tsx';
+import { TrajectoryChart } from '../components/TrajectoryChart.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import { GRADE_POINTS, formatGpa, roundGpa, summarizeGrades } from '../../../src/shared/gpa.ts';
 import type {
@@ -23,46 +24,11 @@ import type {
   GoalsResponse,
   GoalEvaluation,
   Insight,
+  ProjectionReport,
 } from '../../../src/shared/schemas.ts';
 
 // Notas y avance (plan §5.6). Dos tabs: el histórico con el índice y el
 // simulador what-if, y el pénsum con el estado de cada materia.
-
-// La única gráfica de la app, y se la gana: la evolución real del índice por
-// término. Sin ejes ni leyenda — es una forma, no un tablero.
-function Sparkline({ terms }: { terms: TermGrades[] }) {
-  // Del más viejo al más nuevo, y solo los términos que tienen índice: uno en
-  // curso no vale 0, no vale nada.
-  const points = terms
-    .filter((t) => t.gpa !== null)
-    .slice()
-    .reverse();
-  if (points.length < 2) return null;
-
-  const w = 132;
-  const h = 34;
-  const values = points.map((p) => p.gpa!);
-  // Escala fija 0–4: con escala automática, un índice entre 2.6 y 2.8 se vería
-  // como una montaña rusa. La forma tiene que decir la verdad.
-  const y = (v: number) => h - (v / 4) * h;
-  const x = (i: number) => (i / (points.length - 1)) * w;
-  const d = values.map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
-  const last = values.at(-1)!;
-
-  return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      className="overflow-visible"
-      role="img"
-      aria-label={`Evolución del índice por término: ${values.map((v) => v.toFixed(2)).join(', ')}`}
-    >
-      <path d={d} fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={x(values.length - 1)} cy={y(last)} r="2.5" fill="var(--accent)" />
-    </svg>
-  );
-}
 
 function BigNumber({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -191,6 +157,101 @@ function veredicto(g: GoalEvaluation): { label: string; tone: string; detail: st
   }
 }
 
+// Los dos horizontes de P5. Separados a propósito: sumar los créditos en curso
+// de este ciclo con los que faltan hasta graduarte producía un "mejor caso" que
+// no correspondía a ningún momento real de la carrera.
+//
+// Y si el acumulado reconstruido no cuadra con el que publica PeopleSoft, acá
+// no hay número que esconder: el backend devuelve los horizontes en null y esta
+// pantalla explica la diferencia en su lugar.
+function Horizontes({ report }: { report?: ProjectionReport }) {
+  const [comoSeCalcula, setComoSeCalcula] = useState(false);
+  if (!report) return null;
+
+  const { reconciliation: rec } = report;
+
+  if (rec.status !== 'match') {
+    return (
+      <section
+        className={`rounded-[var(--radius)] border p-3 text-sm ${
+          rec.status === 'mismatch' ? 'border-closed/40 bg-closed/5' : 'border-line'
+        }`}
+      >
+        <h3 className="text-sm font-medium">
+          {rec.status === 'mismatch' ? 'No podemos proyectar con confianza' : 'Todavía no podemos proyectar'}
+        </h3>
+        <p className="text-muted mt-1 text-xs">{rec.explanation}</p>
+        {rec.difference !== null && (
+          <p className="text-muted tabular mt-2 font-mono text-xs">
+            PeopleSoft {rec.official?.toFixed(3)} · mikampus {rec.reconstructed?.toFixed(3)} · diferencia{' '}
+            {rec.difference.toFixed(3)}
+          </p>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {[report.currentTerm, report.graduation].map((scenarios, index) =>
+        scenarios ? (
+          <section key={scenarios.best.id}>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="font-display text-sm font-semibold tracking-tight">{scenarios.best.label}</h3>
+              <span className="text-muted tabular text-xs">
+                sobre {scenarios.best.futureCredits} crédito(s){index === 0 ? ' en curso' : ' pendientes'}
+              </span>
+            </div>
+            {scenarios.best.futureCredits === 0 ? (
+              <p className="text-muted mt-1 text-xs">
+                {index === 0
+                  ? 'No tenés materias en curso en este ciclo, así que tu índice no se mueve al cerrarlo.'
+                  : 'El advisement no reporta créditos pendientes.'}
+              </p>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-x-8 gap-y-3">
+                <FanNumber label="Mejor caso" value={scenarios.best.exact?.toFixed(2) ?? '—'} tone="text-open" />
+                <FanNumber label="Si mantenés tu ritmo" value={scenarios.maintain.exact?.toFixed(2) ?? '—'} />
+                <FanNumber label="Piso (todo C)" value={scenarios.floor.exact?.toFixed(2) ?? '—'} />
+              </div>
+            )}
+            {/* Escenario, no promesa. El plan es explícito en que la palabra
+                importa: nadie puede garantizar una nota futura. */}
+            <p className="text-muted mt-1.5 text-xs">
+              Son escenarios, no promesas. PeopleSoft lo publicaría como{' '}
+              <span className="tabular font-mono">{scenarios.best.asPublished?.toFixed(3) ?? '—'}</span> en el mejor caso.
+            </p>
+          </section>
+        ) : null
+      )}
+
+      <div>
+        <button
+          type="button"
+          onClick={() => setComoSeCalcula((open) => !open)}
+          aria-expanded={comoSeCalcula}
+          className="text-muted hover:text-fg text-xs underline underline-offset-2"
+        >
+          Cómo se calcula
+        </button>
+        {comoSeCalcula && (
+          <div className="border-line text-muted mt-2 space-y-1.5 rounded-[var(--radius)] border p-3 text-xs">
+            <p className="font-mono">{report.formula}</p>
+            <p>
+              El índice de partida es el que publica PeopleSoft ({rec.official?.toFixed(3)}), no el nuestro. Nuestro
+              cálculo por materias ({rec.reconstructed?.toFixed(3)}) queda como auditoría y se compara en cada sync.
+            </p>
+            <p>
+              «Mejor caso» asume 4.0 en lo que falta, «mantener» asume tu propio promedio y «piso» asume 2.0. El
+              resultado se muestra a dos decimales; el portal publica con uno.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FanNumber({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div>
@@ -210,30 +271,12 @@ function Metas() {
   const remove = useMutation({ mutationFn: (id: number) => deleteGoal(id), onSuccess: onData });
 
   const data = goals.data;
-  const proj = data?.projection;
-  const puedeProyectar = !!proj && (data?.basedOn.remainingCredits ?? 0) > 0;
 
   return (
     <div className="space-y-4">
       {/* El abanico honesto: dónde puede terminar tu índice según lo que saques
           en lo que falta del pénsum. */}
-      {puedeProyectar ? (
-        <div>
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h3 className="font-display text-sm font-semibold tracking-tight">Índice final proyectado</h3>
-            <span className="text-muted tabular text-xs">sobre {proj!.remainingCredits} créditos faltantes</span>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-x-8 gap-y-3">
-            <FanNumber label="Mejor caso" value={formatGpa(proj!.best)} tone="text-open" />
-            <FanNumber label="Si mantenés tu ritmo" value={formatGpa(proj!.maintain)} />
-            <FanNumber label="Piso (todo C)" value={formatGpa(proj!.floor)} />
-          </div>
-        </div>
-      ) : (
-        <p className="text-muted text-sm">
-          Sincronizá tu avance (tab Avance) para proyectar tu índice final sobre los créditos que te faltan.
-        </p>
-      )}
+      <Horizontes report={data?.horizons} />
 
       {/* Las metas fijadas, con su veredicto en vivo. */}
       {!!data?.goals.length && (
@@ -300,15 +343,34 @@ function attemptTrail(attempts: { grade: string | null }[]): string {
   return attempts.map((a) => a.grade ?? '—').join(' → ');
 }
 
-function SenalCard({ insight }: { insight: Insight }) {
+function SenalCard({ insight, destacada = false }: { insight: Insight; destacada?: boolean }) {
   let title = '';
   let body: ReactNode = null;
 
   switch (insight.kind) {
-    case 'gpa-trend': {
+    // El cambio reciente es lo que la persona SIENTE: cómo le fue el último
+    // ciclo comparado con el anterior. Antes lo tapaba la tendencia de tres.
+    case 'recent-change': {
+      const neto = insight.delta > 0 ? `+${insight.delta.toFixed(1)}` : insight.delta.toFixed(1);
+      title =
+        insight.direction === 'down'
+          ? 'Tu último ciclo bajó'
+          : insight.direction === 'up'
+            ? 'Tu último ciclo subió'
+            : 'Tu último ciclo se mantuvo';
+      body = (
+        <>
+          {insight.from.term} <span className="tabular font-mono">{insight.from.gpa.toFixed(1)}</span> → {insight.to.term}{' '}
+          <span className="tabular font-mono">{insight.to.gpa.toFixed(1)}</span>
+          {insight.direction !== 'flat' && <span className="text-muted"> · {neto}</span>}
+        </>
+      );
+      break;
+    }
+    case 'rolling-trend': {
       const seq = insight.points.map((p) => p.gpa.toFixed(1)).join(' → ');
       const neto = insight.delta > 0 ? `+${insight.delta.toFixed(1)}` : insight.delta.toFixed(1);
-      title = 'Tu índice, últimos 3 ciclos';
+      title = 'Tendencia de los últimos 3 ciclos';
       body = (
         <>
           <span className="tabular font-mono">{seq}</span>
@@ -362,10 +424,19 @@ function SenalCard({ insight }: { insight: Insight }) {
       break;
   }
 
+  // El color de alarma se gana: solo una señal marcada como riesgo real lo
+  // recibe. Pintar de rojo un patrón histórico entrena a ignorar el rojo.
+  const tono =
+    insight.severity === 'risk'
+      ? 'border-closed/40 bg-closed/5'
+      : insight.severity === 'watch' && destacada
+        ? 'border-waitlist/40 bg-waitlist/5'
+        : 'border-line';
+
   return (
-    <div className="border-line rounded-[var(--radius)] border p-3">
+    <div className={`rounded-[var(--radius)] border p-3 ${tono}`}>
       <div className="text-muted mb-1 text-xs font-medium tracking-wide uppercase">{title}</div>
-      <div className="text-sm">{body}</div>
+      <div className={destacada ? 'text-base' : 'text-sm'}>{body}</div>
     </div>
   );
 }
@@ -377,11 +448,29 @@ function Senales() {
   if (!list.length) {
     return <p className="text-muted text-sm">Todavía no hay suficientes datos para señales.</p>;
   }
+  // El backend ya las devuelve ordenadas por prioridad real (severidad,
+  // actualidad, posibilidad de acción). Acá solo se corta: la primera se lleva
+  // el ancho completo bajo "Lo más importante" y el resto baja a contexto.
+  // Una lista pareja hacía que una caída de este ciclo y un patrón de hace tres
+  // años se vieran igual de urgentes.
+  const [principal, ...contexto] = list;
+
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {list.map((s, i) => (
-        <SenalCard key={`${s.kind}-${i}`} insight={s} />
-      ))}
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-muted mb-2 text-xs font-medium tracking-wide uppercase">Lo más importante</h3>
+        <SenalCard insight={principal} destacada />
+      </div>
+      {contexto.length > 0 && (
+        <div>
+          <h3 className="text-muted mb-2 text-xs font-medium tracking-wide uppercase">Contexto</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {contexto.map((s, i) => (
+              <SenalCard key={`${s.kind}-${i}`} insight={s} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -430,10 +519,11 @@ function Notas({ data }: { data: GradesResponse }) {
         />
         <BigNumber label="Créditos aprobados" value={String(data.summary.unitsPassed)} hint="que cuentan al índice" />
         <BigNumber label="En curso" value={String(data.summary.unitsInProgress)} hint="créditos sin calificar" />
-        <div className="sm:justify-self-end sm:self-center">
-          <Sparkline terms={data.terms} />
-        </div>
       </div>
+
+      {/* La trayectoria se gana su propia sección: era un sparkline de 132×34
+          metido en una esquina, y es la única gráfica de la app. */}
+      <TrajectoryChart terms={data.terms} />
 
       <section className="border-line rounded-[var(--radius)] border p-4">
         <h2 className="font-display mb-3 text-base font-semibold tracking-tight">Simulador</h2>
@@ -722,7 +812,7 @@ export function Academico() {
       )}
 
       {activa.isPending ? (
-        <div className="border-line h-96 animate-pulse rounded-[var(--radius)] border" />
+        <div className="border-line text-muted grid h-96 place-items-center rounded-[var(--radius)] border text-sm">Cargando…</div>
       ) : activa.error ? (
         <p className="text-closed text-sm">No se pudo leer lo guardado: {activa.error.message}</p>
       ) : vacio ? (

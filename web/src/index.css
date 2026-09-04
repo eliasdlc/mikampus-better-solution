@@ -71,19 +71,33 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* WeeklyGrid: el ancho mínimo de cada columna de día decide la forma. En
-   mobile un día ocupa casi toda la pantalla y la semana se recorre con snap
-   (carrusel de días). Desde sm el mínimo es 0 para que las seis columnas se
-   repartan el ancho disponible y la semana entre entera: con un mínimo fijo,
-   la grilla desbordaba apenas y quedaba un scroll horizontal de 50px que
-   además arrancaba tapando el lunes. Es responsive por diseño (plan §6). */
-.weekly-grid {
-  --day-min: 68vw;
+/* WeeklyGrid: la forma la decide el ancho del CONTENEDOR, no el de la ventana.
+   Seis columnas en 393px dan unos 55px por día y truncan el título a nueve
+   caracteres, así que ahí la semana se lee como agenda por día. La misma pieza
+   dentro de un panel angosto en escritorio tiene el mismo problema y recibe la
+   misma solución, que es justo lo que una media query no podía hacer.
+   El corte en 34rem es donde una columna de día pasa de 55px a unos 90px, que
+   es lo mínimo para que quepa un código de materia sin truncar. */
+.weekly-grid-host {
+  container-type: inline-size;
 }
 
-@media (min-width: 640px) {
+/* El ancho mínimo de una columna de día baja de 68vw (267px, un día por
+   pantalla y a arrastrar) a 7.4em (126px): con cinco días se ven dos y medio y
+   los chips llevan al que falte; con dos días entran enteros sin scroll. Desde
+   sm el mínimo desaparece para que las columnas se repartan el ancho. */
+.weekly-grid {
+  --day-min: 7.4em;
+}
+
+@container (min-width: 34rem) {
   .weekly-grid {
     --day-min: 0px;
+  }
+
+  /* Con la semana entera a la vista no hay nada que navegar. */
+  .weekly-day-chips {
+    display: none;
   }
 }
 
@@ -101,7 +115,7 @@ body {
 }
 
 /* El único momento orquestado de la app (plan §3): el bloque aterrizando en
-   el WeeklyGrid al elegir sección en planner/builder. */
+   el WeeklyGrid al elegir sección en la mesa. */
 @keyframes block-land {
   from {
     opacity: 0;
@@ -117,12 +131,42 @@ body {
   animation: block-land 180ms ease-out;
 }
 
+/* ── Ergonomía de app en el teléfono ──────────────────────────────────────
+   mikampus se abre corriendo entre dos aulas, con una mano. Estas reglas no
+   cambian la identidad visual: cambian dónde caen los dedos.
+
+   Las áreas seguras del dispositivo (notch arriba, barra de gestos abajo) se
+   respetan como variables para que la barra inferior no quede debajo del
+   indicador de home. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Alto de la barra de navegación inferior + su área segura. El main reserva
+     este espacio para que el último elemento de una lista no quede tapado. */
+  --tabbar-h: calc(3.75rem + var(--safe-bottom));
+}
+
+/* Un objetivo táctil de menos de 44px se falla con el pulgar. Se aplica a la
+   navegación y a los controles primarios, no a todo enlace de texto. */
+.tap {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* El toque en móvil no tiene hover: el feedback es el estado activo. Sin esto,
+   tocar un destino de la barra inferior no se siente como que respondió. */
+@media (hover: none) {
+  .tap:active {
+    background-color: var(--surface-2);
+  }
+}
+
 /* Vista de impresión (plan §5.5): el horario en papel, sin el cromo de la app.
    Es una hoja para pegar en la nevera, no una captura de pantalla. */
 @media print {
   /* Papel blanco y tinta negra pase lo que pase: el modo oscuro imprimiría una
      página negra entera. .dark también, o el toggle decidiría cómo sale la hoja.
-     Los colores de materia sobreviven — son el dato, no decoración. */
+     Los colores de materia sobreviven: son el dato, no decoración. */
   :root,
   .dark {
     color-scheme: light;
@@ -150,7 +194,7 @@ body {
 
   /* Sin el nav, el shell no puede seguir siendo la grilla de dos columnas: un
      aside en display:none deja de ser grid item, así que el <main> se corría a
-     la PRIMERA columna — la de 220px del sidebar— y el horario salía aplastado
+     la PRIMERA columna, la de 220px del sidebar, y el horario salía aplastado
      en una tira contra el margen izquierdo. */
   .app-shell {
     display: block !important;
@@ -174,6 +218,143 @@ body {
   /* Una clase partida entre dos hojas no se lee. */
   .weekly-grid > * {
     break-inside: avoid;
+  }
+}
+
+/* Hoja para la secretaría: el papel que se lleva al mostrador.
+   Mientras la hoja esté montada, imprimir la mesa significa imprimir SOLO la
+   hoja. Se decide desde el documento con :has() y no con print:hidden bloque
+   por bloque porque quien sabe si hay hoja es el documento, no cada componente:
+   así un bloque nuevo de la mesa no se cuela en el papel por olvidar una clase.
+   Sin soporte de :has() se imprime la pantalla entera, que es lo que pasaba
+   antes de estas reglas. */
+@media print {
+  /* Desaparece todo lo que no sea la hoja ni el camino hasta ella: navegación,
+     semana, condiciones, candidatas y botones son interfaz para decidir, y en
+     el mostrador estorban. */
+  body:has(.hoja-secretaria) *:not(:has(.hoja-secretaria)):not(.hoja-secretaria, .hoja-secretaria *) {
+    display: none;
+  }
+
+  /* El camino hasta la hoja deja de aportar caja. El shell es una grilla de dos
+     columnas, el <main> centra a 64rem con padding y la hoja vive dentro de una
+     tarjeta con borde: nada de eso es la hoja, y el borde de la tarjeta saldría
+     impreso como un marco que nadie pidió. */
+  html:has(.hoja-secretaria),
+  body:has(.hoja-secretaria),
+  body:has(.hoja-secretaria) *:has(.hoja-secretaria) {
+    display: block;
+    width: auto;
+    max-width: none;
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  /* Vertical, no apaisado. El @page de arriba es apaisado porque una semana son
+     seis columnas; esta hoja es una tabla angosta y en apaisado desperdicia
+     media página. Se pide con página nombrada en vez de cambiar aquel @page,
+     que sigue siendo el correcto para el horario. */
+  html:has(.hoja-secretaria) {
+    page: hoja;
+  }
+
+  @page hoja {
+    size: portrait;
+    margin: 14mm 12mm;
+  }
+
+  /* El ancho máximo de la hoja está pensado para pantalla (46rem = 736px) y en
+     A4 se pasa del área imprimible: el navegador recorta o escala, y lo que se
+     pierde por la derecha es la columna de créditos. */
+  .hoja-secretaria {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    font-size: 10pt;
+    line-height: 1.35;
+    /* El suavizado de pantalla adelgaza el trazo en papel. */
+    -webkit-font-smoothing: auto;
+  }
+
+  /* Ningún color sobrevive al papel: el gris de metadatos se fotocopia como
+     nada, y un estado de cupo en verde impreso se leería como autoridad aunque
+     el dato tenga semanas. Negro sobre blanco y punto. */
+  .hoja-secretaria,
+  .hoja-secretaria * {
+    color: #000;
+    background: none;
+    box-shadow: none;
+    border-color: #000;
+  }
+
+  /* El título es un documento de oficina, no la marca de la app. */
+  .hoja-secretaria .font-display {
+    font-family: var(--font-sans);
+  }
+
+  /* Dos pesos de línea: negro para la estructura, gris para separar filas. Una
+     tabla larga con todas las reglas al mismo peso se lee como una reja. */
+  .hoja-secretaria tbody tr {
+    border-color: #767676;
+  }
+
+  .hoja-secretaria table {
+    width: 100%;
+  }
+
+  /* Una fila partida entre dos hojas es un NRC que no se puede teclear. */
+  .hoja-secretaria tr,
+  .hoja-secretaria li {
+    break-inside: avoid;
+  }
+
+  /* El encabezado se repite en cada hoja: siete columnas sin título en la
+     página dos no dicen cuál de los números es el NRC. */
+  .hoja-secretaria thead {
+    display: table-header-group;
+  }
+
+  /* El total va una sola vez, al final. Un <tfoot> es grupo de pie y el
+     navegador lo repite en TODAS las páginas: un total repetido se lee como si
+     cada hoja sumara aparte. */
+  .hoja-secretaria tfoot {
+    display: table-row-group;
+  }
+
+  /* Un subtítulo solo al pie de una hoja deja sus filas huérfanas en la
+     siguiente. */
+  .hoja-secretaria tbody tr:has(th),
+  .hoja-secretaria h3 {
+    break-after: avoid;
+  }
+
+  /* Un NRC partido en dos líneas se teclea mal. */
+  .hoja-secretaria .tabular {
+    white-space: nowrap;
+  }
+
+  /* Una celda hereda vertical-align:middle de la tabla, así que en la fila de
+     una materia con título largo (hay títulos de 52 caracteres en el catálogo,
+     y en el ancho de la hoja pasan a dos líneas) el NRC y la sección bajan 9px
+     a buscar el medio de la fila mientras el título arranca arriba: el número
+     que se teclea deja de estar en la línea de su materia. */
+  .hoja-secretaria th,
+  .hoja-secretaria td {
+    vertical-align: baseline;
+  }
+
+  /* "Si no hay cupo" se lee de pie y en el mostrador, buscando un código. Con
+     sangría francesa cada código queda solo contra el margen izquierdo en vez
+     de perderse dentro del párrafo anterior. */
+  .hoja-secretaria li {
+    padding-left: 1.2em;
+    text-indent: -1.2em;
   }
 }
 
@@ -287,8 +468,11 @@ body {
   }
 }
 
+/* El caret del landing aparece una vez y se queda: una animación que repinta
+   para siempre mantiene viva una capa de composición y no dice nada nuevo
+   después del primer ciclo. */
 .caret-blink {
-  animation: caret-blink 1.1s steps(1) infinite;
+  animation: caret-blink 1.1s steps(1) 3;
 }
 
 /* Motion mínimo y funcional; respetar prefers-reduced-motion. */

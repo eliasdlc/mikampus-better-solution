@@ -1,4 +1,4 @@
-import { loginToPeopleSoft } from './login.js';
+import { loginForRecon } from './reconLogin.js';
 import fs from 'node:fs/promises';
 
 // Recon de Fase 4: notas (Academic Records) y holds/pendientes (Centro del
@@ -82,7 +82,7 @@ async function shapeOf(frame) {
   });
 }
 
-const { browser, page } = await loginToPeopleSoft({ headless: true });
+const { browser, page } = await loginForRecon();
 try {
   // ---------- 1. NOTAS ----------
   console.log('\n=== ACADEMIC RECORDS → Notas ===');

@@ -9,10 +9,12 @@ import assert from 'node:assert/strict';
 
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-shared-watcher-'));
 process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
+process.env.MIKAMPUS_CREDENTIALS_FILE = path.join(dir, 'credenciales.env');
 process.env.MIKAMPUS_SILENT = '1';
 process.env.SYNC_TERM = '1930';
 
 const { db } = await import('../src/db.js');
+const { writeCredential } = await import('../src/credentialStore.js');
 const { saveSection } = await import('../src/peoplesoft/catalog.js');
 const { scrapedSectionSchema } = await import('../src/shared/schemas.ts');
 const scheduler = await import('../src/scheduler.js');
@@ -56,6 +58,7 @@ try {
   db.exec(`
     INSERT INTO watchers (user_id, interval_ms) VALUES (1, 45000), (2, 45000), (3, 45000);
   `);
+  writeCredential({ username: 'operator', password: 'test-only' });
 
   const scanned = [];
   const restoreScanner = scheduler.setSharedWatcherScanner(async (target) => {

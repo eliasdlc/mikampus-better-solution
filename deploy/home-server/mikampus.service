@@ -1,0 +1,23 @@
+[Unit]
+Description=mikampus single-user home server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mikampus
+WorkingDirectory=/var/lib/mikampus
+Environment=MIKAMPUS_DB=/var/lib/mikampus/mikampus.db
+Environment=MIKAMPUS_RUNTIME_DIR=/var/lib/mikampus/runtime
+# Este unit existe solo para Home Server, así que el modo no se deja a que
+# alguien lo elija en el onboarding: una base recién creada arrancaría en
+# Desktop e intentaría notificaciones nativas en un host sin escritorio.
+Environment=MIKAMPUS_RUNTIME_MODE=home-server
+ExecStart=/usr/local/bin/mikampus start
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

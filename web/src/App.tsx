@@ -1,22 +1,48 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Layout } from './components/Layout.tsx';
 import { Dashboard } from './routes/Dashboard.tsx';
-import { Planear } from './routes/Planear.tsx';
 import { Horario } from './routes/Horario.tsx';
 import { Inscripcion } from './routes/Inscripcion.tsx';
+import { Ciclo } from './routes/Ciclo.tsx';
 import { Academico } from './routes/Academico.tsx';
 import { Trayectoria } from './routes/Trayectoria.tsx';
 import { Ajustes } from './routes/Ajustes.tsx';
 import { Landing } from './routes/Landing.tsx';
 import { Login } from './routes/Login.tsx';
 import { Docs } from './routes/Docs.tsx';
+import { Onboarding } from './routes/Onboarding.tsx';
 import { useAuth } from './lib/auth.tsx';
+import { fetchOnboarding } from './lib/api.ts';
+import { legacyPlanTarget } from './lib/legacyRoutes.ts';
+
+// El mapeo vive en lib/legacyRoutes.ts para poder probarlo sin montar router.
+function LegacyPlanRedirect() {
+  const { pathname } = useLocation();
+  const [params] = useSearchParams();
+  return <Navigate to={legacyPlanTarget(pathname, params)} replace />;
+}
 
 export function App() {
   const { loading, authenticated } = useAuth();
+  // El onboarding es lo primero que se resuelve, incluso antes del landing: sin
+  // modo elegido ni browser instalado no hay nada que mikampus pueda hacer, y
+  // mandarlo a una terminal sería fallar el objetivo de la fase.
+  const onboarding = useQuery({ queryKey: ['onboarding'], queryFn: fetchOnboarding, enabled: !authenticated });
+  const needsSetup =
+    !authenticated && onboarding.data != null && ['mode', 'prerequisites', 'browser'].includes(onboarding.data.step);
 
-  if (loading) {
+  if (loading || (!authenticated && onboarding.isLoading)) {
     return <main className="text-muted flex min-h-full items-center justify-center text-sm">Abriendo mikampus…</main>;
+  }
+
+  if (needsSetup) {
+    return (
+      <Routes>
+        <Route path="/docs" element={<Docs />} />
+        <Route path="*" element={<Onboarding />} />
+      </Routes>
+    );
   }
 
   if (!authenticated) {
@@ -41,12 +67,22 @@ export function App() {
           <Layout>
             <Routes>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/planear" element={<Planear />} />
-              <Route path="/planner" element={<Navigate to="/planear?tab=materias" replace />} />
-              <Route path="/builder" element={<Navigate to="/planear?tab=horario" replace />} />
+              {/* Planear se fusionó dentro del workspace de Inscripción (P2).
+                  Los redirects conservan el plan abierto y mandan a la etapa
+                  equivalente: un bookmark viejo no puede caer en un 404. */}
+              <Route path="/planear" element={<LegacyPlanRedirect />} />
+              <Route path="/planner" element={<LegacyPlanRedirect />} />
+              <Route path="/builder" element={<LegacyPlanRedirect />} />
+              {/* La mesa se absorbió en la etapa "grupos" del recorrido. Era el
+                  mismo trabajo en otro destino, y encima abría siempre en el
+                  ciclo siguiente sin selector: el día que cerraba tu
+                  modificación, "Armar el ciclo" te llevaba a un ciclo con cinco
+                  materias publicadas. */}
+              <Route path="/mesa" element={<LegacyPlanRedirect />} />
               <Route path="/buscar" element={<Navigate to="/" replace />} />
               <Route path="/horario" element={<Horario />} />
               <Route path="/inscripcion" element={<Inscripcion />} />
+              <Route path="/ciclo" element={<Ciclo />} />
               <Route path="/trayectoria" element={<Trayectoria />} />
               <Route path="/academico" element={<Academico />} />
               <Route path="/holds" element={<Navigate to="/" replace />} />

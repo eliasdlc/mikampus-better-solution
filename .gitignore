@@ -5,3 +5,6 @@ node_modules/
 screenshots/
 data/
 public/dist/
+/build/
+/dist/
+/release/

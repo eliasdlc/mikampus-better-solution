@@ -11,9 +11,40 @@
 ## Estado actual
 
 - **Fecha de última actualización:** 2026-07-22
-- **Rama de trabajo:** `feat/open-source-ready`, creada desde `dev` y preservada tras el
-  merge del PR #3 hacia `dev`.
-- **Fase en curso:** ninguna — Fase 0 cerrada; Fase 1 aún no iniciada.
+- **Rama de trabajo:** `feat/single-user-secure`, creada desde `dev`. La rama histórica
+  `feat/open-source-ready` queda preservada tras el merge de Fase 0.
+- **Fase en curso:** ninguna. Fase 7 cerró con P0–P6 de
+  [`PLAN-PULIDO-UTILIDAD.md`](./PLAN-PULIDO-UTILIDAD.md) completas, y con eso se
+  desbloquearon y se ejecutaron los gates de validación de Fases 5 y 6 que
+  estaban esperando ese cierre. Lo único pendiente es **publicar**, que no es
+  una tarea del plan sino una decisión del operador: configurar el environment
+  protegido del repositorio y crear el primer tag. Nada de eso se hizo desde un
+  checkout local.
+- **Cierre de implementación de Fase 5:** se genera un tarball standalone Linux x64 con
+  runtime Node, installer/uninstaller, SHA-256, SBOM, procedencia y notices; el
+  flujo de smoke definido cubre first-run, stop/start, upgrade y preservación de
+  datos. El candidato npm se empaqueta y ejecuta localmente con `npx` bajo el nombre
+  público `mikampus`. P2 queda resuelta: se mantiene ese nombre, con disclaimer
+  visible de no afiliación a PUCMM. P3 se declara de forma visible (el binario
+  Linux no está firmado). El modo de compatibilidad puede bloquear mutaciones
+  del scraper sin borrar datos. Por decisión del usuario, no se ejecutan los
+  gates de validación ni se publica npm/release hasta cerrar el plan; por eso la
+  fase conserva estado 🟨 y no afirma todavía su aceptación formal.
+- **Implementación de Fase 6:** el tag `vX.Y.Z` tiene un workflow de GitHub Actions con
+  dependencias bloqueadas y Actions fijadas por SHA: gates de source, scan público, npm
+  pack y smoke de artifact/instalación en Ubuntu nativo. Solo después crea un release en
+  borrador, publica npm con OIDC provenance, adjunta los assets aprobados y lo publica.
+  El manifest de la landing se genera desde esos assets; la landing estática de Vercel lo
+  consume sin API cliente de GitHub e informa plataforma, checksum, requisitos y npm.
+  README y guías públicas cubren modos, límites, seguridad, Home Server, fixtures,
+  plataformas, contribución y releases. Falta configurar el environment protegido y
+  ejecutar un tag real: no se publicaron npm, release ni Vercel desde este trabajo.
+- **Gate de utilidad previo al release:** el diagnóstico de producto encontró fallos de
+  identidad de ciclos, sincronización, agenda, inscripción, horario y proyecciones que
+  pueden hacer que datos existentes parezcan ausentes o que una cifra correcta resulte
+  imposible de auditar. El plan P0–P6 corrige la base de datos primero y luego consolida
+  Inscripción, reconstruye Inicio alrededor del día académico, enriquece Mi horario y hace
+  trazables el GPA, la gráfica y las señales. Ningún tag público se crea antes de su cierre.
 - **Precondición de rama:** resuelta. El trabajo pendiente de sincronización de horario se
   preservó en commits propios y se integró mediante PR, sin descartar cambios.
 - **Avance de Fase 0:** LICENSE MIT, notices, política de seguridad, disclaimers visibles,
@@ -28,17 +59,69 @@
 - **Cierre de Fase 0:** se retiraron los dos fixtures sin cobertura; los 18 restantes tienen
   propósito registrado y límite de tamaño en `fixtures/manifest.json`. `npm test`,
   `npm run typecheck`, `npm run lint`, `npm run audit:public` y `npm run audit:history`
-  pasan. P1/P2 permanecen como blockers explícitos del primer package o release.
+  pasan. P2 permanece como blocker explícito del primer package o release.
+- **Cierre de Fase 1:** `HEAD` conserva un único operador, una sola sesión/cola de
+  Playwright y bind fijo a loopback. El runtime hosted/multiusuario, sus deploys y sus
+  validadores se retiraron sin reescribir historia ni borrar ramas. Desktop usa el
+  almacén seguro del OS; Home Server conserva el vault cifrado separado. Las mutaciones
+  exigen Origin local, sesión, cookie HttpOnly/SameSite y CSRF; watcher y schedule exigen
+  consentimiento, propósito y vencimiento, y un rechazo de credenciales detiene el loop.
+- **Cierre de Fase 2:** el agente durable tiene lock exclusivo, ownership por PID y
+  healthcheck autenticado; `npm run mikampus --` controla start/stop/status/open/doctor,
+  servicio, backup/restore y erase-data confirmado. Watchers/schedules persisten estados,
+  gaps, backoff y submits inciertos; al volver se consulta una vez y nunca se reenvía un
+  submit incierto. `deploy/home-server/` mantiene datos en volumen, reinicia el servicio y
+  restringe el acceso remoto al túnel SSH de loopback. La fase queda validada en source;
+  los smokes de artefactos y matriz nativa corresponden al spike de Fase 3.
+- **Cierre de Fase 3:** `build:production` compila SPA y backend ESM sin type stripping
+  y produce un payload limpio con dependencias de producción. El launcher fija app-data
+  antes de SQLite/Playwright; el artifact smoke verificó SPA, migración SQLite fuera del
+  CWD, notices y un fixture Chromium descargado en primer uso. El ADR documenta SEA/Bun,
+  tamaño, browser y matriz: RC1 soporta Linux x64 (Ubuntu 24.04/Debian 12); los demás
+  targets quedan explícitamente fuera hasta tener smoke nativo y resolver P3. `npm pack
+  --dry-run` contiene sólo runtime, SPA y avisos, no fixtures/recon/tests/hosted.
+
+- **Validación de Fases 5 y 6 (post-P6):** con el gate de utilidad cerrado se
+  ejecutó la batería completa de release en local, toda en verde:
+  `build:production`, `smoke:package` (SPA, SQLite en app-data, payload
+  mínimo), `smoke:distribution` (archive, checksum, first-run, stop/start,
+  upgrade y uninstall preservando datos), `smoke:npm-package` (86 archivos,
+  runtime y avisos, sin source ni fixtures, `npx` verde),
+  `smoke:lifecycle` (primer uso sin terminal, origen ajeno rechazado),
+  `test:release-manifest`, `audit:public` y `audit:history` (154 revisiones).
+  El smoke responsive se reparó —llevaba fallando desde `7131332` y dependía
+  del estado local de la máquina— y ahora cubre 7 rutas × 390/768/1440 px con
+  fixtures sintéticos.
+
+  **Lo que queda es del operador, no del plan:** el environment protegido de
+  GitHub es una configuración del repositorio y el primer tag es una decisión
+  de publicación. Ninguna de las dos se ejecuta desde acá.
+
+- **Cierre de Fase 4:** el primer uso corre sin terminal (modo con garantías,
+  prerequisitos, browser con progreso y recién después la credencial) y una barra
+  permanente publica agente, watcher, gap, backoff, próxima acción, vencimiento de
+  credencial y si el equipo debe seguir despierto. El esquema tiene versión,
+  migraciones transaccionales, copia pre-upgrade, recuperación ante fallo y
+  compatibilidad de rollback declarada. Las copias se deciden contra la última
+  exitosa con catch-up al arrancar, se verifican y se exportan a destino elegido.
+  El dedupe de notificaciones es durable, cada aviso lleva deep-link y los
+  adaptadores externos nacen apagados declarando destino, dependencia y payload.
+  Diagnósticos redactados en app-data con salida solo explícita; `erase-data` y
+  `uninstall` muestran preview antes de borrar. Update-check manual u apagado, con
+  descarga verificada por SHA-256 y flujo con respaldo y camino de vuelta. El paso
+  `install` del updater queda inyectado a propósito: el instalador real es Fase 5
+  (ver `docs/adr/0002-data-lifecycle.md`).
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
 | 0 | Contrato local, privacidad y desbloqueo open source | ✅ Hecho |
-| 1 | Single-user seguro (auth local, credenciales, retiro hosted) | ⬜ Pendiente |
-| 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ⬜ Pendiente |
-| 3 | Spike de empaquetado y build de producción | ⬜ Pendiente |
-| 4 | Onboarding, notificaciones y ciclo de vida de datos | ⬜ Pendiente |
-| 5 | Distribución (instaladores/binarios + npm) | ⬜ Pendiente |
-| 6 | CI de releases, documentación y landing | ⬜ Pendiente |
+| 1 | Single-user seguro (auth local, credenciales, retiro hosted) | ✅ Hecho |
+| 2 | Runtime durable (Desktop + Home Server, lifecycle, watcher) | ✅ Hecho |
+| 3 | Spike de empaquetado y build de producción | ✅ Hecho |
+| 4 | Onboarding, notificaciones y ciclo de vida de datos | ✅ Hecho |
+| 5 | Distribución (instaladores/binarios + npm) | ✅ Validada (sin publicar) |
+| 6 | CI de releases, documentación y landing | ✅ Validada (sin publicar) |
+| 7 | Pulido de utilidad para lanzamiento (P0–P6) | ✅ Hecho |
 
 Leyenda: ⬜ pendiente · 🟨 en curso · ✅ hecho.
 
@@ -165,7 +248,7 @@ Confirmadas por el usuario. Cambiarlas requiere una decisión explícita nueva.
 |---|----------|---------|-------|
 | D1 | **NO Electron** | Se descartó por pesado. Un launcher/control CLI habla con un agente liviano y abre la UI en el navegador; el agente no depende de que la pestaña siga abierta. | 2026-07-21 |
 | D2 | **Distribución: ambas formas** | (a) artefacto/installer standalone por OS para estudiantes; (b) npm para devs con Node ≥24. Packager, tamaño y formatos exactos se cierran con evidencia en el spike. | 2026-07-21 |
-| D3 | **Browser administrado en primer arranque** | No se bundlea Chromium por defecto. Se prueba headless shell, browser compatible ya instalado y descarga Playwright; tamaño/estrategia final salen del spike. | 2026-07-21 |
+| D3 | **Browser existente primero; descarga como respaldo** | No se bundlea Chromium por defecto ni se obliga a instalar otro navegador: se reutiliza Chrome/Chromium compatible ya instalado. Solo si no existe uno se ofrece una descarga aislada administrada por Playwright. | 2026-07-22 |
 | D4 | **Landing en Vercel** | Sitio estático nuevo (`landing/`) que consume un manifest generado por release, sugiere OS y siempre muestra todos los artefactos/checksums + npm para devs. | 2026-07-21 |
 | D5 | **Licencia MIT** | Incluye la cláusula estándar de no-garantía, sin presentarla como garantía de legalidad o protección absoluta. | 2026-07-21 |
 | D6 | **Sin servicio hosted operado por el proyecto** | Se retira DigitalOcean/Caddy/Litestream y todo modo multiusuario. Sí se permite un `deploy/home-server/` single-user para hardware controlado por el estudiante. | 2026-07-21 |
@@ -176,17 +259,14 @@ Confirmadas por el usuario. Cambiarlas requiere una decisión explícita nueva.
 | D11 | **Notificaciones locales por defecto** | Desktop usa notificaciones nativas. Home Server ofrece feed local; cualquier push/webhook/VPN/ntfy externo es opt-in y se declara como tráfico externo. | 2026-07-21 |
 | D12 | **Credenciales en almacén del OS** | Desktop usa Credential Manager/Keychain/Secret Service; Home Server usa vault cifrado con secret separado. `account.json` en claro se elimina. | 2026-07-21 |
 
-### Decisiones pendientes (a confirmar)
+### Decisiones resueltas y pendientes
 
-- **P1 — ¿Qué hacer con el código hosted/multiusuario?** Dos opciones: (a) **retirarlo del
-  HEAD** (queda preservado en la historia de git y en las ramas `phase/*`, cumpliendo la
-  convención de retención) — más limpio para un repo open source y legalmente más nítido;
-  (b) archivarlo solo como documentación histórica claramente separada de
-  `deploy/home-server/`. Recomendación: opción (a).
-- **P2 — El nombre "mikampus".** Es casi idéntico a "MiCampus", el nombre del portal de
-  PUCMM → posible cercanía de marca. Mínimo: disclaimer "no afiliado ni respaldado por
-  PUCMM" bien visible. A evaluar: renombrar. El repo ya es público; decidir antes de
-  publicar paquetes/instaladores y promocionar la landing.
+- **P1 — Resuelta (2026-07-22):** se retiró el código hosted/multiusuario de `HEAD`,
+  preservando la historia y las ramas existentes. La documentación de despliegue hosted se
+  retiró junto con el runtime.
+- **P2 — Resuelta (2026-07-22):** se mantiene el nombre **mikampus**. Conserva el
+  disclaimer visible de que no está afiliado ni respaldado por PUCMM; el nombre no se
+  presenta como autorización o respaldo institucional.
 - **P3 — Firma y notarización.** Definir después del spike si el primer release acepta la
   fricción de Gatekeeper/SmartScreen o si firma de macOS/Windows es requisito. Mientras
   siga pendiente, "descargar y doble clic" no se considera demostrado.
@@ -393,8 +473,9 @@ reconcilia; Home Server sobrevive reboot y sigue siendo single-user.
    persistente configurado.
 5. El launcher debe fijar paths/secrets antes de importar módulos que abren SQLite; usar
    import dinámico o proceso hijo para evitar env configurado demasiado tarde.
-6. Chromium first-run: probar headless-only shell, browser instalado compatible y browser
-   administrado por Playwright; medir tamaño y fiabilidad antes de cerrar D3.
+6. Chromium first-run: reutilizar primero el browser compatible instalado; solo ofrecer el
+   browser administrado por Playwright como respaldo, sin instalarlo en el sistema. Medir
+   tamaño y fiabilidad antes de cerrar D3.
 7. Probar descarga con progreso, cancelación, retry, proxy, CA custom, poco disco,
    interrupción y upgrade de Playwright/browser; garbage-collect solo versiones seguras.
 8. Cerrar P4 con matriz explícita de OS/CPU y mínimos soportados. Linux significa distros
@@ -488,13 +569,34 @@ distribución en un backend de datos.
 checksums y release notes; landing ofrece el manifest correcto; un tercero puede elegir modo,
 instalar, entender límites, recuperar datos y desinstalar usando solo documentación pública.
 
+### Fase 7 — Pulido de utilidad para lanzamiento
+
+**Meta:** asegurar que el primer release no sea solamente instalable y seguro, sino útil y
+confiable para la jornada académica real del estudiante.
+
+La especificación ejecutable vive en
+[`PLAN-PULIDO-UTILIDAD.md`](./PLAN-PULIDO-UTILIDAD.md). Sus fases obligatorias son:
+
+1. P0 — identidad canónica de ciclos, migración y recuperación de horarios existentes;
+2. P1 — sincronización universal, periódica y observable;
+3. P2 — fusión de Planear dentro del workspace de Inscripción;
+4. P3 — Inicio centrado en clases y próximas fechas oficiales de PUCMM;
+5. P4 — horario con mejor jerarquía, aula y enriquecimiento seguro de profesor;
+6. P5 — proyecciones de GPA auditables, trayectoria interactiva y señales priorizadas;
+7. P6 — pruebas integradas, responsive, accesibilidad y gate final de utilidad.
+
+**Aceptación:** P0–P6 están marcadas ✅ con su evidencia; cada uno de los nueve problemas
+del diagnóstico tiene prueba automática y check manual; suite, typecheck y lint pasan; no
+hay datos académicos reales en fixtures o documentación. Solo después se permite ejecutar
+el primer tag público definido por Fases 5–6.
+
 ---
 
 ## Procesos y convenciones
 
-- **Ramas:** `main` → `dev` → `feat/open-source-ready`. Todo el trabajo del giro en esa
-  rama de tarea. Las ramas `phase/*` existentes se **preservan** (registro histórico); no
-  se borran.
+- **Ramas:** `main` → `dev` → `feat/single-user-secure`. El trabajo restante del giro y
+  el gate de utilidad viven en esa rama de tarea. `feat/open-source-ready` y las ramas
+  `phase/*` existentes se **preservan** como registro histórico; no se borran.
 - **Commits:** Conventional Commits, atómicos, sin trailers de atribución de IA.
 - **Verificación (obligatoria antes de cerrar fase o commitear):** `npm test`, `npm run
   typecheck`, `npm run lint` y los smokes de la fase. Todos verdes = candidato a "hecho";
@@ -572,8 +674,7 @@ Cada caso debe existir como test automatizado o smoke reproducible antes del pri
 
 - **Chats fuente:** legalidad → sesión `39d6f6b9`; descarte de Electron y forma de
   distribución → `2bcffda4` y `dc8b5f0a`.
-- **Docs del repo:** [`PLAN.md`](./PLAN.md) (producto, fases 1–10), [`LANZAMIENTO.md`](./LANZAMIENTO.md)
-  (piloto hosted — histórico), [`MAPA-MICAMPUS.md`](./MAPA-MICAMPUS.md) (mapa del portal),
-  [`README.md`](./README.md).
+- **Docs del repo:** [`PLAN.md`](./PLAN.md) (producto, fases 1–10),
+  [`MAPA-MICAMPUS.md`](./MAPA-MICAMPUS.md) (mapa del portal), [`README.md`](./README.md).
 - **Memoria del asistente:** `pivot-desktop-opensource`, `legalidad-local-bucket1`,
   `phase-progress`, `portal-map-full`.

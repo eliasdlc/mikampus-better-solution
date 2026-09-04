@@ -1,7 +1,35 @@
 {
-  "name": "mikampus-better-solution",
+  "name": "mikampus",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "Herramienta local y single-user para operar mikampus con tu propia cuenta.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eliasdlc/mikampus-better-solution.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eliasdlc/mikampus-better-solution/issues"
+  },
+  "homepage": "https://github.com/eliasdlc/mikampus-better-solution#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "mikampus": "bin/mikampus.mjs",
+    "mikampus-mcp": "bin/mikampus-mcp.mjs"
+  },
+  "files": [
+    "dist/app/**",
+    "dist/public/**",
+    "bin/**",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES",
+    "README.md"
+  ],
   "type": "module",
   "scripts": {
     "install-browsers": "playwright install chromium",
@@ -15,15 +43,16 @@
     "recon:my-classes": "node src/recon-my-classes.js",
     "recon:academico": "node src/recon-academico.js",
     "recon:drop": "node src/recon-drop.js",
+    "recon:deadlines": "node src/recon-deadlines.js",
     "recon:reconciliation": "node src/recon-reconciliation.js",
-    "validate:hosted-portal": "node scripts/validate-hosted-portal.mjs",
-    "test": "node scripts/test-course-code.mjs && node scripts/test-catalog-parser.mjs && node scripts/test-browse-parser.mjs && node scripts/test-advisement-parser.mjs && node scripts/test-advisement-tree.mjs && node scripts/test-advisement-db.mjs && node scripts/test-grades-parser.mjs && node scripts/test-holds-parser.mjs && node scripts/test-grades-db.mjs && node scripts/test-grade-diff.mjs && node scripts/test-gpa-projection.mjs && node scripts/test-insights.mjs && node scripts/test-catalog-db.mjs && node scripts/test-cart-parser.mjs && node scripts/test-cart-db.mjs && node scripts/test-reconciliation.mjs && node scripts/test-plans-db.mjs && node scripts/test-goals-db.mjs && node scripts/test-solver.mjs && node scripts/test-recommend.mjs && node scripts/test-notify.mjs && node scripts/test-cron.mjs && node scripts/test-backups.mjs && node scripts/test-related-radio.mjs && node scripts/test-schedule-parser.mjs && node scripts/test-grid.mjs && node scripts/test-agenda.mjs && node scripts/test-ics.mjs && node scripts/test-terms.mjs && node scripts/test-terms-db.mjs && node scripts/test-term-default.mjs && node scripts/test-trajectory.mjs && node scripts/test-phase0.mjs && node scripts/test-fixture-sanitizer.mjs && node scripts/test-fixture-policy.mjs && node scripts/test-credential-vault.mjs && node scripts/test-auth.mjs && node scripts/test-scheduler-db.mjs && node scripts/test-shared-watcher.mjs && node scripts/test-webpush.mjs && node scripts/test-phase4.mjs && node scripts/test-launch-readiness.mjs",
+    "test": "rm -rf /tmp/mikampus-test && mkdir -p /tmp/mikampus-test && export MIKAMPUS_DATA_DIR=/tmp/mikampus-test && node scripts/test-course-code.mjs && node scripts/test-catalog-parser.mjs && node scripts/test-browse-parser.mjs && node scripts/test-advisement-parser.mjs && node scripts/test-advisement-tree.mjs && node scripts/test-advisement-db.mjs && node scripts/test-grades-parser.mjs && node scripts/test-holds-parser.mjs && node scripts/test-grades-db.mjs && node scripts/test-grade-diff.mjs && node scripts/test-gpa-projection.mjs && node scripts/test-insights.mjs && node scripts/test-catalog-db.mjs && node scripts/test-section-campus.mjs && node scripts/test-campus-order.mjs && node scripts/test-catalog-campus-db.mjs && node scripts/test-catalog-sweep.mjs && node scripts/test-cart-parser.mjs && node scripts/test-cart-db.mjs && node scripts/test-cart-remove.mjs && node scripts/test-reconciliation.mjs && node scripts/test-plans-db.mjs && node scripts/test-mesa.mjs && node scripts/test-goals-db.mjs && node scripts/test-solver.mjs && node scripts/test-pensum-rules.mjs && node scripts/test-eligibility.mjs && node scripts/test-recommend.mjs && node scripts/test-degree-path.mjs && node scripts/test-notify.mjs && node scripts/test-cron.mjs && node scripts/test-backups.mjs && node scripts/test-related-radio.mjs && node scripts/test-schedule-parser.mjs && node scripts/test-grid.mjs && node scripts/test-agenda.mjs && node scripts/test-ics.mjs && node scripts/test-terms.mjs && node scripts/test-terms-db.mjs && node scripts/test-term-default.mjs && node scripts/test-term-identity.mjs && node scripts/test-term-dates.mjs && node scripts/test-term-events-db.mjs && node scripts/test-term-events-store.mjs && node scripts/test-term-phase.mjs && node scripts/test-calendar-phases.mjs && node scripts/test-enrollment-deadlines.mjs && node scripts/test-schedule-identity.mjs && node scripts/test-trajectory.mjs && node scripts/test-phase0.mjs && node scripts/test-fixture-sanitizer.mjs && node scripts/test-fixture-policy.mjs && node scripts/test-credential-store.mjs && node scripts/test-auth.mjs && node scripts/test-scheduler-db.mjs && node scripts/test-shared-watcher.mjs && node scripts/test-sync-orchestrator.mjs && node scripts/test-legacy-routes.mjs && node scripts/test-academic-calendar.mjs && node scripts/test-sections.mjs && node scripts/test-section-merge.mjs && node scripts/test-projection.mjs && node scripts/test-journeys.mjs && node scripts/test-seat-trend.mjs && node scripts/test-class-reminders.mjs && node scripts/test-watcher-scope.mjs && node scripts/test-runtime.mjs && node scripts/test-webpush.mjs && node scripts/test-phase4.mjs && node scripts/test-launch-readiness.mjs && node scripts/test-paths.mjs && node scripts/test-migrations.mjs && node scripts/test-onboarding.mjs && node scripts/test-status.mjs && node scripts/test-notifications.mjs && node scripts/test-backup-lifecycle.mjs && node scripts/test-diagnostics.mjs && node scripts/test-erase.mjs && node scripts/test-updates.mjs && node scripts/test-intervals.mjs && node scripts/test-mcp-isolation.mjs && node scripts/test-mcp-read.mjs && node scripts/test-mcp-tickets.mjs && node scripts/test-mcp-kino.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src scripts --max-warnings 0",
     "audit:public": "node scripts/audit-public.mjs",
     "audit:history": "node scripts/audit-public.mjs --history",
-    "check:launch": "node scripts/check-launch-readiness.mjs",
     "sync:catalog": "node scripts/sync-catalog.mjs",
+    "sync:pensum": "node scripts/sync-pensum-rules.mjs",
+    "import:catalog": "node scripts/import-catalog.mjs",
     "smoke": "node scripts/smoke.mjs",
     "smoke:phase85": "node scripts/smoke-phase85.mjs",
     "smoke:phase9": "node scripts/smoke-phase9.mjs",
@@ -32,12 +61,23 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node src/server.js"
+    "start": "node src/launcher.js",
+    "mikampus": "node src/launcher.js cli",
+    "build:production": "node scripts/build-production.mjs",
+    "smoke:package": "node scripts/test-packaging.mjs",
+    "mcp": "node src/mcp/stdio.js",
+    "smoke:npm-package": "node scripts/test-npm-package.mjs",
+    "smoke:lifecycle": "node scripts/smoke-lifecycle.mjs",
+    "build:distribution": "node scripts/build-distribution.mjs",
+    "smoke:distribution": "node scripts/test-distribution.mjs",
+    "test:release-manifest": "node scripts/test-release-manifest.mjs",
+    "prepack": "npm run build:production && node scripts/prepare-npm-package.mjs"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.2.10",
     "@fontsource/inter": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@tanstack/react-query": "^5.101.2",
     "cmdk": "^1.1.1",
     "dotenv": "^16.4.5",
@@ -57,7 +97,9 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "esbuild": "^0.28.1",
     "eslint": "^9.39.5",
+    "pdfjs-dist": "^4.10.38",
     "tailwindcss": "^4.3.2",
     "typescript": "^7.0.2",
     "vite": "^8.1.4"

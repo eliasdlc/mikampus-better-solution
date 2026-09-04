@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import {
   cycleOrdinal,
   cyclesBetween,
@@ -39,7 +40,7 @@ const { extractAdvisementTree, parseAdvisementTree, saveRequirementTree, readReq
   '../src/peoplesoft/advisement.js'
 );
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 await page.setContent(await readFile('fixtures/recon-advisement.html', 'utf8'));
 const raw = await page.evaluate(extractAdvisementTree);

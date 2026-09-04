@@ -175,6 +175,40 @@ export function parseGradeStats({ termLabel, rows }) {
   return { termLabel: termLabel ?? null, term, cumulative };
 }
 
+// El acumulado que publica el portal se guarda, no solo se compara: es el
+// baseline de toda proyección (P5 §1). Nuestro cálculo por materias queda como
+// auditoría — si los dos discrepan, la app lo dice y deja de proyectar.
+export function saveOfficialTotals(userId, cumulative, termLabel = null) {
+  if (!cumulative) return null;
+  db.prepare(
+    `INSERT INTO gpa_official (user_id, gpa, units_toward_gpa, grade_points, units_passed, term_label, captured_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET
+       gpa = excluded.gpa, units_toward_gpa = excluded.units_toward_gpa,
+       grade_points = excluded.grade_points, units_passed = excluded.units_passed,
+       term_label = excluded.term_label, captured_at = datetime('now')`
+  ).run(
+    userId,
+    cumulative.gpa ?? null,
+    cumulative.unitsTowardGpa ?? null,
+    cumulative.gradePoints ?? null,
+    cumulative.unitsPassed ?? null,
+    termLabel
+  );
+  return cumulative;
+}
+
+export function readOfficialTotals(userId) {
+  const row = db
+    .prepare(
+      `SELECT gpa, units_toward_gpa AS unitsTowardGpa, grade_points AS gradePoints,
+              units_passed AS unitsPassed, term_label AS termLabel, captured_at AS capturedAt
+       FROM gpa_official WHERE user_id = ?`
+    )
+    .get(userId);
+  return row ?? null;
+}
+
 // El índice de mikampus se calcula; el del portal se lee. Si no coinciden, la
 // universidad cambió una regla (la escala, qué nota cuenta, cómo trata una
 // repetida) y todo lo que dependa del cálculo —el what-if incluido— está
@@ -225,7 +259,10 @@ export function termSummaries(courses) {
   });
 }
 
-async function findFrame(page, selector, { timeout = 30000 } = {}) {
+// `optional` distingue "esto tiene que estar o no hay nada que leer" de "quiero
+// saber si está". Sin esa distinción, una pantalla que cargó bien pero todavía
+// no tiene datos era indistinguible de una que no cargó.
+async function findFrame(page, selector, { timeout = 30000, optional = false } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
     for (const frame of page.frames()) {
@@ -237,13 +274,56 @@ async function findFrame(page, selector, { timeout = 30000 } = {}) {
     }
     await page.waitForTimeout(300);
   }
+  if (optional) return null;
   throw new Error(`No se encontró el elemento esperado: ${selector}`);
 }
 
-// El histórico completo del estudiante. Dos cargas: Course History trae las
-// materias con su nota, y View My Grades los totales del portal para
-// contrastar los nuestros. userId dice de quién es la sesión que scrapea — el
-// rastro en sync_log es personal.
+// El bloque de totales de View My Grades. Solo existe si el ciclo que la
+// pantalla abre ya tiene calificaciones.
+const GRADE_STATS_SELECTOR = '[id^="DERIVED_SSS_GRD_DESCR1$"]';
+// El enlace "cambiar término", que sí está siempre que la pantalla haya
+// cargado. Es lo que permite decir "abrió y no hay notas todavía" en vez de
+// "no se pudo abrir".
+const GRADES_SCREEN_SELECTOR = '[id="DERIVED_SSS_SCT_SSS_TERM_LINK"]';
+
+/**
+ * Contrasta el índice que calculamos contra el que publica el portal.
+ *
+ * Es una AUDITORÍA, no la fuente: las notas ya vinieron enteras de Course
+ * History. Por eso nunca lanza. Que View My Grades abra en un ciclo recién
+ * empezado y no tenga un solo total que mostrar es un estado normal del
+ * calendario, no una falla de sincronización, y tratarlo como error dejaba el
+ * histórico completo en memoria sin guardar.
+ */
+async function auditAgainstPortal(page, userId, summary) {
+  try {
+    await page.goto(GRADES_URL, { waitUntil: 'commit' });
+    await page.waitForTimeout(7000);
+    const frame = await findFrame(page, GRADE_STATS_SELECTOR, { timeout: 9000, optional: true });
+    if (!frame) {
+      const loaded = await findFrame(page, GRADES_SCREEN_SELECTOR, { timeout: 4000, optional: true });
+      return {
+        portal: null,
+        mismatches: [],
+        warning: loaded
+          ? 'el portal todavía no publica totales del ciclo que abre View My Grades: el índice no se pudo contrastar'
+          : 'no se pudo abrir View My Grades: el índice no se pudo contrastar',
+      };
+    }
+    const portal = parseGradeStats(await frame.evaluate(extractGradeStats));
+    saveOfficialTotals(userId, portal.cumulative, portal.termLabel);
+    return { portal, mismatches: checkAgainstPortal(summary, portal.cumulative), warning: null };
+  } catch (error) {
+    return { portal: null, mismatches: [], warning: `el índice no se pudo contrastar con el portal (${error.message})` };
+  }
+}
+
+// El histórico completo del estudiante. Dos cargas con pesos muy distintos:
+// Course History trae las materias con su nota y es la fuente; View My Grades
+// trae los totales del portal y solo audita los nuestros. La segunda no puede
+// tumbar a la primera — un ciclo recién empezado no tiene totales publicados y
+// eso no vuelve viejo el histórico. userId dice de quién es la sesión que
+// scrapea: el rastro en sync_log es personal.
 export async function fetchGrades(page, { userId }) {
   await page.goto(STUDENT_CENTER_URL, { waitUntil: 'commit' });
   await page.waitForTimeout(7000);
@@ -259,22 +339,26 @@ export async function fetchGrades(page, { userId }) {
   const courses = parseCourseHistory(raw.rows, { knownSubjects: knownSubjects() });
   const summary = summarizeGrades(courses);
 
-  await page.goto(GRADES_URL, { waitUntil: 'commit' });
-  await page.waitForTimeout(7000);
-  frame = await findFrame(page, '[id^="DERIVED_SSS_GRD_DESCR1$"]');
-  const portal = parseGradeStats(await frame.evaluate(extractGradeStats));
+  const { portal, mismatches, warning } = await auditAgainstPortal(page, userId, summary);
 
-  const mismatches = checkAgainstPortal(summary, portal.cumulative);
+  // El estado es 'ok' porque las notas SE TRAJERON. Un índice que no cuadra es
+  // una advertencia que el orquestador emite aparte, no un fallo de sync:
+  // marcarlo 'error' congelaba la frescura (lastSync solo cuenta las filas ok),
+  // así que la pantalla decía "hace 9 días" justo después de actualizarse bien.
+  const notes = [
+    mismatches.length ? `el índice no cuadra con el portal — ${mismatches.join('; ')}` : null,
+    warning,
+  ].filter(Boolean);
   logSync({
     userId,
     kind: 'grades',
     term: null,
-    status: mismatches.length ? 'error' : 'ok',
-    detail: mismatches.length ? `el índice no cuadra con el portal — ${mismatches.join('; ')}` : 'course history',
+    status: 'ok',
+    detail: notes.length ? `course history · ${notes.join(' · ')}` : 'course history',
     rows: courses.length,
   });
 
-  return { courses, terms: termSummaries(courses), summary, portal, mismatches };
+  return { courses, terms: termSummaries(courses), summary, portal, mismatches, warning };
 }
 
 const insertGradeStmt = db.prepare(`

@@ -13,10 +13,14 @@ db.exec(`
     ('1930', 'Septiembre de 2026', '2026-09-01', '2026-12-07');
 `);
 
-assert.equal(planningTerm(null), '1930', 'el default de planificación es nextTerm');
-assert.equal(planningTerm('1920'), '1920', 'un término pedido explícitamente gana');
+// El mismo día fijo que usa test-terms-db: en julio de 2026, 1930 todavía es el
+// ciclo siguiente. Sin pasarlo, este test se rompía solo al llegar septiembre.
+const hoy = new Date(2026, 6, 17);
+
+assert.equal(planningTerm(null, null, hoy), '1930', 'el default de planificación es nextTerm');
+assert.equal(planningTerm('1920', null, hoy), '1920', 'un término pedido explícitamente gana');
 process.env.TARGET_TERM = '9999';
-assert.equal(planningTerm(null), '1930', 'TARGET_TERM ya no gobierna ningún default');
+assert.equal(planningTerm(null, null, hoy), '1930', 'TARGET_TERM ya no gobierna ningún default');
 delete process.env.TARGET_TERM;
 
 await rm(dir, { recursive: true, force: true });

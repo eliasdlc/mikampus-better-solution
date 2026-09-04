@@ -2,6 +2,7 @@
 // volcado por el recon (fixtures/, sin datos personales) y luego la capa de
 // escritura contra una DB desechable. Nada de esto toca el portal.
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,7 +15,7 @@ const { extractSchedule, toSchedule, saveSchedule, readSchedule, pickTermRow, co
   '../src/peoplesoft/mySchedule.js'
 );
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 
 try {

@@ -2,15 +2,39 @@
 // fechas reales y sin ellas. Es el gate de la fase: si esto se equivoca, el
 // Dashboard vuelve a anunciar como "próxima clase" una materia de septiembre.
 import assert from 'node:assert/strict';
-import { resolveTerms, cycleLabel, labelFor } from '../src/shared/terms.ts';
+import { resolveTerms, cycleLabel, labelFor, isStrmCode, cycleKey } from '../src/shared/terms.ts';
 
-// cycleLabel: cualquier mes cae en su ciclo. Los bordes son lo que importa.
+// cycleLabel deriva la etiqueta del MES DE INICIO del término. Los bordes son lo
+// que importa: los tres ciclos de PUCMM arrancan en enero, a finales de abril y
+// en septiembre. Un inicio en abril es el ciclo de Abril, nunca el de Enero —el
+// ciclo de Enero se extiende hasta abril pero jamás EMPIEZA ahí.
 assert.equal(cycleLabel(1, 2026), 'Enero de 2026');
-assert.equal(cycleLabel(4, 2026), 'Enero de 2026', 'abril todavía es el ciclo de enero (ene–abr)');
+assert.equal(cycleLabel(3, 2026), 'Enero de 2026', 'marzo: un inicio en marzo sigue siendo el ciclo de enero');
+assert.equal(cycleLabel(4, 2026), 'Abril de 2026', 'un ciclo que empieza en abril es Abril, no Enero');
 assert.equal(cycleLabel(5, 2026), 'Abril de 2026');
 assert.equal(cycleLabel(8, 2026), 'Abril de 2026', 'agosto es el ciclo de abril (may–ago)');
 assert.equal(cycleLabel(9, 2026), 'Septiembre de 2026');
 assert.equal(cycleLabel(12, 2026), 'Septiembre de 2026');
+
+// Un STRM que arranca a finales de abril: el bug era etiquetarlo "Enero de 2026".
+assert.equal(
+  labelFor({ code: '1920', label: null, startDate: '2026-04-28', endDate: '2026-08-15' }),
+  'Abril de 2026',
+  'una inscripción que arranca el 28 de abril es del ciclo de Abril'
+);
+
+// isStrmCode: la frontera entre los dos vocabularios de término.
+assert.equal(isStrmCode('1930'), true);
+assert.equal(isStrmCode('Abril de 2026'), false, 'una etiqueta no es un STRM');
+assert.equal(isStrmCode(null), false);
+
+// cycleKey: dos formas del mismo ciclo comparten llave; un STRM y su etiqueta también.
+assert.equal(cycleKey({ code: null, label: 'Abril de 2026', startDate: null, endDate: null }), '2026-04');
+assert.equal(
+  cycleKey({ code: '1920', label: null, startDate: '2026-04-28', endDate: null }),
+  '2026-04',
+  'el STRM sin etiqueta se ubica por su fecha de inicio'
+);
 
 // labelFor: un STRM sin etiqueta pero con fecha de inicio se nombra por su ciclo.
 assert.equal(

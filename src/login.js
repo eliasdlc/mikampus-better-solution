@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { chromium } from 'playwright';
-import { getCredentials } from './credentials.js';
+import { captureFailure } from './diagnostics.js';
+import { browserLaunchOptions } from './browser.js';
 
 const SIGNON_URL = 'https://micampus.pucmm.edu.do/psp/cs92pro/?cmd=login&languageCd=ENG';
 
@@ -18,9 +19,7 @@ async function fillVerified(page, selector, value, attempts = 3) {
   throw new Error(`No se pudo llenar ${selector} de forma estable en el signon`);
 }
 
-// Loguea unas credenciales concretas en un context NUEVO del browser dado. Es
-// la pieza que usa el pool multi-usuario (session.js): un Chromium compartido,
-// un context por estudiante — cookies y sesión del portal aisladas entre sí.
+// Loguea las credenciales del único operador en un context NUEVO del browser.
 // Si el login falla, el context se cierra acá mismo: no quedan contexts
 // huérfanos a medio loguear.
 export async function loginContext(browser, { username, password }) {
@@ -39,12 +38,10 @@ export async function loginContext(browser, { username, password }) {
   }
 }
 
-// El flujo standalone de siempre (recon, scripts): browser propio + las
-// credenciales de credentials.js (data/account.json si la página cambió de
-// cuenta, si no el .env — leídas en cada login, no congeladas al arrancar).
-export async function loginToPeopleSoft({ headless = true } = {}) {
-  const { username, password } = getCredentials();
-  const browser = await chromium.launch({ headless });
+// Flujo para recon local: la credencial se entrega explícitamente desde un
+// caller interactivo; no se lee de .env ni de un archivo en claro.
+export async function loginToPeopleSoft({ headless = true, username, password } = {}) {
+  const browser = await chromium.launch({ headless, ...(await browserLaunchOptions()) });
   try {
     const { context, page } = await loginContext(browser, { username, password });
     return { browser, context, page };
@@ -82,7 +79,9 @@ async function doSignon(page, { username, password }) {
     });
   } catch {
     const loginError = await page.locator('#login_error').textContent().catch(() => '');
-    await page.screenshot({ path: 'screenshots/login-timeout.png', timeout: 5000 }).catch(() => {});
+    // La captura tiene PII del portal: va a app-data/diagnostics con permisos
+    // propios, nunca al CWD desde donde se lanzó el agente.
+    const shot = await captureFailure(page, 'login-timeout');
     if (loginError && loginError.trim().length > 0) {
       // El portal contestó: la credencial es mala (o la cuenta está bloqueada).
       // Distinguirlo de un timeout importa aguas arriba: esto NO se reintenta.
@@ -90,6 +89,8 @@ async function doSignon(page, { username, password }) {
       err.credentialRejected = true;
       throw err;
     }
-    throw new Error('Timeout esperando redirección post-login. Ver screenshots/login-timeout.png');
+    throw new Error(
+      `Timeout esperando redirección post-login.${shot ? ` Diagnóstico local: ${shot}` : ''}`
+    );
   }
 }

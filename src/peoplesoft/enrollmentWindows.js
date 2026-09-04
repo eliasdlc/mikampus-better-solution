@@ -138,7 +138,20 @@ export async function syncEnrollmentWindows(page, { userId, onStep = () => {} })
       .click();
     await page.waitForTimeout(6_000);
     frame = await findFrame(page, '[id^="OPEN_START$"]');
-    if (!frame) throw new Error('PeopleSoft abrió Enrollment Dates sin fechas legibles');
+    if (!frame) {
+      // Que la pantalla abra sin una sola fila NO es un parser roto: entre el
+      // cierre de una ventana y la publicación de la siguiente, PeopleSoft no
+      // tiene ninguna cita que mostrar, y eso dura meses. Tratarlo como error
+      // dejaba la fuente vencida para siempre y reintentando cada media hora.
+      // Se distingue por el título de la transacción, que sí está siempre que
+      // la pantalla haya cargado.
+      const loaded = await findFrame(page, '[id^="DERIVED_REGFRM1_SS_TRANSACT_TITLE"]', 4_000);
+      if (!loaded) throw new Error('PeopleSoft no abrió Enrollment Dates');
+      // La ventana anterior se conserva a propósito: sigue siendo el último
+      // dato bueno y la UI la muestra con su antigüedad.
+      logSync({ userId, kind: 'enrollmentWindows', status: 'ok', rows: 0, detail: 'el portal no publica ninguna ventana ahora' });
+      return [];
+    }
     onStep('leyendo la ventana publicada…');
     const windows = parseEnrollmentWindows(await frame.evaluate(extractEnrollmentWindows));
     saveEnrollmentWindows(userId, windows);

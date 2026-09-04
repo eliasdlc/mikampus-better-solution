@@ -45,7 +45,7 @@ try {
   assert.equal(restored.schedules, 1, 'el disparo futuro se rearma');
   assert.equal(restored.dropped, 1, 'el disparo de hace 2 horas no se ejecuta a ciegas');
   assert.equal(restored.watchers, 1, 'el watcher persiste el reinicio');
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM schedules WHERE user_id = 8').get().n, 0, 'lo vencido se limpia');
+  assert.equal(db.prepare('SELECT state FROM schedules WHERE user_id = 8').get().state, 'missed', 'lo vencido se conserva como missed para explicar qué pasó');
   assert.ok(
     events.some((e) => e.type === 'notice' && e.userId === 8 && /no se ejecutó/.test(e.title)),
     'el dueño del disparo perdido recibe el aviso'

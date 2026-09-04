@@ -31,25 +31,57 @@ export type TermResolution = {
 
 // Un día como número entero (días desde epoch, en UTC) para comparar fechas sin
 // que la zona horaria meta un día de diferencia: acá solo importa el calendario.
-function dayNumber(year: number, month: number, day: number): number {
+// Se exportan porque el resolutor de fases (shared/termPhase.ts) compara las
+// mismas fechas: dos aritméticas de días en la misma app terminan discrepando
+// en un día justo el día que importa.
+export function dayNumber(year: number, month: number, day: number): number {
   return Date.UTC(year, month - 1, day) / 86_400_000;
 }
 
 // "2026-09-01" → su número de día. Se parsea el string a mano (no `new Date`)
 // para no arrastrar la hora ni la zona: un término es fechas de calendario.
-function isoToDayNumber(iso: string): number | null {
+export function isoToDayNumber(iso: string): number | null {
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return null;
   return dayNumber(Number(m[1]), Number(m[2]), Number(m[3]));
 }
 
-// Cualquier mes del año → la etiqueta del ciclo al que pertenece. Sirve para
-// derivar la etiqueta de un STRM cuando solo tenemos su fecha de inicio: una
+// El día de calendario de una fecha del sistema, leída en la zona local: lo que
+// para quien mira la pantalla es "hoy".
+export function dayOf(date: Date): number {
+  return dayNumber(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
+// El mes de INICIO de un término → la etiqueta del ciclo al que pertenece. Sirve
+// para derivar la etiqueta de un STRM cuando solo tenemos su fecha de inicio: una
 // inscripción que arranca el 1 de septiembre es del ciclo "Septiembre".
+//
+// La llave es el mes en que el ciclo EMPIEZA, no la mitad de su ventana: los tres
+// ciclos de PUCMM arrancan en enero, a finales de abril y en septiembre. Por eso
+// un inicio en abril es el ciclo "Abril" —no "Enero"—, aunque el ciclo de Enero
+// se extienda hasta abril con sus exámenes. El ciclo de Enero nunca EMPIEZA en
+// abril, así que una fecha de inicio en abril solo puede ser el ciclo de Abril.
 export function cycleLabel(month: number, year: number): string {
-  if (month <= 4) return `Enero de ${year}`;
+  if (month <= 3) return `Enero de ${year}`;
   if (month <= 8) return `Abril de ${year}`;
   return `Septiembre de ${year}`;
+}
+
+// Un identificador de término de PeopleSoft es un STRM: un código numérico corto
+// ("1930"). Una etiqueta ("Abril de 2026") nunca lo es. Este predicado es la
+// frontera entre los dos vocabularios: sin él, reconcileTerms trataba una
+// etiqueta guardada en enrollments.term como si fuera un STRM y la escribía en la
+// columna `code`, corrompiendo la identidad del ciclo.
+export function isStrmCode(value: string | null | undefined): boolean {
+  return value != null && /^\d{3,6}$/.test(value);
+}
+
+// La llave canónica de un ciclo ("YYYY-MM" del mes de su nombre), o null si el
+// término no se puede ubicar. Dos filas con la misma cycleKey son el MISMO ciclo
+// aunque difieran en STRM o en la forma exacta de la etiqueta: es la base para
+// detectar y fusionar duplicados en la migración de identidad.
+export function cycleKey(term: Term): string | null {
+  return sortKeyFor(term);
 }
 
 // La ventana aproximada de un ciclo a partir de su sortKey ("YYYY-MM"). El mes
@@ -106,7 +138,7 @@ function windowFor(term: Term, sortKey: string | null): [number, number] | null 
 // Un término sin fecha ni etiqueta ubicable (sortKey null) no puede resolverse:
 // queda en la lista pero nunca es current ni next.
 export function resolveTerms(input: Term[], today: Date = new Date()): TermResolution {
-  const todayNum = dayNumber(today.getFullYear(), today.getMonth() + 1, today.getDate());
+  const todayNum = dayOf(today);
 
   const annotated = input.map((term) => {
     const sortKey = sortKeyFor(term);

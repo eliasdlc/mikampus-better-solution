@@ -1,11 +1,12 @@
 import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { dataPaths } from './paths.js';
+import { runMigrations } from './migrations.js';
 // MIKAMPUS_DB deja que los tests corran contra una DB desechable en vez de la
 // real (scripts/test-catalog-db.mjs). En uso normal no se define.
-export const DB_PATH = process.env.MIKAMPUS_DB ?? path.join(__dirname, '..', 'data', 'mikampus.db');
+export const DB_PATH = dataPaths().db;
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true, mode: 0o700 });
 
 // node:sqlite (built-in de Node) en vez de better-sqlite3: API síncrona, un
 // solo archivo, sin compilación nativa. Un server local monousuario no gana
@@ -18,6 +19,13 @@ export const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
 
+// Antes de crear nada: ¿esta base ya existía? El esquema baseline de abajo es
+// idempotente y deja tablas creadas siempre, así que después de correrlo es
+// imposible distinguir una instalación nueva de una con datos. La diferencia
+// importa: solo una base con datos previos merece copia pre-upgrade.
+const databaseExistedBefore =
+  db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get().n > 0;
+
 // El esquema es idempotente (IF NOT EXISTS): correrlo en cada arranque hace de
 // "migración" barata para una app local. Modelo:
 //   course   = entrada del catálogo, independiente del término ("ICC-303").
@@ -28,7 +36,7 @@ db.exec(`
   -- no hay contraseña propia acá — la identidad es el username de micampus, y
   -- verificarla es loguearse contra PeopleSoft. La fila 1 nace en la migración
   -- adoptando los datos pre-multi-usuario; portal_username puede ser NULL hasta
-  -- que se conozca (el modo local lo adopta del .env/account.json al arrancar).
+  -- que se conozca (la sesión local la adopta después de verificar el portal).
   CREATE TABLE IF NOT EXISTS users (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     portal_username TEXT UNIQUE COLLATE NOCASE,
@@ -251,6 +259,10 @@ db.exec(`
     plan_id     INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
     course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
     section_id  INTEGER REFERENCES sections(id) ON DELETE SET NULL,
+    -- La práctica que acompaña a la teórica de section_id. Es un par y no una
+    -- lista porque el portal solo ofrece eso: una clase más su componente
+    -- relacionado elegido con un radio (ver peoplesoft/classSearch.js).
+    related_section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
     status      TEXT NOT NULL DEFAULT 'desired', -- desired / planned
     note        TEXT,
     locked      INTEGER NOT NULL DEFAULT 0,
@@ -426,6 +438,34 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
+`);
+
+// Las instalaciones locales se actualizan in-place. Estas columnas se agregan
+// de forma compatible a DBs creadas antes del runtime durable; SQLite no
+// admite ADD COLUMN IF NOT EXISTS.
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((entry) => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+ensureColumn('watchers', 'status', "TEXT NOT NULL DEFAULT 'running'");
+ensureColumn('watchers', 'next_check_at', 'TEXT');
+ensureColumn('watchers', 'consecutive_failures', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('watchers', 'pause_reason', 'TEXT');
+ensureColumn('watchers', 'last_state', 'TEXT');
+ensureColumn('watchers', 'last_started_at', 'TEXT');
+ensureColumn('schedules', 'state', "TEXT NOT NULL DEFAULT 'pending'");
+ensureColumn('schedules', 'last_error', 'TEXT');
+ensureColumn('schedules', 'updated_at', 'TEXT');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS runtime_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    detail TEXT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // CREATE TABLE IF NOT EXISTS no reforma una tabla que ya existe: una columna
@@ -697,6 +737,26 @@ if (!hasColumn('requirement_groups', 'plan_id')) {
   }
 }
 
+// Todo lo de arriba es la baseline histórica: idempotente y ya presente en las
+// bases existentes. De acá en adelante los cambios de esquema son migraciones
+// numeradas y transaccionales, con copia pre-upgrade y compatibilidad declarada
+// (src/migrations.js). El resultado se expone para `status`/`doctor`.
+//
+// La baseline está CERRADA: ninguna tabla ni columna nueva se agrega arriba,
+// aunque el CREATE TABLE de acá sea más cómodo. Dos mecanismos de esquema
+// escribiendo el mismo cambio hacen que ninguno sea la verdad, y el de arriba
+// no tiene versión, ni transacción común, ni copia previa. Una base recién
+// creada llega al esquema actual por el mismo camino que una vieja: la baseline
+// crea las tablas históricas y las migraciones aplican todo lo posterior.
+export const schemaState = runMigrations(db, {
+  backupDir: dataPaths().backups,
+  preexisting: databaseExistedBefore,
+  onBackup: (file) => console.log(`[schema] copia pre-upgrade: ${file}`),
+});
+if (schemaState.applied.length > 0) {
+  console.log(`[schema] esquema ${schemaState.from} → ${schemaState.to}`);
+}
+
 db.exec('CREATE INDEX IF NOT EXISTS idx_grades_user ON grades(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_enrollments_user ON enrollments(user_id, term)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_plans_user ON plans(user_id)');
@@ -711,9 +771,12 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_sync_log_kind ON sync_log(kind, user_id,
 // sí los incluye — esa es otra operación (deleteAllUserData). El árbol
 // compartido (pensum_plans/requirement_groups/requirement_courses) no se toca
 // jamás: es de la carrera, no de la persona.
+// term_events entra acá porque el calendario académico que el estudiante carga
+// a mano es tan suyo como sus notas: cambiar de cuenta no puede dejar las
+// fechas del anterior sobre el ciclo del nuevo.
 const PERSONAL_TABLES = [
   'grades', 'enrollments', 'progress_items', 'holds', 'cart_rows',
-  'profile', 'enrollment_windows', 'pensum', 'requirement_progress',
+  'profile', 'enrollment_windows', 'term_events', 'pensum', 'requirement_progress',
 ];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
@@ -747,7 +810,11 @@ export function deleteAllUserData(userId) {
   clearPersonalData(userId);
   db.exec('BEGIN');
   try {
-    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions', 'push_subscriptions']) {
+    // sync_sources va acá y no en PERSONAL_TABLES porque no es un dato del
+    // portal: es el bookkeeping de cuándo se consultó. Dejarlo vivo después de
+    // un borrado haría que el control de sincronización siguiera diciendo
+    // "actualizado hace 2h" sobre tablas ya vacías.
+    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions', 'push_subscriptions', 'sync_sources']) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
     }
     db.prepare('DELETE FROM sync_log WHERE user_id = ?').run(userId);

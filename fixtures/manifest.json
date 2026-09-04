@@ -14,6 +14,7 @@
     "recon-drop-landing.html": "Baja: pantalla de selección de término.",
     "recon-drop-paso2-confirmacion.html": "Baja: confirmación final de la reconciliación.",
     "recon-enrollment-appointment.html": "Inscripción: appointment y restricciones de reconciliación.",
+    "recon-enrollment-deadlines.html": "Plazos por clase: el modal Fluid de Enrollment Deadlines, capturado del iframe ptModFrame_0. Fija la estructura ps_box-label/ps_box-value y las tres etiquetas reales de baja.",
     "recon-grades-enero2025.html": "Notas: término intersesional para parser.",
     "recon-grades-landing.html": "Notas: landing y cambio de término.",
     "recon-grades-past.html": "Notas: término pasado y estados.",

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-test-'));
 process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
@@ -20,7 +21,7 @@ const { extractCourseHistory, parseCourseHistory, saveGrades, readGrades, termSu
 const { gradesResponseSchema } = await import('../src/shared/schemas.ts');
 const { summarizeGrades } = await import('../src/shared/gpa.ts');
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 await page.setContent(await readFile('fixtures/recon-course-history.html', 'utf8'));
 const raw = await page.evaluate(extractCourseHistory);

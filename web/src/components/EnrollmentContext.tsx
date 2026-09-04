@@ -1,0 +1,510 @@
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  cancelSchedule,
+  fetchEnrollmentWindows,
+  fetchHolds,
+  fetchState,
+  fetchTermPhase,
+  runSync,
+  scheduleAt,
+  setWatcher,
+  setWatcherInterval,
+  syncEnrollmentWindows,
+  validateCart,
+  type WatcherScope,
+} from '../lib/api.ts';
+import type { TermInfo } from '../../../src/shared/schemas.ts';
+import { Countdown } from './Countdown.tsx';
+import { WatcherLive } from './WatcherLive.tsx';
+import { Capacidad, capabilityOf } from './Capacidad.tsx';
+import { ago } from '../lib/time.ts';
+
+// La columna contextual de Inscripción (P2 §5). Antes mezclaba tres cosas que
+// no son la misma: el rango que publica la universidad, la hora personal en que
+// TE toca inscribirte, y el disparo que mikampus va a ejecutar. Confundirlas es
+// caro — alguien que lee "27 de julio" y entiende "puedo inscribirme el 27 a
+// las 00:00" pierde el cupo a las 7am.
+//
+// Acá van separadas, cada una con su fuente, y ninguna se infiere de la otra.
+
+// Cada cuánto sale el watcher a mirar. Los valores no son una escala bonita:
+// son los tres modos reales de usar esto. 30s es para la mañana de tu
+// inscripción, cuando un minuto de diferencia es el cupo; 5 min es para los
+// días previos, cuando querés enterarte pero no castigar al portal; media hora
+// es dejarlo puesto una semana sin pensarlo.
+const INTERVAL_OPTIONS: { ms: number; label: string; detail: string }[] = [
+  { ms: 30_000, label: '30s', detail: 'el día de tu inscripción' },
+  { ms: 60_000, label: '1 min', detail: 'agresivo pero sostenible' },
+  { ms: 300_000, label: '5 min', detail: 'los días previos' },
+  { ms: 900_000, label: '15 min', detail: 'vigilancia de fondo' },
+  { ms: 1_800_000, label: '30 min', detail: 'dejarlo puesto y olvidarlo' },
+];
+
+const SCOPE_OPTIONS: { id: WatcherScope; title: string; detail: string }[] = [
+  {
+    id: 'seats',
+    title: 'Solo cupos de mis secciones',
+    detail: 'Avisa cuando se libere un asiento en el NRC exacto que tenés en el carrito. Entrás sin cambiar tu horario.',
+  },
+  {
+    id: 'groups',
+    title: 'Solo grupos nuevos',
+    detail: 'Avisa cuando la universidad abra un NRC que antes no existía. Implica cambiarte de sección.',
+  },
+  { id: 'both', title: 'Ambas', detail: 'Todo lo anterior. Es lo que hacía el watcher antes de poder elegir.' },
+];
+
+function longDate(iso: string) {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString('es-DO', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function Card({ title, source, children }: { title: string; source?: string; children: React.ReactNode }) {
+  return (
+    <section className="border-line bg-surface space-y-3 rounded-[var(--radius)] border p-4">
+      <div>
+        <h2 className="text-sm font-medium">{title}</h2>
+        {source && <p className="text-muted text-xs">{source}</p>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+export function EnrollmentContext({
+  term,
+  cartRows,
+  hasCollision,
+  hasClosedSection,
+  onResolveTerm,
+}: {
+  term: TermInfo | null;
+  cartRows: number;
+  hasCollision: boolean;
+  hasClosedSection: boolean;
+  onResolveTerm: () => void;
+}) {
+  const qc = useQueryClient();
+  const termId = term?.term ?? undefined;
+  const state = useQuery({ queryKey: ['state'], queryFn: fetchState });
+  const holds = useQuery({ queryKey: ['holds'], queryFn: fetchHolds });
+  const windows = useQuery({
+    queryKey: ['enrollment-windows', termId],
+    queryFn: () => fetchEnrollmentWindows(termId),
+    enabled: Boolean(termId),
+  });
+  // La etapa del ciclo, que es quien decide si estas tarjetas tienen algo que
+  // hacer hoy. Antes esta columna no la consultaba: el watcher y el disparo
+  // programado se dibujaban igual en plena docencia, con la inscripción cerrada
+  // hacía meses, ofreciendo botones que el portal iba a rechazar.
+  const phase = useQuery({
+    queryKey: ['term-phase', termId],
+    queryFn: () => fetchTermPhase(termId),
+    enabled: Boolean(termId),
+  });
+
+  const [manualAt, setManualAt] = useState('');
+
+  const refreshWindow = useMutation({
+    mutationFn: () => syncEnrollmentWindows(termId),
+    onSuccess: (fresh) => qc.setQueryData(['enrollment-windows', termId], fresh),
+  });
+  const validation = useMutation({ mutationFn: validateCart });
+  const unschedule = useMutation({
+    mutationFn: cancelSchedule,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
+  });
+
+  const programar = capabilityOf(phase.data, 'programar-inscripcion');
+  const vigilar = capabilityOf(phase.data, 'vigilar-cupo');
+
+  const enrollmentWindow = windows.data?.windows[0] ?? null;
+  const scheduledAt = state.data?.schedule?.atISO;
+  const watcherOn = Boolean(state.data?.watcher);
+  // Ya hay algo vigilándose, o vigilar todavía sirve para este ciclo. La
+  // capacidad pasa a 'advertida' cuando la inscripción cerró, que es la señal
+  // de que la tarjeta dejó de tener sentido en esta etapa.
+  const mostrarWatcher = watcherOn || vigilar.state === 'habilitada';
+  const autoEnrollOn = state.data?.watcher?.autoEnroll ?? false;
+  const activeScope = state.data?.watcher?.scope ?? 'both';
+  const [pendingScope, setPendingScope] = useState<WatcherScope>('both');
+  const scope: WatcherScope = watcherOn ? activeScope : pendingScope;
+
+  // El ritmo configurado vive fuera del watcher: se lee y se cambia esté
+  // encendido o no. `effectiveMs` es lo que de verdad le toca a cada materia
+  // cuando hay varias rotando, que no es lo mismo y confundirlo cuesta caro.
+  const tickMs = state.data?.watcherSettings.tickMs ?? 45_000;
+  const watchedCourses = state.data?.watcherSettings.watchedCourses ?? 0;
+  const effectiveMs = state.data?.watcherSettings.effectiveIntervalMs ?? tickMs;
+
+  // El despliegue puede fijar un default que no esté entre los presets (la
+  // variable WATCHER_INTERVAL_MS acepta cualquier valor). Sin esto, el ritmo
+  // vigente no aparecía en ninguna parte y los cinco chips salían apagados: la
+  // pantalla se leía como rota justo donde tiene que dar confianza.
+  const intervalChoices = INTERVAL_OPTIONS.some((option) => option.ms === tickMs)
+    ? INTERVAL_OPTIONS
+    : [...INTERVAL_OPTIONS, { ms: tickMs, label: `${Math.round(tickMs / 1000)}s`, detail: 'el valor configurado ahora' }].sort(
+        (a, b) => a.ms - b.ms
+      );
+
+  // La hora personal solo existe si el portal la publicó con hora. Un rango con
+  // precisión de día NO autoriza a suponer una hora — ni medianoche ni ninguna.
+  const portalAppointment = enrollmentWindow?.precision === 'datetime' ? enrollmentWindow.startsAt : null;
+
+  const schedule = useMutation({
+    mutationFn: () => {
+      const chosen = portalAppointment ?? manualAt;
+      if (!chosen) return Promise.reject(new Error('Escribí la hora que te comunicó tu escuela.'));
+      return scheduleAt({ atISO: new Date(chosen).toISOString() });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
+  });
+
+  // El ritmo se puede cambiar con el watcher apagado y queda guardado: no es
+  // parte de encenderlo, es una preferencia sobre cómo vigila cuando vigila.
+  const interval = useMutation({
+    mutationFn: setWatcherInterval,
+    onSuccess: (fresh) => qc.setQueryData(['state'], fresh),
+  });
+
+  const watch = useMutation({
+    mutationFn: (input: { enabled: boolean; autoEnroll?: boolean; scope?: WatcherScope }) => {
+      // Encender la auto-inscripción es la única acción que puede modificar
+      // la matrícula sin la persona presente: se confirma una vez, al subir.
+      if (input.autoEnroll === true && !autoEnrollOn) {
+        if (!window.confirm('La auto-inscripción puede modificar tu matrícula sin que estés mirando. ¿Encenderla?')) {
+          return Promise.reject(new Error('No encendiste la auto-inscripción.'));
+        }
+      }
+      return setWatcher({ ...input, appointmentAt: scheduledAt ?? null });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
+  });
+
+  // Qué le falta al watcher para poder encenderse. Nunca "elegí un ciclo" a
+  // secas: o falta el ciclo (y el selector está arriba), o falta el STRM (y hay
+  // una acción concreta), o falta qué vigilar (y se dice cuál).
+  const watcherBlocker = !term
+    ? { text: 'Elegí un ciclo en el selector de arriba para poder vigilar sus cupos.', action: null }
+    : !term.code
+      ? {
+          text: `mikampus todavía no conoce el código interno de ${term.label ?? term.term}. Sin él, PeopleSoft no acepta la consulta de cupos.`,
+          action: { label: 'Buscar ciclos en PeopleSoft', run: onResolveTerm },
+        }
+      : cartRows === 0
+        ? { text: 'Agregá al carrito la sección que querés vigilar: el watcher observa NRCs concretos, no materias en abstracto.', action: null }
+        : null;
+
+  const activeHolds = holds.data?.holds ?? [];
+
+  return (
+    <aside className="space-y-4">
+      {/* ── 1. Período general ─────────────────────────────────────────── */}
+      <Card
+        title="Período general de inscripción"
+        source={`PeopleSoft · ${term?.label ?? term?.term ?? 'sin ciclo elegido'}`}
+      >
+        {enrollmentWindow ? (
+          <div>
+            <div className="tabular font-display text-xl font-semibold tracking-tight">
+              {longDate(enrollmentWindow.startsAt)}
+            </div>
+            <p className="text-muted mt-0.5 text-xs">hasta el {longDate(enrollmentWindow.endsAt)}</p>
+            <p className="text-muted mt-2 text-xs">
+              Es el rango que la universidad abre para todo el mundo. No es la hora en que te toca a vos.
+            </p>
+          </div>
+        ) : (
+          <p className="text-muted text-xs">
+            {termId ? 'Todavía no leíste Enrollment Dates para este ciclo.' : 'Elegí un ciclo para leer su período.'}
+          </p>
+        )}
+        <div className="flex items-center justify-between">
+          <span className="text-muted text-xs">
+            {windows.data?.syncedAt ? `actualizado ${ago(windows.data.syncedAt)}` : 'sin leer'}
+          </span>
+          <button
+            type="button"
+            onClick={() => refreshWindow.mutate()}
+            disabled={refreshWindow.isPending || !termId}
+            className="text-accent text-xs font-medium underline underline-offset-2 disabled:opacity-50"
+          >
+            {refreshWindow.isPending ? 'leyendo…' : 'actualizar'}
+          </button>
+        </div>
+        {refreshWindow.error && <p className="text-closed text-xs">{(refreshWindow.error as Error).message}</p>}
+      </Card>
+
+      {/* ── 2. Tu hora personal ────────────────────────────────────────── */}
+      <Card
+        title="Tu hora de inscripción"
+        source={portalAppointment ? 'confirmada por PeopleSoft' : 'no publicada por el portal'}
+      >
+        {scheduledAt ? (
+          <div className="space-y-2">
+            <Countdown toISO={scheduledAt} />
+            <div className="text-muted text-xs">
+              {new Date(scheduledAt).toLocaleString('es-DO')}
+              <button onClick={() => unschedule.mutate()} className="text-closed ml-2 underline underline-offset-2">
+                cancelar
+              </button>
+            </div>
+            <p className="text-muted text-xs">
+              {state.data?.schedule?.prewarmed
+                ? 'El asistente ya está preparado; a la hora exacta solo se enviará.'
+                : 'mikampus prepara la sesión unos minutos antes para que a la hora exacta solo quede enviar.'}
+            </p>
+          </div>
+        ) : portalAppointment ? (
+          <div className="space-y-2">
+            <p className="text-sm">{new Date(portalAppointment).toLocaleString('es-DO')}</p>
+            <Capacidad state={programar}>
+              {(blocked) => (
+                <button
+                  onClick={() => schedule.mutate()}
+                  disabled={blocked || schedule.isPending}
+                  className="bg-accent text-accent-fg w-full rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                >
+                  Programar inscripción
+                </button>
+              )}
+            </Capacidad>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {/* Marcado como dato tuyo, no del portal: es la diferencia entre
+                "esto lo dijo PUCMM" y "esto lo escribí yo". */}
+            <p className="border-waitlist/40 bg-waitlist/10 text-waitlist rounded-[var(--radius)] border px-2.5 py-2 text-xs">
+              El portal publica la fecha pero no la hora. Escribí la que te comunicó tu escuela — mikampus no la va a
+              adivinar ni va a asumir medianoche.
+            </p>
+            <input
+              type="datetime-local"
+              value={manualAt}
+              onChange={(event) => setManualAt(event.target.value)}
+              aria-label="Hora de inscripción comunicada por tu escuela"
+              className="border-line bg-bg w-full rounded-[var(--radius)] border px-2 py-1.5 text-sm"
+            />
+            <Capacidad state={programar}>
+              {(blocked) => (
+                <button
+                  disabled={blocked || !manualAt || schedule.isPending}
+                  onClick={() => schedule.mutate()}
+                  className="bg-accent text-accent-fg w-full rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                >
+                  Programar inscripción
+                </button>
+              )}
+            </Capacidad>
+          </div>
+        )}
+        {schedule.error && <p className="text-closed text-xs">{(schedule.error as Error).message}</p>}
+      </Card>
+
+      {/* ── 3. Validación previa ───────────────────────────────────────── */}
+      <Card title="Validación previa" source="qué puede frenarte antes de someter">
+        <ul className="space-y-1.5 text-xs">
+          <Check ok={activeHolds.length === 0} label={activeHolds.length ? `${activeHolds.length} hold(s) activos` : 'Sin holds'} />
+          <Check ok={!hasCollision} label={hasCollision ? 'Hay secciones que chocan en el horario' : 'Sin choques de horario'} />
+          <Check
+            ok={!hasClosedSection}
+            label={hasClosedSection ? 'Hay secciones cerradas en el carrito' : 'Todas las secciones del carrito tienen cupo'}
+          />
+          <Check ok={cartRows > 0} label={cartRows > 0 ? `${cartRows} materia(s) en el carrito` : 'El carrito está vacío'} />
+        </ul>
+        {/* Esto decía que los prerrequisitos eran incognoscibles. Dejó de ser
+            cierto: salen del plan académico oficial y el recomendador los
+            aplica. Lo que sigue sin poder hacerse es validarlos contra ESTE
+            carrito, porque el carrito puede traer materias que el plan no
+            conoce — y prometer una verificación que no existe es peor que
+            decir dónde sí está. */}
+        <p className="text-muted text-xs">
+          Los prerrequisitos se revisan al armar el plan recomendado, no acá: el carrito puede traer materias que el
+          plan académico no lista.
+        </p>
+        <button
+          type="button"
+          onClick={() => validation.mutate()}
+          disabled={validation.isPending || cartRows === 0}
+          className="border-line hover:bg-surface-2 w-full rounded-[var(--radius)] border px-3 py-2 text-sm font-medium disabled:opacity-50"
+        >
+          Validar carrito
+        </button>
+        {validation.data && !validation.data.validate.supported && (
+          <div className="border-line bg-bg rounded-[var(--radius)] border p-2.5 text-xs">
+            <p className="font-medium">Validate no está habilitado por PUCMM</p>
+            <p className="text-muted mt-1">{validation.data.validate.reason}</p>
+            <p className="text-muted mt-2">
+              Waitlist: {validation.data.waitlistChoice.reason} {validation.data.waitlistPosition.reason}
+            </p>
+          </div>
+        )}
+        {validation.error && <p className="text-closed text-xs">{(validation.error as Error).message}</p>}
+      </Card>
+
+      {/* ── 4. Watcher ─────────────────────────────────────────────────── */}
+      {/* Se oculta, no se deshabilita. Con la inscripción del ciclo cerrada y
+          cero materias vigiladas, esta tarjeta no puede hacer nada útil hoy y
+          un control sin nada que hacer no gana pixeles. Si YA hay un watcher
+          corriendo se queda: un cupo se libera cuando alguien da de baja, y
+          apagarle la vigilancia a quien la encendió sería peor que el ruido. */}
+      {mostrarWatcher && (
+      <Card title="Watcher de cupos">
+        {watcherBlocker ? (
+          <div className="space-y-2">
+            <p className="text-muted text-xs">{watcherBlocker.text}</p>
+            {watcherBlocker.action && (
+              <button
+                type="button"
+                onClick={watcherBlocker.action.run}
+                className="border-line hover:bg-surface-2 w-full rounded-[var(--radius)] border px-3 py-2 text-sm font-medium"
+              >
+                {watcherBlocker.action.label}
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-muted text-xs">
+                {watcherOn ? 'Consultando el portal por tu cuenta.' : 'Apagado. Solo consulta cuando vos lo encendés.'}
+              </span>
+              <button
+                role="switch"
+                aria-checked={watcherOn}
+                aria-label="Activar watcher de cupos"
+                onClick={() => watch.mutate({ enabled: !watcherOn, autoEnroll: false, scope })}
+                className={`h-6 w-10 shrink-0 rounded-full p-0.5 transition-colors duration-100 ${watcherOn ? 'bg-accent' : 'bg-surface-2 border-line border'}`}
+              >
+                <span className={`block size-5 rounded-full bg-white transition-transform duration-100 ${watcherOn ? 'translate-x-4' : ''}`} />
+              </button>
+            </div>
+
+            {/* El estado en vivo solo tiene sentido con el watcher corriendo:
+                encendido es lo único que produce ciclos que mirar. */}
+            {watcherOn && state.data && <WatcherLive state={state.data} />}
+
+            <fieldset className="space-y-1.5">
+              <legend className="text-xs font-medium">Cada cuánto consultar</legend>
+              <div className="flex flex-wrap gap-1">
+                {intervalChoices.map((option) => (
+                  <button
+                    key={option.ms}
+                    type="button"
+                    aria-pressed={tickMs === option.ms}
+                    disabled={interval.isPending}
+                    title={option.detail}
+                    onClick={() => interval.mutate(option.ms)}
+                    className={`tabular min-h-8 rounded-full px-2.5 py-1 font-mono text-xs transition-colors duration-100 disabled:opacity-50 ${
+                      tickMs === option.ms
+                        ? 'bg-accent text-accent-fg font-medium'
+                        : 'border-line text-muted hover:text-fg border'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {/* Con varias materias en el carrito, el ritmo elegido NO es cada
+                  cuánto se revisa TU materia: el watcher rota para no pedirle
+                  todo al portal de una vez. Decirlo evita la conclusión falsa
+                  de que poner 30s revisa todo cada 30 segundos. */}
+              <p className="text-muted text-xs">
+                {watchedCourses === 0
+                  ? 'Ahora mismo no hay ninguna materia en rotación: el ritmo aplica cuando el watcher esté vigilando.'
+                  : watchedCourses === 1
+                    ? 'Con una sola materia vigilada, es exactamente cada cuánto se la consulta.'
+                    : `Con ${watchedCourses} materias en rotación, a cada una le toca cada ${Math.round(effectiveMs / 1000)}s.`}
+              </p>
+            </fieldset>
+            {interval.error && <p className="text-closed text-xs">{(interval.error as Error).message}</p>}
+
+            <fieldset className="space-y-1.5">
+              <legend className="text-xs font-medium">Qué vigilar</legend>
+              {SCOPE_OPTIONS.map((option) => (
+                <label
+                  key={option.id}
+                  className={`border-line flex items-start gap-2 rounded-[var(--radius)] border p-2.5 text-xs ${scope === option.id ? 'bg-surface-2' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="watcher-scope"
+                    checked={scope === option.id}
+                    disabled={watch.isPending}
+                    onChange={() => {
+                      setPendingScope(option.id);
+                      if (watcherOn) {
+                        watch.mutate({
+                          enabled: true,
+                          scope: option.id,
+                          autoEnroll: option.id === 'groups' ? false : autoEnrollOn,
+                        });
+                      }
+                    }}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block font-medium">{option.title}</span>
+                    <span className="text-muted">{option.detail}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+
+            {watcherOn && (
+              <label className={`border-line flex items-start gap-2 rounded-[var(--radius)] border p-2.5 text-xs ${scope === 'groups' ? 'opacity-60' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={autoEnrollOn}
+                  disabled={watch.isPending || scope === 'groups'}
+                  onChange={(event) => watch.mutate({ enabled: true, autoEnroll: event.target.checked, scope })}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-medium">Inscribirme al instante si abre cupo</span>
+                  <span className="text-muted">
+                    {scope === 'groups'
+                      ? 'No aplica vigilando solo grupos nuevos: una sección que no elegiste nunca se inscribe sola.'
+                      : autoEnrollOn
+                        ? 'Activo con cola FIFO. Si no conocemos tu hora exacta, solo te avisará hasta que abra.'
+                        : 'Por defecto solo avisa; activarlo pide consentimiento explícito.'}
+                  </span>
+                </span>
+              </label>
+            )}
+            {state.data?.watcher?.queue.map((item) => (
+              <p key={item.courseCode} className="text-muted text-xs">
+                Fila de {item.courseCode}: posición {item.position} de {item.total}.
+              </p>
+            ))}
+          </>
+        )}
+        {watch.error && <p className="text-closed text-xs">{(watch.error as Error).message}</p>}
+      </Card>
+      )}
+    </aside>
+  );
+}
+
+function Check({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <li className="flex items-start gap-2">
+      <span className={`mt-1 size-1.5 shrink-0 rounded-full ${ok ? 'bg-open' : 'bg-waitlist'}`} aria-hidden />
+      <span className={ok ? 'text-muted' : ''}>{label}</span>
+    </li>
+  );
+}
+
+// El descubrimiento de ciclos que ofrece el bloque del watcher: fuerza las
+// fuentes que traen el STRM (ciclos + horario) por el mismo orquestador que
+// todo lo demás, en vez de mandarle al backend un término inventado.
+export function useTermDiscovery() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => runSync({ force: true, keys: ['mySchedule'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['term-context'] });
+      qc.invalidateQueries({ queryKey: ['terms'] });
+    },
+  });
+}

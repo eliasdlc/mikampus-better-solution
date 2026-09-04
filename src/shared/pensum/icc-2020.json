@@ -1,0 +1,1669 @@
+{
+  "$comment": "GENERADO por scripts/sync-pensum-rules.mjs desde el plan académico oficial. No editar a mano, salvo \"aliases\".",
+  "$aliasesComment": [
+    "aliases: código del plan → códigos que la universidad usó para LA MISMA materia en otras versiones.",
+    "No sale del PDF: ningún documento declara las recodificaciones. Se edita a mano y sobrevive a regenerar.",
+    "MAT-110 ≡ ESG-105: mismo nombre (Razonamiento Lógico-Matemático) y mismas 4-0-4 unidades. El diagrama de malla v4 (sep-2021) la llama ESG-105; el reporte del Registro (dic-2024), MAT-110.",
+    "CN-112 ≡ ESG-112 y su laboratorio: misma materia ambiental, recodificada de CN a ESG después de dic-2024."
+  ],
+  "source": {
+    "url": "https://pucmmedudo-my.sharepoint.com/personal/ccamacho_pucmm_edu_do/_layouts/15/download.aspx?share=EQXSwJt_6ihDupuwFhdqzJ0BBj0PaK0TRvoXv5YxbSxXhw",
+    "fetchedAt": "2026-08-09"
+  },
+  "aliases": {
+    "MAT-110": [
+      "ESG-105"
+    ],
+    "CN-112": [
+      "ESG-112"
+    ],
+    "CN-1CN112": [
+      "ESG-1ESG112"
+    ]
+  },
+  "plan": "ICC-2020",
+  "career": "INGENIERÍA EN CIENCIAS DE LA COMPUTACIÓN",
+  "issuedAt": "2024-12-03",
+  "totalUnits": 212,
+  "periods": [
+    {
+      "year": 1,
+      "period": 1,
+      "totalUnits": 20
+    },
+    {
+      "year": 1,
+      "period": 2,
+      "totalUnits": 20
+    },
+    {
+      "year": 1,
+      "period": 3,
+      "totalUnits": 19
+    },
+    {
+      "year": 2,
+      "period": 1,
+      "totalUnits": 20
+    },
+    {
+      "year": 2,
+      "period": 2,
+      "totalUnits": 20
+    },
+    {
+      "year": 2,
+      "period": 3,
+      "totalUnits": 19
+    },
+    {
+      "year": 3,
+      "period": 1,
+      "totalUnits": 19
+    },
+    {
+      "year": 3,
+      "period": 2,
+      "totalUnits": 20
+    },
+    {
+      "year": 3,
+      "period": 3,
+      "totalUnits": 18
+    },
+    {
+      "year": 4,
+      "period": 1,
+      "totalUnits": 12
+    },
+    {
+      "year": 4,
+      "period": 2,
+      "totalUnits": 13
+    },
+    {
+      "year": 4,
+      "period": 3,
+      "totalUnits": 12
+    }
+  ],
+  "courses": {
+    "ICC-101": {
+      "code": "ICC-101",
+      "portalId": "017095",
+      "title": "Introducción a la Algoritmia",
+      "theory": 2,
+      "practice": 3,
+      "units": 3,
+      "year": 1,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [],
+      "coreqs": [
+        "MAT-119"
+      ]
+    },
+    "LET-101": {
+      "code": "LET-101",
+      "portalId": "008567",
+      "title": "Español I",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [],
+      "coreqs": []
+    },
+    "MAT-110": {
+      "code": "MAT-110",
+      "portalId": "009194",
+      "title": "Razonamiento Lógico-Matemático",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [],
+      "coreqs": []
+    },
+    "MAT-119": {
+      "code": "MAT-119",
+      "portalId": "009205",
+      "title": "Precálculo",
+      "theory": 3,
+      "practice": 2,
+      "units": 4,
+      "year": 1,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [],
+      "coreqs": []
+    },
+    "HG-107": {
+      "code": "HG-107",
+      "portalId": "006231",
+      "title": "Papas en Occidente Moder y Contemp",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 1,
+      "period": 1,
+      "electiveOf": "HG-E01-TELECTIVADEHISTORIAYSOCIEDADMUNDIAL",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "HG-109": {
+      "code": "HG-109",
+      "portalId": "006233",
+      "title": "Revoluciones en Occidente Mod/Cont",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 1,
+      "period": 1,
+      "electiveOf": "HG-E01-TELECTIVADEHISTORIAYSOCIEDADMUNDIAL",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ESG-104": {
+      "code": "ESG-104",
+      "portalId": "017652",
+      "title": "Una Historia de Derechos Humanos",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 1,
+      "period": 1,
+      "electiveOf": "HG-E01-TELECTIVADEHISTORIAYSOCIEDADMUNDIAL",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "CHU-106": {
+      "code": "CHU-106",
+      "portalId": "002101",
+      "title": "Humanos Diseñados: Ingen. Genética",
+      "theory": 2,
+      "practice": 0,
+      "units": 2,
+      "year": 1,
+      "period": 1,
+      "electiveOf": "CHU-E01ELECTIVADECIENCIAYHUMANISMO",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "CHU-107": {
+      "code": "CHU-107",
+      "portalId": "002102",
+      "title": "Preguntas Fund. de la Exist. Humana",
+      "theory": 2,
+      "practice": 0,
+      "units": 2,
+      "year": 1,
+      "period": 1,
+      "electiveOf": "CHU-E01ELECTIVADECIENCIAYHUMANISMO",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "MAT-134": {
+      "code": "MAT-134",
+      "portalId": "017113",
+      "title": "Estructuras Discretas",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 1,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "MAT-119"
+      ],
+      "coreqs": []
+    },
+    "MAT-129": {
+      "code": "MAT-129",
+      "portalId": "009219",
+      "title": "Cálculo Diferencial",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "MAT-119"
+      ],
+      "coreqs": []
+    },
+    "LET-102": {
+      "code": "LET-102",
+      "portalId": "008568",
+      "title": "Español II",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "LET-101"
+      ],
+      "coreqs": []
+    },
+    "ICC-103": {
+      "code": "ICC-103",
+      "portalId": "017114",
+      "title": "Fundamentos de Programación",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 1,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-101"
+      ],
+      "coreqs": []
+    },
+    "DEP-1DEP102": {
+      "code": "DEP-1DEP102",
+      "portalId": "002923",
+      "title": "Fútbol",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "DEP-E01-PELECTIVADEDEPORTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "DEP-1DEP105": {
+      "code": "DEP-1DEP105",
+      "portalId": "002927",
+      "title": "Volibol Masculino",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "DEP-E01-PELECTIVADEDEPORTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "DEP-1DEP106": {
+      "code": "DEP-1DEP106",
+      "portalId": "002928",
+      "title": "Volibol Femenino",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "DEP-E01-PELECTIVADEDEPORTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "DEP-1DEP108": {
+      "code": "DEP-1DEP108",
+      "portalId": "002932",
+      "title": "Baloncesto Masculino",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "DEP-E01-PELECTIVADEDEPORTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "DEP-1DEP110": {
+      "code": "DEP-1DEP110",
+      "portalId": "002935",
+      "title": "Béisbol",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "DEP-E01-PELECTIVADEDEPORTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "DEP-1DEP114": {
+      "code": "DEP-1DEP114",
+      "portalId": "002942",
+      "title": "Tenis de Mesa",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "DEP-E01-PELECTIVADEDEPORTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "DEP-1DEP104": {
+      "code": "DEP-1DEP104",
+      "portalId": "002925",
+      "title": "Natación",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "DEP-E01-PELECTIVADEDEPORTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "FIL-113": {
+      "code": "FIL-113",
+      "portalId": "005799",
+      "title": "Masc. Hegemónica/Violencia Género",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "FIL-E11-TELECTIVADEFILOSOFÍA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "FIL-117": {
+      "code": "FIL-117",
+      "portalId": "005804",
+      "title": "Ecofilosofía: Ser Hum. y Naturaleza",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "FIL-E11-TELECTIVADEFILOSOFÍA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "FIL-111": {
+      "code": "FIL-111",
+      "portalId": "017162",
+      "title": "Sócrates, Buda y Confucio: Maestros de Contracultura",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "FIL-E11-TELECTIVADEFILOSOFÍA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "FIL-114": {
+      "code": "FIL-114",
+      "portalId": "017163",
+      "title": "Dialogando con Platón",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "FIL-E11-TELECTIVADEFILOSOFÍA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ESG-116": {
+      "code": "ESG-116",
+      "portalId": "017651",
+      "title": "Teorías de la Experiencia Estética",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 2,
+      "electiveOf": "FIL-E11-TELECTIVADEFILOSOFÍA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ICC-133": {
+      "code": "ICC-133",
+      "portalId": "017143",
+      "title": "Funds. de Sist. Computacionales",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 1,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-103"
+      ],
+      "coreqs": []
+    },
+    "ICC-104": {
+      "code": "ICC-104",
+      "portalId": "017144",
+      "title": "Programación Orientada a Objetos",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 1,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-103"
+      ],
+      "coreqs": []
+    },
+    "FIS-139": {
+      "code": "FIS-139",
+      "portalId": "005958",
+      "title": "Mecánica Newtoniana",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "MAT-129"
+      ],
+      "coreqs": [
+        "FIS-1FIS139"
+      ]
+    },
+    "FIS-1FIS139": {
+      "code": "FIS-1FIS139",
+      "portalId": "005959",
+      "title": "Lab. FIS-139",
+      "theory": 0,
+      "practice": 2,
+      "units": 0,
+      "year": 1,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "MAT-129"
+      ],
+      "coreqs": [
+        "FIS-139"
+      ]
+    },
+    "MAT-130": {
+      "code": "MAT-130",
+      "portalId": "009220",
+      "title": "Álgebra Lineal",
+      "theory": 2,
+      "practice": 2,
+      "units": 3,
+      "year": 1,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "MAT-119",
+        "MAT-311"
+      ],
+      "coreqs": []
+    },
+    "MAT-139": {
+      "code": "MAT-139",
+      "portalId": "009226",
+      "title": "Cálculo Integral",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 1,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "MAT-129"
+      ],
+      "coreqs": []
+    },
+    "MAT-219": {
+      "code": "MAT-219",
+      "portalId": "009264",
+      "title": "Cálculo Vectorial",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "MAT-139"
+      ],
+      "coreqs": [
+        "MAT-130"
+      ]
+    },
+    "ILE-205": {
+      "code": "ILE-205",
+      "portalId": "007315",
+      "title": "Inglés I",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "ILE-203"
+      ],
+      "coreqs": []
+    },
+    "FIS-219": {
+      "code": "FIS-219",
+      "portalId": "005984",
+      "title": "Electricidad y Magnetismo",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "FIS-1FIS139",
+        "FIS-139"
+      ],
+      "coreqs": [
+        "FIS-1FIS219",
+        "MAT-219"
+      ]
+    },
+    "ICC-211": {
+      "code": "ICC-211",
+      "portalId": "017145",
+      "title": "Algoritmos Clásicos/Estruct. Datos",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-104"
+      ],
+      "coreqs": []
+    },
+    "FIS-1FIS219": {
+      "code": "FIS-1FIS219",
+      "portalId": "005986",
+      "title": "Lab. FIS-219",
+      "theory": 0,
+      "practice": 2,
+      "units": 0,
+      "year": 2,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "FIS-1FIS139",
+        "FIS-139"
+      ],
+      "coreqs": [
+        "FIS-219",
+        "MAT-219"
+      ]
+    },
+    "LET-126": {
+      "code": "LET-126",
+      "portalId": "008593",
+      "title": "Literatura y Cine",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": "LIT-E01-TELECTIVADELITERATURA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "LET-128": {
+      "code": "LET-128",
+      "portalId": "008595",
+      "title": "Realismo Mágico y Liter. Fantástica",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": "LIT-E01-TELECTIVADELITERATURA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "LET-132": {
+      "code": "LET-132",
+      "portalId": "017179",
+      "title": "Novela Histórica: Realidad y Ficción",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": "LIT-E01-TELECTIVADELITERATURA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "LET-129": {
+      "code": "LET-129",
+      "portalId": "017164",
+      "title": "Literatura: Violencia y Paz",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": "LIT-E01-TELECTIVADELITERATURA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "LET-131": {
+      "code": "LET-131",
+      "portalId": "017165",
+      "title": "El Amor en la Poesía",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": "LIT-E01-TELECTIVADELITERATURA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ESG-103": {
+      "code": "ESG-103",
+      "portalId": "017650",
+      "title": "Escritura Creativa",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 1,
+      "electiveOf": "LIT-E01-TELECTIVADELITERATURA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "FIS-229": {
+      "code": "FIS-229",
+      "portalId": "005992",
+      "title": "Ondas, Fluidos y Termodinámica",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "FIS-1FIS139",
+        "FIS-139"
+      ],
+      "coreqs": [
+        "FIS-1FIS229",
+        "MAT-229"
+      ]
+    },
+    "ILE-303": {
+      "code": "ILE-303",
+      "portalId": "007318",
+      "title": "Inglés II",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "ILE-205"
+      ],
+      "coreqs": []
+    },
+    "ICC-212": {
+      "code": "ICC-212",
+      "portalId": "017146",
+      "title": "Dis. y Anál. Algoritmos Complejos",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 2,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-211"
+      ],
+      "coreqs": []
+    },
+    "FIS-1FIS229": {
+      "code": "FIS-1FIS229",
+      "portalId": "005994",
+      "title": "Lab. FIS-229",
+      "theory": 0,
+      "practice": 2,
+      "units": 0,
+      "year": 2,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "FIS-1FIS139",
+        "FIS-139"
+      ],
+      "coreqs": [
+        "FIS-229",
+        "MAT-229"
+      ]
+    },
+    "MAT-229": {
+      "code": "MAT-229",
+      "portalId": "009272",
+      "title": "Ecuaciones Diferenciales",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "MAT-219"
+      ],
+      "coreqs": []
+    },
+    "ART-107": {
+      "code": "ART-107",
+      "portalId": "001808",
+      "title": "Llanto y Risa en el Teatro",
+      "theory": 1,
+      "practice": 2,
+      "units": 2,
+      "year": 2,
+      "period": 2,
+      "electiveOf": "ART-E01-TELECTIVADEARTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ART-116": {
+      "code": "ART-116",
+      "portalId": "001820",
+      "title": "Danza Popular Dominicana",
+      "theory": 1,
+      "practice": 2,
+      "units": 2,
+      "year": 2,
+      "period": 2,
+      "electiveOf": "ART-E01-TELECTIVADEARTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ART-138": {
+      "code": "ART-138",
+      "portalId": "017160",
+      "title": "Las Patologías en la Historia del Arte",
+      "theory": 1,
+      "practice": 2,
+      "units": 2,
+      "year": 2,
+      "period": 2,
+      "electiveOf": "ART-E01-TELECTIVADEARTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ART-139": {
+      "code": "ART-139",
+      "portalId": "017161",
+      "title": "Sociedad y Cultura Carnavalesca",
+      "theory": 1,
+      "practice": 2,
+      "units": 2,
+      "year": 2,
+      "period": 2,
+      "electiveOf": "ART-E01-TELECTIVADEARTE",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ET-207": {
+      "code": "ET-207",
+      "portalId": "005650",
+      "title": "Antiguo y Nuevo Testamento",
+      "theory": 2,
+      "practice": 0,
+      "units": 2,
+      "year": 2,
+      "period": 2,
+      "electiveOf": "ET-E21-TELECTIVAIESTUDIOSTEOLÓGICOS",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ET-208": {
+      "code": "ET-208",
+      "portalId": "005651",
+      "title": "Cristianismo y Compromiso Social",
+      "theory": 2,
+      "practice": 0,
+      "units": 2,
+      "year": 2,
+      "period": 2,
+      "electiveOf": "ET-E21-TELECTIVAIESTUDIOSTEOLÓGICOS",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ET-225": {
+      "code": "ET-225",
+      "portalId": "005670",
+      "title": "Matrimonio Sacramental",
+      "theory": 2,
+      "practice": 0,
+      "units": 2,
+      "year": 2,
+      "period": 2,
+      "electiveOf": "ET-E21-TELECTIVAIESTUDIOSTEOLÓGICOS",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ET-227": {
+      "code": "ET-227",
+      "portalId": "005672",
+      "title": "Arte Sacro",
+      "theory": 2,
+      "practice": 0,
+      "units": 2,
+      "year": 2,
+      "period": 2,
+      "electiveOf": "ET-E21-TELECTIVAIESTUDIOSTEOLÓGICOS",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ILE-305": {
+      "code": "ILE-305",
+      "portalId": "007319",
+      "title": "Inglés III",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 2,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "ILE-303"
+      ],
+      "coreqs": []
+    },
+    "ICC-223": {
+      "code": "ICC-223",
+      "portalId": "017147",
+      "title": "Bases de Datos",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 2,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-104"
+      ],
+      "coreqs": []
+    },
+    "IIS-223": {
+      "code": "IIS-223",
+      "portalId": "007247",
+      "title": "Probabilidad y Estadíst para Ingen.",
+      "theory": 3,
+      "practice": 2,
+      "units": 4,
+      "year": 2,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "MAT-139"
+      ],
+      "coreqs": []
+    },
+    "CN-112": {
+      "code": "CN-112",
+      "portalId": "002147",
+      "title": "Cambio Climático y Gestión Ambient.",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01ELECTIVADECIENCIAAMBIENTAL",
+      "prereqs": [],
+      "coreqs": [
+        "CN-1CN112"
+      ]
+    },
+    "CN-114": {
+      "code": "CN-114",
+      "portalId": "002149",
+      "title": "La Huella Ecológica",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01ELECTIVADECIENCIAAMBIENTAL",
+      "prereqs": [],
+      "coreqs": [
+        "CN-1CN114"
+      ]
+    },
+    "CN-113": {
+      "code": "CN-113",
+      "portalId": "016807",
+      "title": "Ciencias Ambientales Desarr. Sost.",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01ELECTIVADECIENCIAAMBIENTAL",
+      "prereqs": [],
+      "coreqs": [
+        "CN-1CN113"
+      ]
+    },
+    "CN-216": {
+      "code": "CN-216",
+      "portalId": "016825",
+      "title": "Ecología, Salud y Medio Ambiente",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01ELECTIVADECIENCIAAMBIENTAL",
+      "prereqs": [],
+      "coreqs": [
+        "CN-1CN216"
+      ]
+    },
+    "ESG-115": {
+      "code": "ESG-115",
+      "portalId": "017653",
+      "title": "Océanos y Sostenibilidad",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01ELECTIVADECIENCIAAMBIENTAL",
+      "prereqs": [],
+      "coreqs": [
+        "ESG-1ESG115"
+      ]
+    },
+    "CN-1CN112": {
+      "code": "CN-1CN112",
+      "portalId": "002148",
+      "title": "Lab. CN-112",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01-PLAB.CN-E01",
+      "prereqs": [],
+      "coreqs": [
+        "CN-112"
+      ]
+    },
+    "CN-1CN114": {
+      "code": "CN-1CN114",
+      "portalId": "002150",
+      "title": "Lab. CN-114",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01-PLAB.CN-E01",
+      "prereqs": [],
+      "coreqs": [
+        "CN-114"
+      ]
+    },
+    "CN-1CN113": {
+      "code": "CN-1CN113",
+      "portalId": "016809",
+      "title": "Lab. CN-113",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01-PLAB.CN-E01",
+      "prereqs": [],
+      "coreqs": [
+        "CN-113"
+      ]
+    },
+    "CN-1CN216": {
+      "code": "CN-1CN216",
+      "portalId": "016826",
+      "title": "Lab. CN-216",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01-PLAB.CN-E01",
+      "prereqs": [],
+      "coreqs": [
+        "CN-216"
+      ]
+    },
+    "ESG-1ESG115": {
+      "code": "ESG-1ESG115",
+      "portalId": "017654",
+      "title": "Lab. ESG-115",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "CN-E01-PLAB.CN-E01",
+      "prereqs": [],
+      "coreqs": [
+        "ESG-115"
+      ]
+    },
+    "HG-106": {
+      "code": "HG-106",
+      "portalId": "006230",
+      "title": "Proceso/Retos de la Democracia Dom.",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "HGE02-TELECTIVADEHISTORIAYSOCIEDADDOMINICANA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "HG-108": {
+      "code": "HG-108",
+      "portalId": "006232",
+      "title": "Caudillismo/Cult Polít Autoritaria",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "HGE02-TELECTIVADEHISTORIAYSOCIEDADDOMINICANA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "HG-117": {
+      "code": "HG-117",
+      "portalId": "017140",
+      "title": "La Argumentación y el Discurso Político",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 2,
+      "period": 3,
+      "electiveOf": "HGE02-TELECTIVADEHISTORIAYSOCIEDADDOMINICANA",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ITT-102": {
+      "code": "ITT-102",
+      "portalId": "017153",
+      "title": "Fundamentos de Redes",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 3,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [],
+      "coreqs": [
+        "ITT-1ITT102"
+      ]
+    },
+    "ITT-1ITT102": {
+      "code": "ITT-1ITT102",
+      "portalId": "017152",
+      "title": "Lab. ITT-102",
+      "theory": 0,
+      "practice": 2,
+      "units": 1,
+      "year": 3,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [],
+      "coreqs": [
+        "ITT-102"
+      ]
+    },
+    "ICC-321": {
+      "code": "ICC-321",
+      "portalId": "017148",
+      "title": "Inteligencia de Negocios",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-223",
+        "IIS-223"
+      ],
+      "coreqs": []
+    },
+    "ICC-341": {
+      "code": "ICC-341",
+      "portalId": "017150",
+      "title": "Introd. a la Ingeniería de Software",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 3,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-104"
+      ],
+      "coreqs": []
+    },
+    "ICC-331": {
+      "code": "ICC-331",
+      "portalId": "017149",
+      "title": "Sistemas Operativos",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-133",
+        "ITT-344"
+      ],
+      "coreqs": []
+    },
+    "ILE-498": {
+      "code": "ILE-498",
+      "portalId": "007330",
+      "title": "Inglés para las Ingenierías",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 3,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "ILE-305",
+        "ILE-311",
+        "ILE-322"
+      ],
+      "coreqs": []
+    },
+    "ICC-342": {
+      "code": "ICC-342",
+      "portalId": "017180",
+      "title": "Arquitectura de Software",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-223",
+        "ICC-341"
+      ],
+      "coreqs": []
+    },
+    "ICC-352": {
+      "code": "ICC-352",
+      "portalId": "017181",
+      "title": "Programación Web",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "ITT-1ITT102",
+        "ITT-1ITT112",
+        "ICC-104",
+        "ICC-223",
+        "ITT-102",
+        "ITT-112"
+      ],
+      "coreqs": []
+    },
+    "ICC-362": {
+      "code": "ICC-362",
+      "portalId": "017182",
+      "title": "Introd. Inteligencia Artificial",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-104",
+        "IIS-223",
+        "MAT-130",
+        "MAT-134"
+      ],
+      "coreqs": []
+    },
+    "ICC-302": {
+      "code": "ICC-302",
+      "portalId": "017183",
+      "title": "Programación Funcional",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-104"
+      ],
+      "coreqs": []
+    },
+    "GFA-382": {
+      "code": "GFA-382",
+      "portalId": "017238",
+      "title": "Contababilidad para Ciencias Comp.",
+      "theory": 3,
+      "practice": 2,
+      "units": 4,
+      "year": 3,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [],
+      "coreqs": [
+        "ICC-342"
+      ]
+    },
+    "FIL-363": {
+      "code": "FIL-363",
+      "portalId": "005859",
+      "title": "Ética de las Profesiones ARQ/ING",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 3,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ICC-303": {
+      "code": "ICC-303",
+      "portalId": "017184",
+      "title": "Programación Paralela y Concurrente",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-104",
+        "ICC-331"
+      ],
+      "coreqs": []
+    },
+    "ICC-343": {
+      "code": "ICC-343",
+      "portalId": "017186",
+      "title": "Proy-Integrador Desarrollo Software",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-342",
+        "ICC-352"
+      ],
+      "coreqs": []
+    },
+    "ICC-371": {
+      "code": "ICC-371",
+      "portalId": "017268",
+      "title": "Metodología de la Investigación",
+      "theory": 2,
+      "practice": 2,
+      "units": 3,
+      "year": 3,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "IIS-223"
+      ],
+      "coreqs": []
+    },
+    "ICC-320": {
+      "code": "ICC-320",
+      "portalId": "017197",
+      "title": "Deep Learning",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 3,
+      "electiveOf": "ICC-E01-TELECTIVADEINTELIGENCIAARTIFICIAL",
+      "prereqs": [
+        "ICC-362",
+        "MAT-229"
+      ],
+      "coreqs": []
+    },
+    "ICC-322": {
+      "code": "ICC-322",
+      "portalId": "017269",
+      "title": "Visión Computacional",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 3,
+      "electiveOf": "ICC-E01-TELECTIVADEINTELIGENCIAARTIFICIAL",
+      "prereqs": [
+        "ICC-362",
+        "MAT-229"
+      ],
+      "coreqs": []
+    },
+    "ICC-344": {
+      "code": "ICC-344",
+      "portalId": "017199",
+      "title": "Procesamiento de Lenguaje Natural",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 3,
+      "period": 3,
+      "electiveOf": "ICC-E01-TELECTIVADEINTELIGENCIAARTIFICIAL",
+      "prereqs": [
+        "ICC-362"
+      ],
+      "coreqs": []
+    },
+    "ICC-471": {
+      "code": "ICC-471",
+      "portalId": "017187",
+      "title": "Gestión de Proyectos",
+      "theory": 4,
+      "practice": 0,
+      "units": 4,
+      "year": 4,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-343",
+        "ICC-371"
+      ],
+      "coreqs": []
+    },
+    "ICC-451": {
+      "code": "ICC-451",
+      "portalId": "017188",
+      "title": "Desarrollo de Aplicaciones Móviles",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 1,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-352"
+      ],
+      "coreqs": []
+    },
+    "ICC-233": {
+      "code": "ICC-233",
+      "portalId": "017201",
+      "title": "Seguridad Tecnologías Información",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 1,
+      "electiveOf": "ICC-E11-TELECTIVAIDEICC",
+      "prereqs": [
+        "ITT-1ITT102",
+        "ICC-302",
+        "ITT-102"
+      ],
+      "coreqs": []
+    },
+    "ICC-442": {
+      "code": "ICC-442",
+      "portalId": "017202",
+      "title": "Interacción Humano-Computador",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 1,
+      "electiveOf": "ICC-E11-TELECTIVAIDEICC",
+      "prereqs": [
+        "ICC-343"
+      ],
+      "coreqs": []
+    },
+    "ICC-234": {
+      "code": "ICC-234",
+      "portalId": "017205",
+      "title": "Procesadores de Lenguajes y Compiladores",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 1,
+      "electiveOf": "ICC-E11-TELECTIVAIDEICC",
+      "prereqs": [
+        "ICC-302",
+        "ICC-331"
+      ],
+      "coreqs": []
+    },
+    "ITT-507": {
+      "code": "ITT-507",
+      "portalId": "017297",
+      "title": "Introducción al Internet of Things",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 1,
+      "electiveOf": "ICC-E11-TELECTIVAIDEICC",
+      "prereqs": [
+        "ITT-1ITT102",
+        "ICC-104",
+        "ITT-102"
+      ],
+      "coreqs": []
+    },
+    "ICC-421": {
+      "code": "ICC-421",
+      "portalId": "018183",
+      "title": "Aprendizaje Automático Avanzado",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 1,
+      "electiveOf": "ICC-E11-TELECTIVAIDEICC",
+      "prereqs": [
+        "ICC-321"
+      ],
+      "coreqs": []
+    },
+    "ICC-423": {
+      "code": "ICC-423",
+      "portalId": "018376",
+      "title": "Analítica Escalable",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 1,
+      "electiveOf": "ICC-E11-TELECTIVAIDEICC",
+      "prereqs": [
+        "ICC-422"
+      ],
+      "coreqs": []
+    },
+    "ICC-422": {
+      "code": "ICC-422",
+      "portalId": "018377",
+      "title": "Series Temporales y Grafos",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 1,
+      "electiveOf": "ICC-E11-TELECTIVAIDEICC",
+      "prereqs": [
+        "ICC-421"
+      ],
+      "coreqs": []
+    },
+    "ICC-1ICC472": {
+      "code": "ICC-1ICC472",
+      "portalId": "017190",
+      "title": "Anteproyecto de Grado ICC",
+      "theory": 0,
+      "practice": 6,
+      "units": 2,
+      "year": 4,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-471"
+      ],
+      "coreqs": []
+    },
+    "DE-484": {
+      "code": "DE-484",
+      "portalId": "017300",
+      "title": "Emprendimiento Base Tecnológica",
+      "theory": 3,
+      "practice": 0,
+      "units": 3,
+      "year": 4,
+      "period": 2,
+      "electiveOf": null,
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ICC-354": {
+      "code": "ICC-354",
+      "portalId": "017200",
+      "title": "Programación Web Avanzada",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 2,
+      "electiveOf": "ICC-E02-TELECTIVADEDESARROLLOBASADOENPLATAFORMAS",
+      "prereqs": [
+        "ICC-352"
+      ],
+      "coreqs": []
+    },
+    "ICC-355": {
+      "code": "ICC-355",
+      "portalId": "017204",
+      "title": "Desarrollo de Videojuegos",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 2,
+      "electiveOf": "ICC-E02-TELECTIVADEDESARROLLOBASADOENPLATAFORMAS",
+      "prereqs": [
+        "FIS-1FIS139",
+        "FIS-139",
+        "ICC-104"
+      ],
+      "coreqs": []
+    },
+    "ICC-1ICC473": {
+      "code": "ICC-1ICC473",
+      "portalId": "017192",
+      "title": "Proyecto de Grado ICC",
+      "theory": 0,
+      "practice": 6,
+      "units": 2,
+      "year": 4,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-1ICC472"
+      ],
+      "coreqs": []
+    },
+    "ICC-443": {
+      "code": "ICC-443",
+      "portalId": "017193",
+      "title": "Aseguramiento Calidad del Software",
+      "theory": 3,
+      "practice": 3,
+      "units": 4,
+      "year": 4,
+      "period": 3,
+      "electiveOf": null,
+      "prereqs": [
+        "ICC-343"
+      ],
+      "coreqs": []
+    },
+    "ET-229": {
+      "code": "ET-229",
+      "portalId": "005674",
+      "title": "Jesús: Persona y Enseñanza",
+      "theory": 2,
+      "practice": 0,
+      "units": 2,
+      "year": 4,
+      "period": 3,
+      "electiveOf": "ET-E22-TELECTIVAIIESTUDIOSTEOLÓGICOS",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ET-231": {
+      "code": "ET-231",
+      "portalId": "005677",
+      "title": "La Iglesia en la Actualidad",
+      "theory": 2,
+      "practice": 0,
+      "units": 2,
+      "year": 4,
+      "period": 3,
+      "electiveOf": "ET-E22-TELECTIVAIIESTUDIOSTEOLÓGICOS",
+      "prereqs": [],
+      "coreqs": []
+    },
+    "ET-232": {
+      "code": "ET-232",
+      "portalId": "005678",
+      "title": "Visión Cristiana del Hombre",
+      "theory": 2,
+      "practice": 0,
+      "units": 2,
+      "year": 4,
+      "period": 3,
+      "electiveOf": "ET-E22-TELECTIVAIIESTUDIOSTEOLÓGICOS",
+      "prereqs": [],
+      "coreqs": []
+    }
+  },
+  "gates": [
+    {
+      "code": "FIL-363",
+      "minApprovedRatio": 0.7,
+      "text": "FIL-363 sólo pueden ser cursadas luego de haber aprobado el 70% de los créditos de este pénsum."
+    }
+  ],
+  "notes": []
+}

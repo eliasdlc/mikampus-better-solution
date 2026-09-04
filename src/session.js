@@ -1,114 +1,63 @@
 import { chromium } from 'playwright';
 import { loginContext } from './login.js';
-import { getCredentials } from './credentials.js';
-import { getCredential as vaultCredential, storeCredential } from './credentialVault.js';
-import { LOCAL_USER_ID } from './users.js';
+import { readCredential, deleteCredential } from './credentialStore.js';
+import { browserLaunchOptions } from './browser.js';
 
-// El pool de sesiones del portal (LANZAMIENTO §1): UN Chromium compartido y un
-// browser context por usuario — cookies y sesión de PeopleSoft aisladas — con
-// su propia fila de acciones. La lentitud de un usuario nunca encola a otro;
-// dentro de un mismo usuario jamás corren dos acciones de Playwright a la vez.
-//
-// La cuenta de servicio (§1, la cuenta de Elias) es un context más del pool:
-// sirve el sync compartido (catálogo, cupos) sin exponer sesiones ajenas.
-export const SERVICE_USER_ID = LOCAL_USER_ID;
+// Una sola sesión del portal para el único operador. La cola evita que dos
+// acciones de Playwright se solapen sobre el mismo context.
 
-// ~80–150MB por context activo: se cierran solos tras un rato ociosos y hay un
-// techo global. El techo es blando — antes de abrir un context nuevo se cierra
-// el ocioso más viejo, pero nunca uno a mitad de una operación.
+// El único context se cierra tras un rato ocioso; nunca se cierra a mitad de
+// una operación encolada.
 const IDLE_CLOSE_MS = Number(process.env.CONTEXT_IDLE_MS ?? 15 * 60_000);
-const MAX_CONTEXTS = Number(process.env.MAX_BROWSER_CONTEXTS ?? 12);
-
 let browser = null;
-const pool = new Map(); // userId → { context, page, queue, lastUsedAt, running, idleTimer }
+let operator = { userId: null, context: null, page: null, queue: Promise.resolve(), lastUsedAt: 0, running: false, idleTimer: null };
 
-// ── Credenciales en RAM (§5 regla 1) ───────────────────────────────────────
-// La contraseña del uso interactivo vive acá, atada al ciclo de vida del pool:
-// entra al loguearse en mikampus, se descarta al cerrar sesión o al reiniciar
-// el proceso. Nunca toca disco — lo persistido es solo el almacén cifrado.
-const ramCredentials = new Map();
+// ── Credencial ─────────────────────────────────────────────────────────────
+// La contraseña vive en el archivo de credencial del usuario (credentialStore)
+// y se lee en cada re-login: nada queda en RAM entre operaciones, y un cambio
+// manual del archivo aplica en la próxima.
 
-export function setRamCredential(userId, { username, password }) {
-  ramCredentials.set(userId, { username, password });
+export function hasLiveCredentials() {
+  return readCredential() != null;
 }
 
-export function clearRamCredential(userId) {
-  ramCredentials.delete(userId);
-}
-
-// La contraseña nunca sale de este módulo. Cuando el usuario acepta una
-// feature desatendida, copiamos la credencial que ya vive en RAM al vault
-// cifrado; el endpoint no recibe ni reenvía una contraseña por segunda vez.
-export function persistRamCredential(userId, options) {
-  const credentials = ramCredentials.get(userId);
-  if (!credentials) {
-    const err = new Error('Volvé a iniciar sesión para autorizar una función desatendida');
-    err.needsCredentials = true;
-    throw err;
-  }
-  storeCredential(userId, credentials, options);
-}
-
-export function hasLiveCredentials(userId) {
-  try {
-    return Boolean(credentialsFor(userId));
-  } catch (err) {
-    if (err?.needsCredentials) return false;
-    throw err;
-  }
-}
-
-// ¿Con qué re-loguear a este usuario? RAM → almacén cifrado → y solo para el
-// usuario local/de servicio, el .env/account.json de siempre. Sin nada de eso,
-// el error lleva needsCredentials: la UI lo traduce al prompt de re-tipeo
-// (la costura sesión/credencial de §5.1), no a un error genérico.
-function credentialsFor(userId) {
-  const ram = ramCredentials.get(userId);
-  if (ram) return ram;
-  const vaulted = vaultCredential(userId);
-  if (vaulted) return vaulted;
-  if (userId === LOCAL_USER_ID) {
-    const { username, password } = getCredentials();
-    if (username && password) return { username, password };
-  }
-  const err = new Error('No hay credenciales vivas para este usuario: hay que iniciar sesión de nuevo');
+// ¿Con qué re-loguear? Sin credencial en el archivo, el error lleva
+// needsCredentials: la UI lo traduce al pedido de volver a entrar, no a un
+// error genérico.
+function credentialsFor() {
+  const credential = readCredential();
+  if (credential) return credential;
+  const err = new Error('No hay credencial guardada: hay que iniciar sesión de nuevo');
   err.needsCredentials = true;
   throw err;
 }
 
-// ── El pool ────────────────────────────────────────────────────────────────
+// ── La sesión única ────────────────────────────────────────────────────────
 
 async function ensureBrowser() {
   if (browser?.isConnected()) return browser;
-  const launched = await chromium.launch({ headless: true });
+  const launched = await chromium.launch({ headless: true, ...(await browserLaunchOptions()) });
   browser = launched;
-  // Un crash del Chromium compartido tumba TODOS los contexts a la vez (§1):
-  // se invalida el pool entero y el próximo withPage relanza desde cero.
+  // Un crash invalida el único context y la próxima operación relanza desde
+  // cero con una credencial todavía vigente.
   launched.on('disconnected', () => {
     if (browser === launched) browser = null;
-    for (const entry of pool.values()) {
-      entry.context = null;
-      entry.page = null;
-    }
+    operator.context = null;
+    operator.page = null;
   });
   return browser;
 }
 
 function entryFor(userId) {
   if (!Number.isInteger(userId)) throw new Error('withPage necesita un userId');
-  let entry = pool.get(userId);
-  if (!entry) {
-    entry = { userId, context: null, page: null, queue: Promise.resolve(), lastUsedAt: 0, running: false, idleTimer: null };
-    pool.set(userId, entry);
+  if (operator.userId != null && operator.userId !== userId) {
+    throw new Error('Esta instalación solo admite la identidad local del operador');
   }
-  return entry;
+  operator.userId = userId;
+  return operator;
 }
 
-function liveEntries() {
-  return [...pool.values()].filter((e) => e.page && !e.page.isClosed());
-}
-
-async function teardownEntry(entry) {
+async function teardownEntry(entry = operator) {
   clearTimeout(entry.idleTimer);
   try {
     await entry.context?.close();
@@ -119,22 +68,23 @@ async function teardownEntry(entry) {
   entry.page = null;
 }
 
-// Hace lugar antes de abrir un context nuevo: cierra el ocioso más viejo.
-async function evictIfNeeded() {
-  const live = liveEntries();
-  if (live.length < MAX_CONTEXTS) return;
-  const idle = live.filter((e) => !e.running).sort((a, b) => a.lastUsedAt - b.lastUsedAt)[0];
-  if (idle) await teardownEntry(idle);
-}
-
 async function ensureSession(entry) {
   if (entry.page && !entry.page.isClosed() && !entry.page.url().includes('cmd=login')) return;
   await teardownEntry(entry);
-  await evictIfNeeded();
-  const creds = credentialsFor(entry.userId);
-  const { context, page } = await loginContext(await ensureBrowser(), creds);
-  entry.context = context;
-  entry.page = page;
+  const creds = credentialsFor();
+  try {
+    const { context, page } = await loginContext(await ensureBrowser(), creds);
+    entry.context = context;
+    entry.page = page;
+  } catch (err) {
+    // El portal dijo que no: la credencial guardada ya no sirve. Vaciarla es
+    // lo que saca al usuario de la sesión de mikampus en la próxima request.
+    if (err?.credentialRejected) {
+      deleteCredential();
+      err.needsCredentials = true;
+    }
+    throw err;
+  }
 }
 
 function scheduleIdleClose(entry) {
@@ -206,11 +156,9 @@ export async function verifyPortalCredentials({ username, password }) {
 }
 
 // Adopta un context ya logueado (el que dejó verifyPortalCredentials) como LA
-// sesión del usuario, y guarda su contraseña en RAM: el primer sync tras el
-// login no paga un segundo signon.
-export function adoptSession(userId, { context, page }, credentials = null) {
+// sesión del usuario: el primer sync tras el login no paga un segundo signon.
+export function adoptSession(userId, { context, page }) {
   const entry = entryFor(userId);
-  if (credentials) setRamCredential(userId, credentials);
   const run = async () => {
     await teardownEntry(entry);
     entry.context = context;
@@ -226,12 +174,11 @@ export function adoptSession(userId, { context, page }, credentials = null) {
   return result;
 }
 
-// Fuerza que la próxima acción de ESTE usuario re-loguee desde cero, y
-// descarta su contraseña en RAM. Se usa al cambiar de cuenta y al cerrar
-// sesión. Va por su fila para no matar el context a mitad de un scrape.
+// Fuerza que la próxima acción de ESTE usuario re-loguee desde cero. Se usa
+// al cambiar de cuenta y al cerrar sesión. Va por su fila para no matar el
+// context a mitad de un scrape.
 export function resetSession(userId) {
   const entry = entryFor(userId);
-  clearRamCredential(userId);
   const run = () => teardownEntry(entry);
   const result = entry.queue.then(run, run);
   entry.queue = result.then(
@@ -242,9 +189,8 @@ export function resetSession(userId) {
 }
 
 export async function shutdown() {
-  for (const entry of pool.values()) clearTimeout(entry.idleTimer);
-  pool.clear();
-  ramCredentials.clear();
+  clearTimeout(operator.idleTimer);
+  operator = { userId: null, context: null, page: null, queue: Promise.resolve(), lastUsedAt: 0, running: false, idleTimer: null };
   try {
     await browser?.close();
   } catch {

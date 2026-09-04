@@ -1,5 +1,6 @@
 import { MANAGE_CLASSES_START_URL, VIEW_MY_CLASSES_URL } from './constants.js';
 import { db, logSync, lastSync } from '../db.js';
+import { termAliases } from '../terms.js';
 import { saveSection } from './catalog.js';
 import {
   scrapedScheduleSchema,
@@ -106,7 +107,11 @@ export function saveSchedule(userId, { term, termLabel = null, courses }) {
             component: s.component,
             instructor: s.instructor,
             meetings: s.meetings,
-          })
+          }),
+          // View My Classes es autoritativo para tu horario y tu aula, pero NO
+          // publica profesor: manda null. Sin declarar la procedencia, ese null
+          // borraba en cada sync el profesor que el catálogo había enriquecido.
+          { source: 'my-classes' }
         );
         const courseId = db.prepare('SELECT course_id FROM sections WHERE id = ?').get(sectionId).course_id;
         upsertEnrollmentStmt.run(
@@ -198,10 +203,21 @@ export function readSchedule(userId, term) {
     });
   }
 
+  // El estado de sync sale del REGISTRO de sync del ciclo, no de si esta query
+  // encontró filas (§P0.5): un ciclo sincronizado sin materias inscritas está
+  // sincronizado igual. Se mira bajo todos los alias del ciclo para que la
+  // frescura sobreviva a que el STRM aparezca después de haber sincronizado por
+  // etiqueta.
+  const syncedAt = termAliases(term)
+    .map((alias) => lastSync('mySchedule', { term: alias, userId }))
+    .filter(Boolean)
+    .sort()
+    .at(-1) ?? null;
+
   return {
     term: term ?? null,
     generatedAt: new Date().toISOString(),
-    syncedAt: lastSync('mySchedule', { term, userId }),
+    syncedAt,
     courses: [...byCourse.values()],
   };
 }

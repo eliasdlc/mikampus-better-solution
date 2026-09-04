@@ -2,9 +2,8 @@
 
 ## Supported versions
 
-There is no supported release yet. The current branch is a migration from a
-legacy hosted prototype to a local, single-user application. Do not deploy the
-legacy hosted configuration.
+There is no supported release yet. mikampus is a local, single-user
+application; deploying it as a hosted or multi-user service is unsupported.
 
 ## Reporting a vulnerability
 
@@ -23,3 +22,8 @@ High-priority reports include credential disclosure, localhost/LAN request
 forgery, arbitrary access to local data, unintended network egress, and supply
 chain compromise. Never attach real PUCMM credentials or a raw PeopleSoft page
 to a report. Reproduce with the synthetic fixtures and redact diagnostics.
+
+The complete threat model, network-egress contract, data-retention boundaries
+and fixture policy are in [docs/local-security.md](docs/local-security.md) and
+[docs/fixtures-policy.md](docs/fixtures-policy.md). Releases are built only by
+the protected tag workflow documented in [docs/releasing.md](docs/releasing.md).

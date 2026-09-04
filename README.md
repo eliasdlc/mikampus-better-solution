@@ -1,8 +1,10 @@
 # mikampus
 
 > Estado: migración en curso a una herramienta open source, local y single-user.
-> La rama actual conserva código hosted heredado que **no debe desplegarse ni
-> usarse**; su retiro es la Fase 1 del plan de migración.
+> Fases 0–5 implementadas: mikampus no ofrece ni soporta despliegues hosted o
+> multiusuario, tiene distribución Linux x64 y paquete npm candidatos. La
+> publicación de releases permanece protegida por los gates de CI y no se hace
+> desde un checkout local.
 
 mikampus busca convertirse en una herramienta que cada estudiante ejecuta en
 su propio hardware con su propia cuenta. No está afiliada, autorizada ni
@@ -14,34 +16,189 @@ El plan vigente está en [`PLAN-LOCAL-OPENSOURCE.md`](./PLAN-LOCAL-OPENSOURCE.md
 La política de privacidad, egress, amenazas y fixtures está en
 [`docs/local-security.md`](./docs/local-security.md).
 
+La [landing de releases](./landing/) es estática: lee un manifest generado por
+el workflow del tag, no llama a una API de GitHub desde el navegador. Consulta
+la [matriz de plataformas](./docs/platform-support.md), la
+[guía de Home Server](./deploy/home-server/README.md), la
+[guía de release](./docs/releasing.md), la [política de fixtures](./docs/fixtures-policy.md)
+y la [guía de contribución](./CONTRIBUTING.md) antes de instalar o aportar.
+
 Hoy funciona:
 
-1. **Buscar materias** — un input, resultados instantáneos del catálogo cacheado (índice MiniSearch en el cliente, insensible a acentos).
-2. **Carrito e inscripción** — carrito en vivo, hora fija de pre-matrícula, watcher de cupos e inscripción manual.
-3. **Actividad en vivo** — cada operación Playwright reporta su progreso por SSE.
+1. **Inicio** — la clase en curso o la próxima con su aula, la agenda del día y
+   el calendario académico oficial de PUCMM como línea de tiempo: lo que pasó,
+   lo que está pasando hoy y lo que viene.
+2. **Mi horario** — lista en móvil, grilla semanal en desktop, detalle por clase
+   accesible con teclado y touch, impresión apaisada y export ICS.
+3. **Inscripción** — un solo recorrido de tres etapas (plan → grupos → carrito y
+   ejecución) sobre un ciclo elegido una vez. La unidad que se guarda es la
+   materia con su grupo y la práctica de ese grupo: el portal nunca elige el
+   laboratorio en silencio. Watcher de cupos, hora fija de pre-matrícula,
+   inscripción manual y la hoja para llevar a secretaría.
+4. **Notas y avance** — histórico, pénsum, trayectoria del índice acumulado y
+   proyecciones que se suspenden si no reconcilian con el acumulado oficial.
+5. **Buscar materias** — ⌘K, resultados instantáneos del catálogo cacheado
+   (índice MiniSearch en el cliente, insensible a acentos).
+6. **Actividad en vivo** — cada operación Playwright reporta su progreso por SSE.
 
-Todo corre sobre una única sesión de Playwright (headless) que el backend mantiene y re-loguea sola si expira. Los datos estables (catálogo) viven en SQLite y se sirven desde disco; solo lo volátil (cupos, carrito) va en vivo.
+Dos cosas que el portal no puede hacer, porque no corre en tu máquina y no
+recuerda:
+
+- **El ritmo de un cupo.** mikampus anota cada observación de cupo, así que
+  puede decirte que una sección perdió nueve asientos en las últimas cuatro
+  horas. micampus solo sabe cuántos hay ahora. Son hechos observados, nunca una
+  predicción de cuándo se va a llenar.
+- **El aviso antes de clase.** El agente conoce tu horario y sobrevive al
+  navegador cerrado: te avisa unos minutos antes con el aula. Nace apagado y no
+  avisa de una clase que ya empezó.
+
+**La etapa del ciclo decide la pantalla.** Las fechas salen del calendario
+académico público de PUCMM y de la ventana que el portal publica para tu cuenta,
+y cada control apagado dice por cuál de las dos y desde cuándo. Una capacidad
+solo se apaga cuando existe una fecha real que lo diga: no saber advierte, nunca
+apaga.
+
+**Frescura.** Un solo orquestador decide qué está viejo: cada fuente declara sus
+dependencias, su TTL y cuándo aplica, y el control global explica qué actualizó,
+qué omitió y por qué. Una inscripción en curso manda sobre todo lo demás — un
+refresh nunca se encola delante de un submit. Sin sesión, las fuentes quedan en
+pausa con su último dato bueno en vez de ampliar la custodia de la credencial.
+
+Todo corre sobre una única sesión de Playwright (headless) del operador. Si la
+sesión expira puede re-login solo mientras exista una autorización de
+credencial vigente; ante password rechazado, MFA o CAPTCHA se detiene y pide
+intervención, sin martillar el portal. Los datos estables (catálogo) viven en
+SQLite y se sirven desde disco; solo lo volátil (cupos, carrito) va en vivo.
 
 ## Desarrollo (no es instalación de usuario final)
 
 ```bash
 npm install
-npm run install-browsers   # descarga Chromium para Playwright
-cp .env.example .env       # completa PUCMM_USERNAME y PUCMM_PASSWORD
+# Solo si no tenés Chrome/Chromium compatible:
+npm run install-browsers
+cp .env.example .env
 npm run build              # compila la SPA (web/ → public/dist)
 npm start                  # backend local de desarrollo en http://localhost:4173
 ```
 
 Abrí `http://localhost:4173`. Para desarrollar el frontend con hot-reload:
 `npm run dev` (Vite en :5173 con proxy de `/api` al backend en :4173, que debe
-estar corriendo con `npm start`). No expongas este servidor a una LAN o Internet:
-la frontera de autenticación local segura todavía no está implementada.
+estar corriendo con `npm start`). El servidor se fija a loopback y rechaza
+orígenes y hosts ajenos: no expongas este proceso a una LAN o Internet.
+
+## Instalación Linux (RC1)
+
+El release candidate soportado hoy es **Linux x64 (Ubuntu 24.04/Debian 12)**.
+El tarball standalone trae su propio runtime Node, core y launcher: verificá el
+SHA-256 publicado, extraelo y ejecutá `install.sh`. Instala el servicio de
+usuario y el acceso `mikampus`; `uninstall.sh` retira ambos y pregunta si querés
+preservar los datos. Si ya tenés Chrome o Chromium, mikampus lo reutiliza en
+segundo plano y no instala otro navegador. Si no hay uno compatible, el
+onboarding ofrece descargar Chromium aislado a app-data; también podés hacerlo
+con `mikampus install-browser`.
+
+Windows, macOS y ARM **no están soportados**: necesitan smoke nativo; macOS y
+Windows además requieren resolver firma/notarización. El binario Linux aún no
+está firmado: verificá su SHA-256 y `provenance.json` antes de ejecutarlo. No
+presentamos esos avisos como un detalle invisible.
+
+Para construir y probar localmente el artefacto:
+
+```bash
+npm run build:distribution
+npm run smoke:distribution
+npm run smoke:npm-package
+```
+
+El paquete npm conserva Node >=24 y `npx mikampus` se ejecuta en foreground:
+cerrar la terminal lo detiene. Una instalación global seguida de
+`mikampus install-service` habilita el agente durable. El paquete público se
+llama `mikampus`; su publicación queda reservada al flujo de releases, nunca a
+un comando de desarrollo local.
+
+**Compatibilidad del scraper.** Un release de corrección puede arrancar con
+`MIKAMPUS_SCRAPER_MUTATIONS=blocked` cuando el portal cambió: así se detienen
+inscripción, baja, envío al carrito y auto-inscripción, sin borrar la base local
+ni las copias. Actualizá con un release cuya integridad hayas verificado o
+conservá tus datos y esperá la corrección.
+
+El artifact usa `~/.local/share/mikampus` en Linux, `~/Library/Application Support/mikampus`
+en macOS y `%APPDATA%\\mikampus` en Windows. Definí `MIKAMPUS_DATA_DIR` para
+Home Server o para elegir otra ubicación; nunca usa el CWD para datos.
+
+## Primer uso, operación y salida
+
+El primer arranque no necesita terminal: al abrir `http://localhost:4173` la app
+guía cuatro pasos en orden — elegir modo (Local Desktop u Home Server, con las
+garantías reales de cada uno), verificar prerequisitos, **descargar el browser
+administrado con barra de progreso** y recién entonces pedir tu cuenta de PUCMM.
+La contraseña se pide solo cuando mikampus ya puede verificarla; la descarga la
+hace el agente, así que cerrar la pestaña no la interrumpe.
+
+Durante el uso, una barra siempre visible responde si mikampus está trabajando:
+estado del agente, del watcher, último check, fallos consecutivos, intervalo no
+vigilado, vencimiento de la credencial guardada y si el equipo tiene que seguir
+despierto. La versión larga vive en *Ajustes → Estado de mikampus*.
+
+**Notificaciones.** En Desktop llegan como notificación nativa desde el agente,
+aunque el navegador esté cerrado; en Linux traen un botón que abre la pantalla
+correspondiente (macOS y Windows no exponen ese click sin app firmada, así que
+ahí el enlace va en el texto). El feed queda guardado y el dedupe sobrevive a un
+reinicio. Home Server no tiene escritorio: su base es el feed local, y cualquier
+adaptador externo (ntfy, webhook) se agrega **apagado** mostrando destino,
+dependencia y payload exacto antes de encenderse.
+
+**Datos.** El esquema tiene versión y migraciones numeradas y transaccionales;
+antes de migrar una base con datos se guarda una copia `pre-upgrade-*`, y una
+migración fallida se revierte entera indicando qué restaurar. Las copias diarias
+se deciden contra la última copia verificada —si el equipo estuvo apagado a la
+hora programada, se hace al volver—, se verifican con `integrity_check` y se
+pueden exportar a otro disco. **Una copia en el mismo disco no protege de robo ni
+de un disco muerto**; no hay respaldo a ninguna nube.
+
+```bash
+mikampus status              # agente, watcher, esquema, copias y política de updates
+mikampus doctor              # prerequisitos, browser instalado, copias disponibles
+mikampus backup              # copia verificada en app-data
+mikampus backup --to /media/usb/mikampus   # exportar a otro disco
+mikampus restore <archivo>   # verifica integridad y esquema antes de sobrescribir
+mikampus diagnostics         # listar; --export <carpeta> para sacarlos
+mikampus update              # consulta manual; --policy off la desactiva del todo
+mikampus erase-data          # muestra qué borraría; --yes confirma, --keep-backups conserva copias
+mikampus uninstall           # retira el servicio del OS y ofrece el mismo borrado
+```
+
+**Diagnósticos.** Las capturas de una falla van a `app-data/diagnostics` con
+permisos propios y redactadas en su parte textual, nunca al directorio desde el
+que arrancaste el proceso. Solo salen de ahí si las exportás a mano.
+
+**Actualizaciones.** mikampus nunca consulta versiones por su cuenta: el chequeo
+es manual y se puede apagar. Lo que se descargue se verifica por SHA-256, y el
+flujo de update detiene el agente y respalda la base antes de tocar nada. El
+instalador por plataforma llega con la fase de distribución (ver
+[`docs/adr/0002-data-lifecycle.md`](./docs/adr/0002-data-lifecycle.md)).
+
+## Garantías y límites operativos
+
+| Tema | Lo que mikampus hace | Límite que no oculta |
+| --- | --- | --- |
+| Cuenta y datos | Corre single-user en tu hardware; no hay base central ni telemetría. | Usa solo tu propia cuenta; la licencia MIT no elimina riesgos de ToS o académicos. |
+| Desktop local | El agente sigue al cerrar la pestaña y muestra gaps/estado. | No vigila si el equipo duerme, se apaga, se queda sin red o el agente se detiene. |
+| Home Server | Puede continuar en un equipo tuyo encendido, con datos en su volumen. | Solo es continuo si ese hardware sigue encendido y conectado; no expongas el servicio a Internet. |
+| Credenciales | Usuario y contraseña quedan en un archivo `.env` del usuario (solo legible por él) que la app lee en cada operación. | MFA, CAPTCHA o contraseña rechazada detienen el trabajo; un rechazo vacía el archivo y cierra la sesión. No reintenta logins en bucle. |
+| Red y updates | PUCMM es el destino de runtime; browser/updates son explícitos y verificables. | GitHub, npm, Vercel y CDN de Playwright reciben datos normales de distribución (IP/plataforma), nunca datos académicos. |
+| Salida | Puedes parar el agente, hacer/exportar copias y previsualizar el borrado. | Un backup en el mismo disco no salva de robo, incendio o fallo físico. |
+
+Para recuperar datos, ejecutá `mikampus backup --to <otro-disco>` antes de
+desinstalar. `mikampus uninstall` ofrece conservarlos; `mikampus erase-data`
+primero muestra qué eliminará y exige confirmación. No hay soporte para
+recuperar datos borrados ni copias enviadas automáticamente a la nube.
 
 Para que la búsqueda tenga contra qué buscar, llená el catálogo desde el portal: `node scripts/sync-catalog.mjs ICC` (ver [De dónde sale el nombre de cada materia](#de-dónde-sale-el-nombre-de-cada-materia)). Tarda unos minutos por subject y solo hace falta una vez por término. `scripts/seed-catalog.mjs` siembra 4 materias **inventadas** y es solo para probar la UI sin portal — no lo corras contra la base real.
 
 ## Stack
 
-- **Backend** — Node + Express, Playwright para el scraping, `node:sqlite` (built-in, sin compilación nativa) para el catálogo y los planes en `data/mikampus.db`.
+- **Backend** — Node + Express, Playwright para el scraping, `node:sqlite` (built-in, sin compilación nativa) para el catálogo y los planes en app-data del usuario.
 - **Frontend** — Vite + React + TypeScript + Tailwind v4, TanStack Query (stale-while-revalidate), React Router, MiniSearch. SPA en `web/`, build servido por el mismo Express.
 - **Contratos** — Zod en `src/shared/schemas.ts`, importado tal cual por backend (TS nativo de Node) y frontend: todo output de scraper se valida en el borde.
 
@@ -54,7 +211,10 @@ npm run lint                                      # errores estáticos de JavaSc
 npm run audit:public                              # secretos/PII conocidos en HEAD
 npm run build && node scripts/check-budget.mjs   # bundle inicial < 250KB gz
 node scripts/bench-search.mjs                    # keystroke → resultados < 16ms
-npm run smoke                                    # screenshots a 390/768/1440px + falla si hay desborde horizontal
+npm run smoke                                    # 7 rutas × 390/768/1440px, ⌘K por teclado, PWA e impresión; falla si algo desborda
+npm run smoke:lifecycle                          # agente real: primer uso sin terminal, origen ajeno rechazado, datos en app-data
+npm run smoke:package                            # artifact compilado: SPA, SQLite en app-data, payload mínimo
+npm run test:release-manifest                    # contrato del manifiesto que consume la landing
 ```
 
 `npm test` corre los parsers contra fixtures sanitizados y revisados (sin tokens
@@ -73,7 +233,7 @@ node scripts/make-fixture.mjs screenshots/recon-schedule-list.html  # revisar y 
 ## Cómo funciona por dentro
 
 - `src/login.js` — login contra el signon real de PUCMM.
-- `src/session.js` — una sola sesión compartida, en fila (nunca dos acciones de Playwright en paralelo), con reintento de login si expira.
+- `src/session.js` — la única sesión del operador, en fila (nunca dos acciones de Playwright en paralelo), con re-login solo si la credencial autorizada sigue vigente.
 - `src/peoplesoft/cart.js` — lee el carrito y el estado (Open/Closed/Wait List) de cada materia.
 - `src/peoplesoft/enroll.js` — corre el asistente de inscripción (Step 1→2→3) sobre todo el carrito y reporta éxito/error por materia.
 - `src/peoplesoft/classSearch.js` — busca clases por término/carrera/código y las agrega al carrito, incluyendo los pasos intermedios que PeopleSoft pida (sección relacionada, preferencias de inscripción).
@@ -123,7 +283,7 @@ node scripts/sync-catalog.mjs ICC MAT       # títulos + secciones de un subject
 
 ## Riesgos a tener en cuenta
 
-- **Credenciales**: quedan solo en tu `.env` local (gitignored). Nunca las compartas ni las subas a un repo — así fue como le robaron los cupos a un estudiante de Stevens Institute en 2019 al compartir su script con las credenciales adentro.
+- **Credenciales**: se ingresan en la UI una vez y quedan en `credenciales.env` dentro de la carpeta de datos (`~/.local/share/mikampus/` en Linux), en texto claro y con permisos 0600. Podés editar o vaciar ese archivo a mano; cerrar sesión lo vacía. Nunca lo compartas ni lo subas a un repo.
 - **Política institucional**: varias universidades consideran estos bots una forma de saltarse el proceso de inscripción frente a otros estudiantes y han introducido límites de intentos de login o monitoreo tras detectarlos. Vale la pena revisar el reglamento de PUCMM antes de dejarlo corriendo en producción.
 - **No sumar carga en el pico**: el intervalo de polling del watcher no debe bajar de los ~30-45s durante la ventana de alta demanda.
 - **Selección de sección relacionada**: si una materia tiene varias secciones de práctico disponibles, `addClassToCart` elige la primera que encuentra — no hay todavía forma de elegir manualmente cuál.

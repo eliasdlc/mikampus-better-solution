@@ -1,9 +1,12 @@
 import 'dotenv/config';
+// Antes que cualquier módulo que lea rutas: fija la base y el browser de la app.
+import '../src/bootstrapPaths.js';
 import { loginToPeopleSoft } from '../src/login.js';
 import { fetchSubjects, syncSubjectTitles, knownSubjects } from '../src/peoplesoft/browseCatalog.js';
 import { syncCatalogSubject } from '../src/peoplesoft/catalog.js';
 import { fetchAdvisement, savePensum } from '../src/peoplesoft/advisement.js';
 import { readTerms } from '../src/terms.js';
+import { LOCAL_USER_ID, getUser } from '../src/users.js';
 
 // Llena el catálogo real desde el portal. Es el eslabón que faltaba: el scraper
 // existía y estaba probado, pero nadie lo llamaba, así que la app buscaba
@@ -44,7 +47,29 @@ if (!soloTitulos && !onlySubjects && !TERM) {
   throw new Error('No se conoce el próximo ciclo. Sincronizá términos o indicá SYNC_TERM explícitamente.');
 }
 
-const { browser, page } = await loginToPeopleSoft({ headless: true });
+// loginToPeopleSoft no lee el entorno por diseño: la credencial se entrega
+// explícita para que no haya un camino implícito desde un archivo en claro.
+// Este script corre sin UI y sin sesión de agente, así que el .env del server es
+// su única fuente posible; se valida acá para fallar diciendo qué falta y no con
+// un "No hay cuenta configurada" a mitad del login.
+const USERNAME = process.env.PUCMM_USERNAME;
+const PASSWORD = process.env.PUCMM_PASSWORD;
+if (!USERNAME || !PASSWORD) {
+  throw new Error('Faltan PUCMM_USERNAME y PUCMM_PASSWORD en el .env para sincronizar el catálogo');
+}
+
+// El pensum se guarda contra la identidad persistida de la instalación, no
+// contra un id escrito a mano. Si el .env apunta a otra cuenta, el barrido para
+// antes de escribir: un pensum ajeno guardado sobre el usuario local es un dato
+// corrupto que nadie nota hasta que la app recomienda materias equivocadas.
+const localUser = getUser(LOCAL_USER_ID);
+if (localUser?.portalUsername && localUser.portalUsername.toLowerCase() !== USERNAME.toLowerCase()) {
+  throw new Error(
+    `PUCMM_USERNAME (${USERNAME}) no es la cuenta de esta instalación (${localUser.portalUsername})`
+  );
+}
+
+const { browser, page } = await loginToPeopleSoft({ headless: true, username: USERNAME, password: PASSWORD });
 try {
   // La lista de subjects se refresca si la piden o si nunca se cargó.
   if (onlySubjects || knownSubjects().length === 0) {
@@ -60,10 +85,10 @@ try {
   // solo. Una lista a mano envejece en silencio.
   if (fromPensum) {
     console.log('Leyendo tu pensum del advisement report...');
-    const { courses, subjects, plan } = await fetchAdvisement(page);
+    const { courses, subjects, plan } = await fetchAdvisement(page, { userId: LOCAL_USER_ID });
     // El informe repite materias entre bloques de requisito: lo guardado son
     // los códigos únicos, siempre menos que las filas leídas.
-    const guardadas = savePensum(1, courses);
+    const guardadas = savePensum(LOCAL_USER_ID, courses);
     const pendientes = guardadas.filter((c) => c.status === 'pending');
     console.log(
       `✓ ${plan ?? 'pensum'}: ${guardadas.length} materias (${courses.length} filas en el informe), ${pendientes.length} pendientes`

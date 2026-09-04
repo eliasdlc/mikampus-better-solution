@@ -1,0 +1,27 @@
+services:
+  mikampus:
+    image: ghcr.io/mikampus/mikampus:local
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      MIKAMPUS_DB: /var/lib/mikampus/mikampus.db
+      MIKAMPUS_RUNTIME_DIR: /var/lib/mikampus/runtime
+      # Un contenedor no tiene escritorio: el modo se declara acá y no se deja
+      # a que alguien lo elija en el onboarding.
+      MIKAMPUS_RUNTIME_MODE: home-server
+      # Generalo con: openssl rand -base64 32
+      MIKAMPUS_AGENT_TOKEN_FILE: /run/secrets/mikampus_agent_token
+    volumes:
+      - mikampus-data:/var/lib/mikampus
+    secrets:
+      - mikampus_agent_token
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/lib/mikampus/runtime/agent.lock.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+secrets:
+  mikampus_agent_token:
+    file: ./agent-token.txt
+volumes:
+  mikampus-data:

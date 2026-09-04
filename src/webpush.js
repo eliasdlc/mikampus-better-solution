@@ -13,8 +13,7 @@ import { db } from './db.js';
 // ── Configuración VAPID ────────────────────────────────────────────────────
 // Las llaves viven solo en el .env del server (la privada nunca sale de ahí; la
 // pública se la damos al navegador para suscribirse). Sin llaves, el canal
-// queda apagado y lo dice una vez: el server hosted las tiene, el local puede no
-// tenerlas y eso está bien —el popup de escritorio sigue funcionando.
+// queda apagado; el feed local sigue funcionando.
 const PUBLIC_KEY = process.env.MIKAMPUS_VAPID_PUBLIC || '';
 const PRIVATE_KEY = process.env.MIKAMPUS_VAPID_PRIVATE || '';
 // El subject identifica al remitente ante el push service (mailto: o una URL).

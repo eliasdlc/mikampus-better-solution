@@ -9,7 +9,7 @@ const secretPatterns = [
   /(?:ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})/,
   /AKIA[0-9A-Z]{16}/
 ];
-const environmentSecret = /^(?:PUCMM_(?:USERNAME|PASSWORD)|MIKAMPUS_CRED_KEY|LITESTREAM_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY))[ \t]*=[ \t]*(?!$|#|<)\S+/m;
+const environmentSecret = /^(?:PUCMM_(?:USERNAME|PASSWORD)|MIKAMPUS_PORTAL_PASSWORD|LITESTREAM_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY))[ \t]*=[ \t]*(?!$|#|<)\S+/m;
 
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });

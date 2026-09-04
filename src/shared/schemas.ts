@@ -1,4 +1,17 @@
 import { z } from 'zod';
+import { campusCodeSchema, campusSourceSchema } from './campus.ts';
+import {
+  ALWAYS_ON_CAPABILITY_IDS,
+  GATED_CAPABILITY_IDS,
+  PHASE_IDS,
+  TERM_EVENT_IDS,
+  TERM_EVENT_SOURCES,
+} from './termPhase.ts';
+// DAY_CODES es el vocabulario de días del portal. Se importa acá y no se
+// redeclara para que las condiciones de horario no puedan aceptar un día que
+// el resto del sistema no conoce. No hay ciclo: meetings.ts solo importa TIPOS
+// de este archivo, y eso se borra al compilar.
+import { DAY_CODES } from './meetings.ts';
 
 // Contratos compartidos backend/frontend. El scraping es frágil: PeopleSoft
 // cambia IDs entre parches y devuelve HTML inconsistente. Validar el output de
@@ -37,6 +50,11 @@ export const seatInfoSchema = z.object({
   open: z.number().int().nullable().default(null),
   capacity: z.number().int().nullable().default(null),
   waitTotal: z.number().int().nullable().default(null),
+  // Cuándo se observó este cupo. Un scraper no lo manda: lo observó recién y la
+  // DB estampa la hora. Lo manda quien importa observaciones ya hechas (otra
+  // base de mikampus), y ahí es imprescindible: sin esto un cupo de hace seis
+  // semanas entraría marcado como de hoy y la UI diría que está fresco.
+  capturedAt: z.string().nullable().default(null),
 });
 export type SeatInfo = z.infer<typeof seatInfoSchema>;
 
@@ -59,6 +77,13 @@ export const scrapedSectionSchema = z.object({
   instructor: z.string().nullable().default(null),
   meetings: z.array(meetingSchema).default([]),
   seats: seatInfoSchema.nullable().default(null),
+  // El campus no sale del HTML de resultados (el recon lo confirmó: la etiqueta
+  // de campus solo aparece dentro del <select> del formulario). Lo pone el
+  // orquestador según con qué filtro pidió la búsqueda, y por eso viaja junto a
+  // su procedencia: un scraper que no filtró por campus entrega los dos en null
+  // y la capa de escritura no borra lo que ya se sabía.
+  campus: campusCodeSchema.nullable().default(null),
+  campusSource: campusSourceSchema.nullable().default(null),
 });
 export type ScrapedSection = z.infer<typeof scrapedSectionSchema>;
 
@@ -78,8 +103,24 @@ export const catalogSectionSchema = z.object({
   meetings: z.array(meetingSchema),
   seats: seatInfoSchema.nullable(),
   seatsUpdatedAt: z.string().nullable(),
+  // campus nunca viaja solo: sin su procedencia al lado, una inferencia por el
+  // número de sección se leería como un dato que dijo el portal.
+  campus: campusCodeSchema.nullable(),
+  campusSource: campusSourceSchema.nullable(),
 });
 export type CatalogSection = z.infer<typeof catalogSectionSchema>;
+
+// Las secciones de una materia partidas por campus, en el orden canónico (el
+// campus del perfil primero). Lo resuelve el backend para que ninguna pantalla
+// reimplemente la regla; al lado va la lista plana con el campo crudo, para que
+// una pantalla que quiera otra presentación no tenga que deshacer esta.
+export const catalogCampusGroupSchema = z.object({
+  campus: campusCodeSchema.nullable(),
+  label: z.string(),
+  isHome: z.boolean(),
+  sections: z.array(catalogSectionSchema),
+});
+export type CatalogCampusGroup = z.infer<typeof catalogCampusGroupSchema>;
 
 export const catalogCourseSchema = z.object({
   id: z.number().int(),
@@ -90,12 +131,17 @@ export const catalogCourseSchema = z.object({
   career: z.string().nullable(),
   credits: z.number().nullable(),
   sections: z.array(catalogSectionSchema),
+  campusGroups: z.array(catalogCampusGroupSchema),
 });
 export type CatalogCourse = z.infer<typeof catalogCourseSchema>;
 
 export const catalogResponseSchema = z.object({
   term: z.string().nullable(),
   generatedAt: z.string(),
+  // El campus del perfil con que se ordenó esta respuesta. Viaja acá para que
+  // el cliente no tenga que pedir el perfil aparte para saber por qué el orden
+  // es el que es.
+  homeCampus: campusCodeSchema.nullable(),
   courses: z.array(catalogCourseSchema),
 });
 export type CatalogResponse = z.infer<typeof catalogResponseSchema>;
@@ -229,6 +275,10 @@ export const planItemSchema = z.object({
   note: z.string().nullable(),
   locked: z.boolean(),
   section: catalogSectionSchema.nullable(),
+  // La práctica que acompaña a la teórica. Va como su propia sección y no
+  // anidada dentro de `section`: el grid la dibuja como cualquier otro bloque y
+  // la hoja impresa la lista como una fila más, que es lo que la oficina teclea.
+  relatedSection: catalogSectionSchema.nullable(),
 });
 export type PlanItem = z.infer<typeof planItemSchema>;
 
@@ -271,11 +321,16 @@ export type PlanToCartResult = z.infer<typeof planToCartResultSchema>;
 // La propuesta explica cada materia y ya trae la sección elegida por el solver.
 // Crear el plan persiste exactamente esta combinación después de recalcularla
 // en el server; el frontend nunca puede colar una sección arbitraria.
+// Ojo con los créditos: `positive()` era un bug, no una validación. Un
+// laboratorio de física vale 0 unidades DE VERDAD (así lo emite el plan
+// académico y así lo reporta el portal), y exigir > 0 hacía que la propuesta
+// entera fallara la validación justo cuando el recomendador acertaba al
+// incluirlo. Es `nonnegative()` en toda la cadena.
 export const recommendedAlternativeSchema = z.object({
   courseId: z.number().int(),
   code: z.string(),
   title: z.string(),
-  credits: z.number().positive(),
+  credits: z.number().nonnegative(),
   sections: z.number().int().positive(),
 });
 
@@ -283,7 +338,7 @@ export const recommendedCourseSchema = z.object({
   courseId: z.number().int(),
   code: z.string(),
   title: z.string(),
-  credits: z.number().positive(),
+  credits: z.number().nonnegative(),
   kind: z.enum(['obligatoria', 'electiva']),
   groupId: z.number().int(),
   groupLabel: z.string(),
@@ -291,15 +346,38 @@ export const recommendedCourseSchema = z.object({
   reason: z.string(),
   section: catalogSectionSchema,
   alternatives: z.array(recommendedAlternativeSchema),
+  // Cuántas materias del plan destraba aprobarla: es lo que separa una deuda
+  // cara de una barata.
+  unlocks: z.number().int().nonnegative().default(0),
+  // No null por gusto: dice que esta fila entró porque es co-requisito de otra
+  // (el laboratorio de su teoría), no porque se eligiera por sí misma.
+  requiredBy: z.string().nullable().default(null),
+  conditionalOn: z.array(z.string()).default([]),
 });
 export type RecommendedCourse = z.infer<typeof recommendedCourseSchema>;
+
+// Lo que NO se puede proponer y por qué. Suele ser más útil que la propuesta:
+// dice exactamente qué materia hay que aprobar para desatascar la carrera.
+export const blockedCourseSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+  periodLabel: z.string(),
+  reason: z.string(),
+  missing: z.array(z.string()),
+});
+export type BlockedCourse = z.infer<typeof blockedCourseSchema>;
+
+export const recommendationStrategySchema = z.enum(['ponerse-al-dia', 'avanzar']);
+export type RecommendationStrategy = z.infer<typeof recommendationStrategySchema>;
 
 export const recommendationResponseSchema = z.object({
   term: z.string(),
   generatedAt: z.string(),
+  strategy: recommendationStrategySchema.default('ponerse-al-dia'),
   maxCredits: z.number().positive(),
   totalCredits: z.number().nonnegative(),
   recommendations: z.array(recommendedCourseSchema),
+  blocked: z.array(blockedCourseSchema).default([]),
   schedule: z.object({
     valid: z.boolean(),
     adjusted: z.boolean(),
@@ -308,6 +386,74 @@ export const recommendationResponseSchema = z.object({
   caveats: z.array(z.string()),
 });
 export type RecommendationResponse = z.infer<typeof recommendationResponseSchema>;
+
+// Las dos propuestas del mismo ciclo. Cuál conviene no lo decide el algoritmo:
+// depende de si pesa más no arrastrar deudas o no atrasar la graduación.
+export const recommendationOptionsResponseSchema = z.object({
+  term: z.string().nullable(),
+  generatedAt: z.string(),
+  plan: z
+    .object({ code: z.string(), career: z.string().nullable(), issuedAt: z.string().nullable() })
+    .nullable(),
+  proposals: z.array(recommendationResponseSchema),
+});
+export type RecommendationOptionsResponse = z.infer<typeof recommendationOptionsResponseSchema>;
+
+// ── Ruta a graduación (GET /api/degree-path) ────────────────────────────────
+// Cuántos ciclos faltan colocando lo pendiente en el tiempo, y cuál de las dos
+// restricciones —la cadena de prerrequisitos o el techo de créditos— fija esa
+// fecha. Es cálculo local sobre el árbol de requisitos y el plan oficial; el
+// contrato existe porque es el borde entre backend y frontend.
+const degreePathCourseSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+  credits: z.number(),
+  kind: z.enum(['obligatoria', 'electiva']),
+  blockLabel: z.string(),
+  unlocks: z.number().int(),
+  chainLength: z.number().int(),
+  critical: z.boolean(),
+  requiredBy: z.string().nullable(),
+  conditionalOn: z.array(z.string()).default([]),
+});
+
+export const degreePathResponseSchema = z.object({
+  available: z.boolean(),
+  reason: z.string().nullable(),
+  maxCredits: z.number(),
+  startTerm: z.string().nullable().default(null),
+  generatedAt: z.string(),
+  terms: z.array(
+    z.object({
+      index: z.number().int(),
+      label: z.string().nullable(),
+      credits: z.number(),
+      courses: z.array(degreePathCourseSchema),
+    })
+  ),
+  termsRemaining: z.number().int(),
+  creditsRemaining: z.number(),
+  coursesRemaining: z.number().int(),
+  graduationTerm: z.string().nullable(),
+  binding: z.enum(['prerrequisitos', 'carga', 'ambas', 'ninguna']),
+  chainFloor: z.number().int(),
+  loadFloor: z.number().int(),
+  criticalPath: z.array(z.object({ code: z.string(), title: z.string() })),
+  bottlenecks: z.array(
+    z.object({
+      code: z.string(),
+      title: z.string(),
+      unlocks: z.number().int(),
+      chainLength: z.number().int(),
+      termIndex: z.number().int(),
+    })
+  ),
+  unscheduled: z.array(
+    z.object({ code: z.string(), title: z.string(), reason: z.string(), missing: z.array(z.string()) })
+  ),
+  caveats: z.array(z.string()),
+});
+export type DegreePathResponse = z.infer<typeof degreePathResponseSchema>;
 
 // Carrito real (GET /api/cart), enriquecido: además del label crudo del portal,
 // el código canónico (color estable + cruce con el catálogo), el título del
@@ -384,6 +530,100 @@ export const enrollmentWindowsResponseSchema = z.object({
   windows: z.array(enrollmentWindowSchema),
 });
 export type EnrollmentWindowsResponse = z.infer<typeof enrollmentWindowsResponseSchema>;
+
+// ── Calendario del ciclo y fases ────────────────────────────────────────────
+// Las etapas (inscripción, modificación, retiro, notas) con sus ventanas. El
+// portal solo publica la primera; el resto lo carga el estudiante desde el
+// calendario académico de PUCMM, que vive fuera del portal. Nada se siembra:
+// un evento sin fila es un evento desconocido, y así se muestra.
+
+export const termEventIdSchema = z.enum(TERM_EVENT_IDS);
+export const termEventSourceSchema = z.enum(TERM_EVENT_SOURCES);
+
+// Una fecha de calendario, sin hora. `precision` conserva el contrato del
+// scraper de Enrollment Dates: 'date' significa literalmente que el portal no
+// publicó hora, y es lo que impide que el scheduler dispare a una medianoche
+// inventada.
+const isoDaySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va en formato AAAA-MM-DD');
+
+// Media ventana conocida es válida; una fila sin ninguna fecha no dice nada y
+// se representa con la ausencia de fila, no con una fila vacía. El orden se
+// valida acá y no en SQLite porque un CHECK no puede explicar el error.
+const hasSomeDate = <T extends { startsOn: string | null; endsOn: string | null }>(v: T) =>
+  v.startsOn !== null || v.endsOn !== null;
+const datesInOrder = <T extends { startsOn: string | null; endsOn: string | null }>(v: T) =>
+  v.startsOn === null || v.endsOn === null || v.startsOn <= v.endsOn;
+
+export const termEventSchema = z
+  .object({
+    event: termEventIdSchema,
+    session: z.string().min(1).default('Regular Academic Session'),
+    startsOn: isoDaySchema.nullable().default(null),
+    endsOn: isoDaySchema.nullable().default(null),
+    precision: z.enum(['date', 'datetime']).default('date'),
+    source: termEventSourceSchema,
+    sourceNote: z.string().nullable().default(null),
+    updatedAt: z.string().nullable().default(null),
+  })
+  .refine(hasSomeDate, { message: 'Un evento del ciclo necesita al menos una de sus dos fechas' })
+  .refine(datesInOrder, { message: 'La fecha de cierre no puede ser anterior a la de apertura' });
+export type TermEventRow = z.infer<typeof termEventSchema>;
+
+// Lo que el estudiante puede escribir. `source` no está: todo lo que entra por
+// la API es suyo por definición, y dejarlo elegir 'portal' le permitiría
+// disfrazar una fecha tipeada de dato del portal.
+export const termEventInputSchema = z
+  .object({
+    event: termEventIdSchema,
+    session: z.string().min(1).default('Regular Academic Session'),
+    startsOn: isoDaySchema.nullable().default(null),
+    endsOn: isoDaySchema.nullable().default(null),
+    sourceNote: z.string().min(1).nullable().default(null),
+  })
+  .refine(hasSomeDate, { message: 'Un evento del ciclo necesita al menos una de sus dos fechas' })
+  .refine(datesInOrder, { message: 'La fecha de cierre no puede ser anterior a la de apertura' });
+export type TermEventInput = z.infer<typeof termEventInputSchema>;
+
+export const termEventsResponseSchema = z.object({
+  term: z.string().nullable(),
+  termLabel: z.string().nullable(),
+  events: z.array(termEventSchema),
+});
+export type TermEventsResponse = z.infer<typeof termEventsResponseSchema>;
+
+// El estado de una capacidad viaja con su motivo: un control apagado sin
+// explicación al lado es una pantalla que no se puede entender.
+export const capabilityStateSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('habilitada') }),
+  z.object({ state: z.literal('advertida'), reason: z.string() }),
+  z.object({ state: z.literal('cerrada'), reason: z.string(), reopensOn: z.string().nullable() }),
+]);
+
+export const capabilityIdSchema = z.enum([...ALWAYS_ON_CAPABILITY_IDS, ...GATED_CAPABILITY_IDS]);
+
+// La respuesta única desde la que el frontend gatea toda la app: fase, cuánto
+// falta, qué falta por cargar y el mapa completo de capacidades. Que venga todo
+// junto es el punto: si cada pantalla comparara fechas por su cuenta, en dos
+// semanas habría tres reglas distintas.
+export const termPhaseResponseSchema = z.object({
+  term: z.string().nullable(),
+  termLabel: z.string().nullable(),
+  startDate: z.string().nullable(),
+  endDate: z.string().nullable(),
+  phase: z.enum(PHASE_IDS),
+  confidence: z.enum(['fechada', 'inferida', 'desconocida']),
+  since: z.string().nullable(),
+  until: z.string().nullable(),
+  daysLeft: z.number().nullable(),
+  open: z.array(termEventIdSchema),
+  next: z
+    .object({ event: termEventIdSchema, startsOn: z.string(), daysUntil: z.number() })
+    .nullable(),
+  missing: z.array(termEventIdSchema),
+  capabilities: z.record(capabilityIdSchema, capabilityStateSchema),
+  events: z.array(termEventSchema),
+});
+export type TermPhaseResponse = z.infer<typeof termPhaseResponseSchema>;
 
 export const dropResultSchema = z.object({
   ok: z.boolean(),
@@ -530,13 +770,25 @@ export const requirementGroupSchema: z.ZodType<RequirementGroup> = z.lazy(() =>
   })
 );
 
+// La llave es `user_id`, no `id`: la tabla `profile` dejó de ser la fila única
+// `id = 1` cuando pasó a tener un perfil por usuario (ver la migración en
+// src/db.js). El esquema se quedó pidiendo el `id` viejo, así que el server
+// devolvía una fila perfectamente válida y Zod la rechazaba en el browser:
+// /academico y /trayectoria morían con "No se pudo leer lo guardado".
+//
+// `id` sigue aceptado como opcional para no romper una respuesta servida por
+// una versión anterior del agente que todavía no migró.
 export const profileSchema = z
   .object({
-    id: z.number(),
+    user_id: z.number(),
+    id: z.number().optional(),
     career: z.string().nullable(),
     pensum_no: z.string().nullable(),
     plan_label: z.string().nullable(),
     cohort_start_term: z.string().nullable(),
+    // El campus del estudiante. Se elige, no se adivina: sin elegir queda null
+    // y el catálogo no reordena nada.
+    home_campus: campusCodeSchema.nullable().default(null),
     updated_at: z.string(),
   })
   .nullable();
@@ -595,9 +847,45 @@ export type GoalEvaluation = z.infer<typeof goalEvaluationSchema>;
 // Metas + proyección viajan juntas: la UI las muestra en el mismo panel y una
 // mutación de meta refresca ambas. basedOn dice sobre cuántos créditos al índice
 // se calcula todo, para que el número no salga sin su base.
+// Los dos horizontes de P5, con su reconciliación. `currentTerm` y `graduation`
+// vienen en null cuando el acumulado reconstruido no cuadra con el que publica
+// PeopleSoft: la UI no esconde el número, es que no existe.
+const horizonSchema = z.object({
+  id: z.enum(['current-term', 'graduation']),
+  label: z.string(),
+  baseline: z.number().nullable(),
+  baselineUnits: z.number(),
+  futureCredits: z.number(),
+  assumedAverage: z.number(),
+  exact: z.number().nullable(),
+  asPublished: z.number().nullable(),
+});
+
+const horizonScenariosSchema = z.object({
+  best: horizonSchema,
+  maintain: horizonSchema,
+  floor: horizonSchema,
+});
+
+export const projectionReportSchema = z.object({
+  reconciliation: z.object({
+    status: z.enum(['match', 'mismatch', 'unknown']),
+    official: z.number().nullable(),
+    reconstructed: z.number().nullable(),
+    difference: z.number().nullable(),
+    precision: z.number(),
+    explanation: z.string(),
+  }),
+  currentTerm: horizonScenariosSchema.nullable(),
+  graduation: horizonScenariosSchema.nullable(),
+  formula: z.string(),
+});
+export type ProjectionReport = z.infer<typeof projectionReportSchema>;
+
 export const goalsResponseSchema = z.object({
   goals: z.array(goalEvaluationSchema),
   projection: gpaProjectionSchema.nullable(),
+  horizons: projectionReportSchema,
   basedOn: z.object({
     gpa: z.number().nullable(),
     unitsTowardGpa: z.number(),
@@ -612,15 +900,37 @@ export type GoalsResponse = z.infer<typeof goalsResponseSchema>;
 const areaStatSchema = z.object({ subject: z.string(), gpa: z.number(), count: z.number().int() });
 const loadStatSchema = z.object({ avgGpa: z.number(), avgCredits: z.number(), terms: z.number().int() });
 
+// Los metadatos que ordenan las señales (P5 §7) viajan con cada una: la UI
+// pinta por severidad y agrupa por prioridad sin recalcular nada.
+const insightMetaShape = {
+  severity: z.enum(['risk', 'watch', 'info']),
+  recency: z.enum(['current', 'recent', 'historical']),
+  actionability: z.enum(['act', 'consider', 'context']),
+  confidence: z.enum(['high', 'medium', 'low']),
+};
+
+const termPointSchema = z.object({ term: z.string(), gpa: z.number() });
+
 export const insightSchema = z.discriminatedUnion('kind', [
+  // El cambio reciente y la tendencia son señales distintas a propósito: se
+  // puede venir subiendo tres ciclos y haber caído el último.
   z.object({
-    kind: z.literal('gpa-trend'),
+    kind: z.literal('recent-change'),
+    direction: z.enum(['up', 'down', 'flat']),
+    delta: z.number(),
+    from: termPointSchema,
+    to: termPointSchema,
+    ...insightMetaShape,
+  }),
+  z.object({
+    kind: z.literal('rolling-trend'),
     direction: z.enum(['rising', 'falling', 'flat']),
     delta: z.number(),
-    points: z.array(z.object({ term: z.string(), gpa: z.number() })),
+    points: z.array(termPointSchema),
+    ...insightMetaShape,
   }),
-  z.object({ kind: z.literal('area-performance'), best: areaStatSchema, worst: areaStatSchema }),
-  z.object({ kind: z.literal('load-vs-result'), heavy: loadStatSchema, light: loadStatSchema }),
+  z.object({ kind: z.literal('area-performance'), best: areaStatSchema, worst: areaStatSchema, ...insightMetaShape }),
+  z.object({ kind: z.literal('load-vs-result'), heavy: loadStatSchema, light: loadStatSchema, ...insightMetaShape }),
   z.object({
     kind: z.literal('repeated-courses'),
     courses: z.array(
@@ -629,8 +939,14 @@ export const insightSchema = z.discriminatedUnion('kind', [
         attempts: z.array(z.object({ term: z.string().nullable(), grade: z.string().nullable() })),
       })
     ),
+    ...insightMetaShape,
   }),
-  z.object({ kind: z.literal('withdrawn-courses'), count: z.number().int(), codes: z.array(z.string()) }),
+  z.object({
+    kind: z.literal('withdrawn-courses'),
+    count: z.number().int(),
+    codes: z.array(z.string()),
+    ...insightMetaShape,
+  }),
 ]);
 export type Insight = z.infer<typeof insightSchema>;
 
@@ -663,15 +979,38 @@ export type HoldsResponse = z.infer<typeof holdsResponseSchema>;
 // Estado del scheduler + watcher (GET /api/state).
 export const appStateSchema = z.object({
   schedule: z.object({ atISO: z.string(), prewarmAtISO: z.string(), prewarmed: z.boolean() }).nullable(),
+  // El ritmo configurado existe con el watcher apagado: se puede elegir cada
+  // cuánto vigilar ANTES de encenderlo. `tickMs` es lo que se configura;
+  // `effectiveIntervalMs` es lo que de verdad le toca a cada materia cuando hay
+  // varias rotando en el mismo loop.
+  watcherSettings: z
+    .object({
+      tickMs: z.number(),
+      minTickMs: z.number(),
+      maxTickMs: z.number(),
+      watchedCourses: z.number().int(),
+      effectiveIntervalMs: z.number(),
+    })
+    .default({ tickMs: 45_000, minTickMs: 30_000, maxTickMs: 3_600_000, watchedCourses: 0, effectiveIntervalMs: 45_000 }),
   // intervalMs es el ciclo efectivo de la materia en el loop compartido;
   // lastCheckAt null = activo pero todavía sin consultar su materia.
   watcher: z
     .object({
       intervalMs: z.number(),
+      tickMs: z.number().default(45_000),
       lastCheckAt: z.string().nullable().default(null),
       autoEnroll: z.boolean().default(false),
+      // Qué hechos del portal interrumpen a esta persona. El default 'both' es
+      // el comportamiento histórico, así que un estado servido por una versión
+      // anterior se lee sin romperse.
+      scope: z.enum(['seats', 'groups', 'both']).default('both'),
       activationOrder: z.number().int().nullable().default(null),
       appointmentAt: z.string().nullable().default(null),
+      status: z.enum(['running', 'paused', 'offline', 'credentials-required', 'backing-off', 'stopped', 'monitoring-gap']).default('running'),
+      nextCheckAt: z.string().nullable().default(null),
+      consecutiveFailures: z.number().int().default(0),
+      pauseReason: z.string().nullable().default(null),
+      lastState: z.string().nullable().default(null),
       queue: z.array(z.object({ courseCode: z.string(), position: z.number().int(), total: z.number().int() })).default([]),
     })
     .nullable(),
@@ -679,10 +1018,138 @@ export const appStateSchema = z.object({
 export type AppState = z.infer<typeof appStateSchema>;
 
 // La cuenta vigente, para la pantalla de Ajustes. La contraseña nunca sale del
-// backend: acá solo el usuario y de dónde salió (account.json o el .env).
+// backend: acá solo el usuario y el origen histórico del registro; el runtime
+// local ya no lee account.json ni credenciales desde .env.
 export const accountInfoSchema = z.object({
   username: z.string().nullable().default(null),
   source: z.enum(['account.json', '.env']),
   configured: z.boolean(),
 });
 export type AccountInfo = z.infer<typeof accountInfoSchema>;
+
+// ── Mesa de inscripción ─────────────────────────────────────────────────────
+
+// Una sección con el veredicto de frescura ya resuelto. El backend decide si
+// una observación de cupo todavía vale como estado, en vez de mandar la fecha y
+// que cada pantalla saque su propia conclusión (y saque una distinta).
+export const mesaSectionSchema = catalogSectionSchema.extend({
+  seatsAgeHours: z.number().nullable(),
+  seatsFresh: z.boolean(),
+});
+export type MesaSection = z.infer<typeof mesaSectionSchema>;
+
+export const mesaCampusGroupSchema = catalogCampusGroupSchema.extend({
+  sections: z.array(mesaSectionSchema),
+});
+
+// Una materia que te falta y que este ciclo se oferta. `credits` ya viene
+// resuelto desde el pénsum: el catálogo los tiene en NULL casi siempre.
+export const mesaCandidateSchema = catalogCourseSchema.extend({
+  courseId: z.number().int(),
+  credits: z.number(),
+  kind: z.enum(['obligatoria', 'electiva']),
+  groupId: z.number().int(),
+  groupLabel: z.string(),
+  periodLabel: z.string(),
+  position: z.number().int(),
+  sections: z.array(mesaSectionSchema),
+  campusGroups: z.array(mesaCampusGroupSchema),
+});
+export type MesaCandidate = z.infer<typeof mesaCandidateSchema>;
+
+export const mesaEnrolledSchema = z.object({
+  id: z.number().int(),
+  code: z.string(),
+  subject: z.string(),
+  catalogNbr: z.string(),
+  title: z.string(),
+  status: z.string(),
+  units: z.number().nullable(),
+  sections: z.array(
+    z.object({
+      id: z.number().int(),
+      classNbr: z.string(),
+      section: z.string().nullable(),
+      component: z.string().nullable(),
+      instructor: z.string().nullable(),
+      meetings: z.array(meetingSchema),
+      startDate: z.string().nullable(),
+      endDate: z.string().nullable(),
+    })
+  ),
+});
+export type MesaEnrolled = z.infer<typeof mesaEnrolledSchema>;
+
+export const mesaResponseSchema = z.object({
+  term: z.string(),
+  generatedAt: z.string(),
+  homeCampus: campusCodeSchema.nullable(),
+  phase: termPhaseResponseSchema,
+  enrolled: z.array(mesaEnrolledSchema),
+  candidates: z.array(mesaCandidateSchema),
+  plan: planDetailSchema.nullable(),
+  seats: z.object({
+    capturedAt: z.string().nullable(),
+    ageHours: z.number().nullable(),
+    fresh: z.boolean(),
+    freshHours: z.number(),
+  }),
+  totals: z.object({
+    enrolledCredits: z.number(),
+    selectedCredits: z.number(),
+    credits: z.number(),
+    enrolledCourses: z.number().int(),
+    selectedCourses: z.number().int(),
+  }),
+});
+export type MesaResponse = z.infer<typeof mesaResponseSchema>;
+
+// Las condiciones duras que el estudiante le pone a su horario. Todo en null o
+// vacío es "sin condición": quien no pide nada obtiene el comportamiento de
+// siempre. Un string de hora es "HH:MM".
+export const scheduleConstraintsSchema = z.object({
+  earliestStart: z.string().nullable().default(null),
+  latestEnd: z.string().nullable().default(null),
+  freeDays: z.array(z.enum(DAY_CODES)).default([]),
+  maxDays: z.number().int().positive().nullable().default(null),
+  campuses: z.array(campusCodeSchema).nullable().default(null),
+});
+export type ScheduleConstraintsInput = z.infer<typeof scheduleConstraintsSchema>;
+
+export const mesaSolveResponseSchema = z.object({
+  term: z.string(),
+  constraints: scheduleConstraintsSchema,
+  truncated: z.boolean(),
+  // Materias que se quedaron sin ninguna sección posible por culpa de las
+  // condiciones. Es el dato que convierte un "no hay combinación" en algo
+  // accionable: dice cuál aflojar.
+  blocked: z.array(
+    z.object({ code: z.string(), title: z.string(), reasons: z.array(z.string()) })
+  ),
+  dropped: z.array(z.object({ code: z.string(), classNbr: z.string(), reason: z.string() })),
+  combinations: z.array(
+    z.object({
+      penalty: z.number(),
+      metrics: z.object({
+        gapMinutes: z.number(),
+        earlyMinutes: z.number(),
+        daysUsed: z.number().int(),
+      }),
+      sections: z.array(
+        z.object({
+          id: z.number().int(),
+          courseId: z.number().int(),
+          code: z.string(),
+          title: z.string(),
+          classNbr: z.string(),
+          section: z.string().nullable(),
+          component: z.string().nullable(),
+          instructor: z.string().nullable(),
+          meetings: z.array(meetingSchema),
+          campus: campusCodeSchema.nullable(),
+        })
+      ),
+    })
+  ),
+});
+export type MesaSolveResponse = z.infer<typeof mesaSolveResponseSchema>;

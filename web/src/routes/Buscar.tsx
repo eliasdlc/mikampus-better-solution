@@ -17,6 +17,7 @@ import { meetingSetsOverlap } from '../../../src/shared/meetings.ts';
 import { CourseChip } from '../components/CourseChip.tsx';
 import { SeatBadge } from '../components/SeatBadge.tsx';
 import { StalenessTag } from '../components/StalenessTag.tsx';
+import { MoreSectionsButton } from '../components/MoreSectionsButton.tsx';
 
 export function Buscar() {
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: () => fetchCatalog() });
@@ -153,6 +154,7 @@ export function Buscar() {
                 course={course}
                 open={expanded === course.id}
                 onToggle={() => setExpanded(expanded === course.id ? null : course.id)}
+                termCode={planningCode}
                 ocultarSeccion={sinChoque ? choca : undefined}
               />
             ))}
@@ -167,11 +169,14 @@ function CourseRow({
   course,
   open,
   onToggle,
+  termCode,
   ocultarSeccion,
 }: {
   course: CatalogCourse;
   open: boolean;
   onToggle: () => void;
+  // STRM del ciclo que se está planificando: sin él no hay consulta en vivo.
+  termCode: string | null;
   // Con el filtro "sin choque" activo, las secciones que pisan el horario no se
   // listan: la cuenta de secciones tiene que decir cuántas quedan, no cuántas
   // hay, o el desplegable contradice al encabezado.
@@ -195,6 +200,9 @@ function CourseRow({
           {visibles.map((s) => (
             <SectionRow key={s.id} section={s} course={course} />
           ))}
+          <div className="px-4 py-2">
+            <MoreSectionsButton course={course} term={termCode} known={course.sections.length} />
+          </div>
         </div>
       )}
     </li>

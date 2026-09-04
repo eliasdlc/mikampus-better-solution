@@ -10,17 +10,20 @@ import {
   fetchPlans,
   fetchTermContext,
   fetchEnrollmentWindows,
+  fetchTermPhase,
   syncHolds,
 } from '../lib/api.ts';
 import { toBlocks, type Block } from '../lib/grid.ts';
 import { agendaFor, nextClass, type NextClass } from '../../../src/shared/agenda.ts';
-import { DAY_LABELS, toMinutes } from '../../../src/shared/meetings.ts';
+import { DAY_LABELS, formatRange12, formatTime12, toMinutes } from '../../../src/shared/meetings.ts';
 import type { EnrollmentWindow, TermInfo } from '../../../src/shared/schemas.ts';
 import { courseColor } from '../lib/color.ts';
 import { ago } from '../lib/time.ts';
 import { Countdown } from '../components/Countdown.tsx';
 import { TermBadge } from '../components/TermBadge.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
+import { UpcomingDates } from '../components/UpcomingDates.tsx';
+import { capabilityOf } from '../components/Capacidad.tsx';
 
 // Dashboard (plan §5.1 + §11): el estado del día en una pantalla. Regla que
 // ordena todo: el hero y la agenda son SOLO del ciclo actual; lo del ciclo que
@@ -33,13 +36,14 @@ export function Dashboard() {
   const current = terms.data?.current ?? null;
   const next = terms.data?.next ?? null;
 
-  // El horario del ciclo actual. Si el ciclo actual todavía no tiene STRM
-  // conocido (solo vive en grades), no hay horario que pedir: el hero lo dice
-  // en vez de mostrar el de otro término.
+  // El horario del ciclo actual, pedido por su IDENTIFICADOR (STRM si se conoce,
+  // si no la etiqueta) — no gateado por el STRM. Un ciclo que solo vive por
+  // etiqueta igual tiene horario que mostrar; su estado de "sincronizado" lo dice
+  // el syncedAt de la respuesta, no la presencia del código (§P0.5).
   const schedule = useQuery({
-    queryKey: ['my-schedule', current?.code],
-    queryFn: () => fetchMySchedule(current!.code!),
-    enabled: !!current?.code,
+    queryKey: ['my-schedule', current?.term],
+    queryFn: () => fetchMySchedule(current!.term),
+    enabled: !!current?.term,
   });
   // El del próximo ciclo, para la card (materias ya inscritas).
   const nextSchedule = useQuery({
@@ -56,6 +60,11 @@ export function Dashboard() {
     queryFn: () => fetchEnrollmentWindows(next?.code ?? undefined),
     enabled: terms.isSuccess,
   });
+  // La etapa del ciclo EN CURSO. Inicio no la consultaba, así que la columna
+  // derecha la encabezaban dos tarjetas sin nada que hacer: "Próximo ciclo, sin
+  // materias todavía" y "Watcher: apagado", en plena docencia y con la
+  // inscripción cerrada hacía meses.
+  const phase = useQuery({ queryKey: ['term-phase', null], queryFn: () => fetchTermPhase() });
 
   // Cada 30s: es lo que tarda "faltan 12 min" en volverse mentira. El countdown
   // del hero corre por su cuenta cada segundo; esto solo decide CUÁL es la
@@ -77,16 +86,32 @@ export function Dashboard() {
   const nextEnrolled = (nextSchedule.data?.courses ?? []).filter((c) => c.status === 'enrolled');
   const nextPlans = (plans.data ?? []).filter((p) => next && p.term === next.code);
 
+  // Ya empezaste a moverte para el próximo ciclo, o la etapa dice que se puede
+  // inscribir. Con el ciclo cerrado y nada armado, la tarjeta solo repetía que
+  // no había nada.
+  const puedeInscribir = capabilityOf(phase.data, 'inscribir').state !== 'cerrada';
+  const mostrarProximo =
+    puedeInscribir ||
+    nextEnrolled.length > 0 ||
+    nextPlans.length > 0 ||
+    (cart.data?.rows.length ?? 0) > 0 ||
+    Boolean(state.data?.schedule?.atISO);
+  // El watcher se muestra si está trabajando o si vigilar todavía sirve. Nunca
+  // apagado y sin nada que vigilar: eso es una fila que enseña a ignorar la
+  // columna entera.
+  const mostrarWatcher =
+    Boolean(state.data?.watcher) || capabilityOf(phase.data, 'vigilar-cupo').state === 'habilitada';
+
   return (
     <div className="space-y-6">
+      {/* El título es el día, no la marca: la marca ya está en el shell (barra
+          superior en teléfono, sidebar en desktop) y repetirla gastaba la línea
+          más visible de la pantalla en decir algo que ya se sabe. */}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <h1 className="font-display text-3xl font-semibold tracking-tight">mikampus</h1>
-          <TermBadge label={current?.label} />
-        </div>
-        <p className="text-muted text-sm">
+        <h1 className="font-display text-2xl font-semibold tracking-tight first-letter:uppercase sm:text-3xl">
           {now.toLocaleDateString('es-DO', { weekday: 'long', day: 'numeric', month: 'long' })}
-        </p>
+        </h1>
+        <TermBadge label={current?.label} />
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -96,6 +121,8 @@ export function Dashboard() {
             now={now}
             current={current}
             tieneHorario={blocks.length > 0}
+            synced={schedule.data?.syncedAt != null}
+            loading={!!current?.term && schedule.isPending}
             planes={plans.data?.length ?? 0}
           />
 
@@ -103,19 +130,35 @@ export function Dashboard() {
             <h2 className="text-muted mb-2 text-xs font-medium tracking-wide uppercase">Hoy</h2>
             <Timeline blocks={hoy} now={now} />
           </section>
+
+          {/* El calendario cierra la línea académica, y ya no solo hacia
+              adelante: ver que la modificación cerró ayer es lo que explica por
+              qué hoy el carrito no somete. */}
+          <UpcomingDates limit={6} past={3} />
         </div>
 
         <aside className="space-y-3">
-          <NextCycleCard
-            term={next}
-            enrolled={nextEnrolled.length}
-            planes={nextPlans.length}
-            cartCount={cart.data?.rows.length ?? 0}
-            scheduledAt={state.data?.schedule?.atISO ?? null}
-            enrollmentWindow={enrollmentWindows.data?.windows[0] ?? null}
-          />
-          <WatcherCard watcher={state.data?.watcher ?? null} />
-          <HoldsCard holds={holds.data?.holds ?? []} syncedAt={holds.data?.syncedAt ?? null} loading={holds.isPending} />
+          {/* Mismo criterio que holds: una tarjeta aparece cuando hay algo que
+              hacer con ella. El próximo ciclo importa si ya empezaste a armarlo
+              o si la etapa dice que se puede inscribir; el watcher, si está
+              corriendo o si vigilar todavía sirve para este ciclo. */}
+          {mostrarProximo && (
+            <NextCycleCard
+              term={next}
+              enrolled={nextEnrolled.length}
+              planes={nextPlans.length}
+              cartCount={cart.data?.rows.length ?? 0}
+              scheduledAt={state.data?.schedule?.atISO ?? null}
+              enrollmentWindow={enrollmentWindows.data?.windows[0] ?? null}
+            />
+          )}
+          {mostrarWatcher && <WatcherCard watcher={state.data?.watcher ?? null} />}
+          {/* Holds solo cuando hay algo que hacer: o hay holds, o nunca se
+              consultaron. "Cero holds confirmados" no es una tarea, y ocupar
+              espacio con eso empuja hacia abajo lo que sí lo es (P3 §1). */}
+          {(holds.isPending || !holds.data?.syncedAt || (holds.data?.holds.length ?? 0) > 0) && (
+            <HoldsCard holds={holds.data?.holds ?? []} syncedAt={holds.data?.syncedAt ?? null} loading={holds.isPending} />
+          )}
         </aside>
       </div>
 
@@ -132,43 +175,53 @@ function Hero({
   now,
   current,
   tieneHorario,
+  synced,
+  loading,
   planes,
 }: {
   proxima: NextClass<Block> | null;
   now: Date;
   current: TermInfo | null;
   tieneHorario: boolean;
+  synced: boolean;
+  loading: boolean;
   planes: number;
 }) {
   if (!proxima) {
     // El hero es del ciclo actual. Sin próxima clase, el mensaje depende de por
-    // qué: entre ciclos, un ciclo que aún no sincronizaste, o uno sin horario.
-    const titulo = !current
-      ? 'Estás entre ciclos'
-      : current.code == null
-        ? `Todavía no sincronizaste ${current.label ?? 'el ciclo actual'}`
-        : tieneHorario
-          ? 'Ninguna de tus materias tiene horario asignado'
-          : `Todavía no tenés horario inscrito en ${current.label ?? 'este ciclo'}`;
+    // qué: entre ciclos, un ciclo que todavía no sincronizaste, o uno sincronizado
+    // pero sin horario. "Sincronizado" sale del REGISTRO de sync (§P0.5), no de si
+    // se conoce el STRM: un ciclo que solo vive por etiqueta pero ya se sincronizó
+    // tiene horario, y decir "no sincronizaste" sería mentir.
+    const titulo = loading
+      ? 'Cargando tu horario…'
+      : !current
+        ? 'Estás entre ciclos'
+        : !synced
+          ? `Todavía no sincronizaste ${current.label ?? 'el ciclo actual'}`
+          : tieneHorario
+            ? 'Ninguna de tus materias tiene horario asignado'
+            : `Todavía no tenés horario inscrito en ${current.label ?? 'este ciclo'}`;
 
-    const puedeSincronizar = current != null;
     return (
       <section className="border-line rounded-[var(--radius)] border border-dashed p-6">
         <p className="font-display text-xl font-semibold tracking-tight text-balance">{titulo}</p>
         <p className="text-muted mt-1 text-sm">
-          {!current
-            ? 'No hay un ciclo corriendo ahora mismo. Mirá el próximo en la card de la derecha.'
-            : puedeSincronizar && current.code == null
-              ? 'El portal todavía no nos dio el horario de este ciclo. Traelo desde Mi horario.'
-              : planes > 0
-                ? `Tenés ${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}: elegí grupos y mandalos al carrito.`
-                : 'Armá tu ciclo en el planner y mandá las materias al carrito antes de la hora de inscripción.'}
+          {loading
+            ? 'Un momento.'
+            : !current
+              ? 'No hay un ciclo corriendo ahora mismo. Abajo está lo que viene y cómo prepararlo.'
+              : !synced
+                ? 'Todavía no trajimos el horario de este ciclo. Traelo desde Mi horario.'
+                : planes > 0
+                  ? `Tenés ${planes} ${planes === 1 ? 'plan armado' : 'planes armados'}: elegí grupos y mandalos al carrito.`
+                  : 'Armá tu ciclo en el planner y mandá las materias al carrito antes de la hora de inscripción.'}
         </p>
         <Link
-          to={current != null ? '/horario' : '/planear'}
+          to={current != null ? '/horario' : '/inscripcion'}
           className="bg-accent text-accent-fg mt-4 inline-block rounded-[var(--radius)] px-3 py-2 text-sm font-medium"
         >
-          {current != null ? 'Ir a mi horario' : planes > 0 ? 'Ir a planear' : 'Planear mi ciclo'}
+          {current != null ? 'Ir a mi horario' : planes > 0 ? 'Seguir mi plan' : 'Planear mi ciclo'}
         </Link>
       </section>
     );
@@ -195,9 +248,17 @@ function Hero({
           <h2 className="font-display mt-1 line-clamp-2 text-3xl font-semibold tracking-tight text-balance">
             {block.title}
           </h2>
-          <p className="text-muted tabular mt-1 font-mono text-sm">
-            {block.code} · {block.start}–{block.end} · {block.room ?? 'Aula por definir'}
-            {block.instructor ? ` · ${block.instructor}` : ''}
+          {/* Materia → hora → aula → profesor → código. El aula sube de línea:
+              es lo que se busca corriendo entre dos clases, y estaba enterrada
+              al final de una tirada monoespaciada junto al NRC. */}
+          <p className="tabular mt-1.5 flex flex-wrap items-baseline gap-x-2 font-mono text-sm">
+            <span>{formatRange12(block.start, block.end)}</span>
+            <span className="text-muted" aria-hidden>·</span>
+            <span className="font-sans text-base font-medium">{block.room ?? 'Aula por definir'}</span>
+          </p>
+          <p className="text-muted mt-1 text-sm">
+            {block.instructor ?? 'Profesor no publicado'}
+            <span className="tabular ml-2 font-mono text-xs">{block.code}</span>
           </p>
         </div>
         <div className="text-right">
@@ -229,9 +290,9 @@ function Timeline({ blocks, now }: { blocks: Block[]; now: Date }) {
         const enCurso = !pasada && toMinutes(block.start) <= minutosAhora;
         return (
           <li key={block.id} className={`flex items-center gap-3 px-4 py-3 ${pasada ? 'opacity-45' : ''}`}>
-            <div className="tabular w-14 shrink-0 font-mono text-xs">
-              <div>{block.start}</div>
-              <div className="text-muted">{block.end}</div>
+            <div className="tabular w-20 shrink-0 font-mono text-xs whitespace-nowrap">
+              <div>{formatTime12(block.start)}</div>
+              <div className="text-muted">{formatTime12(block.end)}</div>
             </div>
             <span
               className="h-9 w-1 shrink-0 rounded-full"
@@ -240,8 +301,9 @@ function Timeline({ blocks, now }: { blocks: Block[]; now: Date }) {
             />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{block.title}</div>
-              <div className="text-muted tabular font-mono text-xs">
-                {block.code} · {block.room ?? 'Aula por definir'}
+              <div className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                <span className="font-medium">{block.room ?? 'Aula por definir'}</span>
+                <span className="text-muted tabular font-mono">{block.code}</span>
               </div>
             </div>
             {enCurso && <span className="text-open text-xs font-medium whitespace-nowrap">en curso</span>}
@@ -296,7 +358,7 @@ function NextCycleCard({
   const ofrecerRecomendacion = term != null && planes === 0;
 
   return (
-    <Card to={ofrecerRecomendacion ? '/planear?recomendado=1' : '/inscripcion'} title="Próximo ciclo">
+    <Card to={ofrecerRecomendacion ? '/inscripcion?recomendado=1' : '/inscripcion'} title="Próximo ciclo">
       <div className="mt-1 flex items-center justify-between gap-2">
         <TermBadge label={term?.label ?? null} />
       </div>
@@ -334,17 +396,20 @@ function NextCycleCard({
   );
 }
 
-function WatcherCard({ watcher }: { watcher: { intervalMs: number; lastCheckAt: string | null } | null }) {
+function WatcherCard({ watcher }: { watcher: { intervalMs: number; lastCheckAt: string | null; status?: string; pauseReason?: string | null } | null }) {
+  const active = watcher?.status === 'running' || watcher?.status === 'monitoring-gap';
   return (
     <Card to="/inscripcion" title="Watcher de cupos">
       <div className="mt-1 flex items-center gap-2 text-lg font-medium">
-        <span className={`size-2.5 rounded-full ${watcher ? 'bg-open' : 'bg-muted'}`} />
-        {watcher ? 'Activo' : 'Apagado'}
+        <span className={`size-2.5 rounded-full ${active ? 'bg-open' : 'bg-muted'}`} />
+        {watcher ? watcher.status === 'monitoring-gap' ? 'Gap detectado' : watcher.status === 'backing-off' ? 'Reintentando' : watcher.status === 'running' ? 'Activo' : watcher.status : 'Apagado'}
       </div>
       <div className="text-muted mt-1 text-xs">
         {!watcher
           ? 'no está vigilando el carrito'
-          : watcher.lastCheckAt
+          : watcher.pauseReason
+            ? watcher.pauseReason
+            : watcher.lastCheckAt
             ? // "activo" y "activo y mirando" no son lo mismo: un watcher que
               // no chequea hace media hora está roto y hay que poder verlo.
               `cada ${Math.round(watcher.intervalMs / 1000)}s · último check ${ago(watcher.lastCheckAt)}`
@@ -377,7 +442,7 @@ function HoldsCard({
     <section className="border-line bg-surface rounded-[var(--radius)] border p-4">
       <div className="text-muted text-xs">Holds y pendientes</div>
       {loading ? (
-        <div className="mt-2 h-10 animate-pulse rounded bg-surface-2" />
+        <div className="bg-surface-2 text-muted mt-2 grid h-10 place-items-center rounded text-xs">Cargando…</div>
       ) : !syncedAt ? (
         <>
           <p className="mt-2 text-sm font-medium">Todavía no los consultaste.</p>

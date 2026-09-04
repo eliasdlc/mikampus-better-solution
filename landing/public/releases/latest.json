@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "status": "unpublished",
+  "generatedAt": null,
+  "version": "0.1.0",
+  "releaseNotesUrl": "https://github.com/eliasdlc/mikampus-better-solution/releases/tag/v0.1.0",
+  "artifacts": [],
+  "npm": {
+    "package": "mikampus",
+    "command": "npx mikampus",
+    "node": ">=24",
+    "foreground": true
+  }
+}

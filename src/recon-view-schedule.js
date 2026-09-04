@@ -1,4 +1,4 @@
-import { loginToPeopleSoft } from './login.js';
+import { loginForRecon } from './reconLogin.js';
 import { VIEW_SCHEDULE_URL } from './peoplesoft/constants.js';
 import fs from 'node:fs/promises';
 
@@ -37,7 +37,7 @@ async function dump(page, name) {
 }
 
 async function main() {
-  const { browser, page } = await loginToPeopleSoft({ headless: true });
+  const { browser, page } = await loginForRecon();
   try {
     console.log('Abriendo el visor de horario (LAM)…');
     await page.goto(VIEW_SCHEDULE_URL, { waitUntil: 'commit' });

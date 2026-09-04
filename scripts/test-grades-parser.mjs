@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from '../src/browser.js';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {
@@ -12,7 +13,7 @@ import {
 import { summarizeGrades, countsTowardGpa, formatGpa, sortTermLabels } from '../src/shared/gpa.ts';
 
 // Corre el parser de notas contra HTML real volcado del portal, sin tocarlo.
-const browser = await chromium.launch();
+const browser = await chromium.launch(await browserLaunchOptions());
 const page = await browser.newPage();
 
 // ── Course History: el histórico completo ───────────────────────────────────

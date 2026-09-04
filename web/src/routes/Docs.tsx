@@ -342,7 +342,7 @@ export function Docs() {
             <Code>{`git clone <el-repo> && cd mikampus
 npm install
 npm run install-browsers   # descarga Chromium para Playwright
-cp .env.example .env       # completá PUCMM_USERNAME y PUCMM_PASSWORD
+cp .env.example .env
 npm run build              # compila la SPA (web/ → public/dist)
 npm start                  # mikampus en http://localhost:4173`}</Code>
             <P>
@@ -354,12 +354,12 @@ node scripts/sync-catalog.mjs ICC MAT      # títulos + secciones por carrera`}<
             <P>
               Para desarrollar el frontend con hot-reload: <K>npm run dev</K> levanta Vite en :5173 con proxy de{' '}
               <K>/api</K> al backend en :4173 (que debe estar corriendo con <K>npm start</K>). En localhost, mikampus
-              se instala como PWA. Y si querés abrirla desde el teléfono en tu red local, <K>HOST=0.0.0.0 npm start</K>{' '}
-              — leé primero la nota de seguridad del README: la app queda al alcance de todo el WiFi.
+              se instala como PWA. El agente Desktop no abre la LAN: el acceso remoto requiere el modo Home Server,
+              con túnel SSH o HTTPS explícito.
             </P>
             <P>
-              También existe un modo hosted multi-usuario con Docker Compose (Caddy + Litestream para réplicas de
-              SQLite); el procedimiento completo está en <K>docs/deploy-digitalocean.md</K> del repo.
+              No existe un modo hosted ni multiusuario: tus credenciales y datos permanecen en el hardware que
+              controlás.
             </P>
           </Section>
 
@@ -429,14 +429,14 @@ node scripts/sync-catalog.mjs ICC MAT      # títulos + secciones por carrera`}<
           <Section id="seguridad" kicker="lo serio" title="Credenciales y seguridad">
             <ul className="text-muted mt-2 max-w-2xl space-y-3 text-[15px] leading-7">
               <li>
-                <strong className="text-fg">Corriendo local, tus credenciales no salen de tu máquina.</strong> Viven en
-                tu <K>.env</K> (gitignored) y solo las ve el Playwright local que se loguea al portal por vos.
+                <strong className="text-fg">Tus credenciales no salen de tu máquina.</strong> Se ingresan para la
+                sesión local y solo las usa el Playwright que se loguea al portal por vos.
               </li>
               <li>
-                <strong className="text-fg">En modo hosted, la contraseña sirve para tu sesión y no se guarda.</strong>{' '}
-                Solo si activás funciones programadas (inscripción a hora fija) mikampus pide consentimiento aparte
-                para guardar una credencial cifrada, con fecha de vencimiento atada a la ventana de inscripción — se
-                destruye sola después.
+                <strong className="text-fg">La contraseña queda en un archivo tuyo.</strong> Vive en la carpeta de
+                datos de mikampus, solo legible por tu usuario del sistema, y se lee en cada operación: podés editarlo
+                o vaciarlo a mano. Cerrar sesión lo vacía; si el portal la rechaza, mikampus la borra y te saca de la
+                sesión.
               </li>
               <li>
                 <strong className="text-fg">Nunca compartas un script con tus credenciales adentro.</strong> Así fue

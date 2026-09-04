@@ -13,35 +13,15 @@ export function getUser(id) {
     .get(id) ?? null;
 }
 
-export function getUserByUsername(portalUsername) {
-  return db
-    .prepare('SELECT id, portal_username AS portalUsername FROM users WHERE portal_username = ? COLLATE NOCASE')
-    .get(portalUsername) ?? null;
-}
-
-// El usuario de un username del portal, creándolo si es su primer login. El
-// usuario 1 sin username reclama el primero que llegue SOLO en modo local
-// (adoptLocalUsername); acá un username desconocido siempre es un usuario nuevo.
-export function ensureUser(portalUsername) {
-  const username = String(portalUsername ?? '').trim();
-  if (!username) throw new Error('ensureUser necesita el username del portal');
-  const existing = getUserByUsername(username);
-  if (existing) return existing;
-  const { lastInsertRowid } = db.prepare('INSERT INTO users (portal_username) VALUES (?)').run(username);
-  return getUser(Number(lastInsertRowid));
-}
-
 export function touchLastLogin(userId) {
   db.prepare(`UPDATE users SET last_login_at = datetime('now') WHERE id = ?`).run(userId);
 }
 
-// Modo local: la cuenta configurada (.env / account.json) ES el usuario 1. Se
-// llama al arrancar el server para que la fila migrada deje de ser anónima; si
-// el username ya pertenece a otra fila (no debería pasar en local), no se pisa.
+// La instalación local tiene una sola identidad persistida (fila 1). Si se
+// inicia sesión con otra cuenta, esa identidad se reemplaza en vez de crear un
+// segundo espacio de datos.
 export function adoptLocalUsername(portalUsername) {
   const username = String(portalUsername ?? '').trim();
   if (!username) return;
-  const owner = getUserByUsername(username);
-  if (owner && owner.id !== LOCAL_USER_ID) return;
   db.prepare('UPDATE users SET portal_username = ? WHERE id = ?').run(username, LOCAL_USER_ID);
 }

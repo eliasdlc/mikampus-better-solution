@@ -1,5 +1,6 @@
 import { db } from './db.js';
-import { withPage, SERVICE_USER_ID } from './session.js';
+import { withPage } from './session.js';
+import { LOCAL_USER_ID } from './users.js';
 import { syncCatalogSubject } from './peoplesoft/catalog.js';
 import { syncSubjectTitles } from './peoplesoft/browseCatalog.js';
 import * as scheduler from './scheduler.js';
@@ -88,11 +89,8 @@ export function stalestSubject(subjects, term = syncTerm()) {
     .sort((a, b) => (a.at ?? '') .localeCompare(b.at ?? ''))[0]?.subject ?? null;
 }
 
-// La guarda dura, reescrita para multi-usuario (§5.7): con N usuarios siempre
-// hay ALGÚN watcher, así que los watchers ya no bloquean — cada usuario tiene
-// su propio context y la cola de servicio es aparte. Lo único sagrado es el
-// disparo (principio 5): si CUALQUIER usuario tiene una inscripción programada
-// dentro de la ventana (pre-warm de §5.6 incluido), el barrido cede el paso.
+// El disparo del operador es lo sagrado: si hay una inscripción dentro de la
+// ventana (pre-warm incluido), el barrido cede la única sesión del portal.
 const FIRE_WINDOW_MS = 20 * 60_000;
 
 export function blockedBecause(now = Date.now()) {
@@ -125,8 +123,8 @@ async function run() {
     // Un subject son dos pantallas: los títulos (una carga) y el barrido de
     // secciones (muchas, troceadas). syncCatalogSubject deja su rastro en
     // sync_log, que es de donde sale el StalenessTag y el orden de la rotación.
-    const { saved: titulos } = await withPage(SERVICE_USER_ID, (page) => syncSubjectTitles(page, { subject }));
-    const { saved, skipped } = await withPage(SERVICE_USER_ID, (page) => syncCatalogSubject(page, { term, career: CAREER, subject }));
+    const { saved: titulos } = await withPage(LOCAL_USER_ID, (page) => syncSubjectTitles(page, { subject }));
+    const { saved, skipped } = await withPage(LOCAL_USER_ID, (page) => syncCatalogSubject(page, { term, career: CAREER, subject }));
 
     scheduler.emitEvent({
       type: 'log',

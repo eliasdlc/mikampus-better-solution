@@ -52,3 +52,34 @@ export const DROP_URL =
   'https://micampus.pucmm.edu.do/psp/cs92pro/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SSR_SSENRL_DROP.GBL?FolderPath=PORTAL_ROOT_OBJECT.CO_EMPLOYEE_SELF_SERVICE.HCCC_ENROLLMENT.HC_SSR_SSENRL_DROP_GBL&IsFolder=false&IgnoreParamTempl=FolderPath%2cIsFolder';
 
 export const CONTENT_FRAME_NAME = 'TargetContent';
+
+// Plazos POR CLASE del calendario académico (enrollmentDeadlines.js). No tienen
+// URL propia: son una pantalla a la que solo se llega desde una clase inscrita.
+// Hay dos entradas, y las dos llevan al mismo componente de PeopleSoft
+// (DERIVED_SSR_FL_SSR_ENRL_DL):
+//   1. el enlace "Enrollment Deadlines" que View My Classes Fluid pone debajo de
+//      cada materia, presente en fixtures/recon-my-classes-view.html;
+//   2. el icono de deadlines por fila del Student Center clásico
+//      (PS_ACADEMIC_DEADLINES_ICN), del que la leyenda sí está en
+//      fixtures/recon-student-center.html pero no una fila real que lo use,
+//      porque ese volcado se tomó sin materias inscritas.
+// Se usa la primera: es la única cuyo markup está confirmado.
+export const ENROLLMENT_DEADLINES_LINK = 'a[id^="DERIVED_SSR_FL_SSR_ENRL_DL$"]';
+
+// CONFIRMADO con el recon del 2026-09-03: ese enlace no navega ni abre una
+// grilla en la misma página. Dispara `submitAction_win0`, PeopleSoft inserta un
+// modal Fluid (`ptMod_0` → `ptModTable_0` → `ptModContent_0`) y el contenido
+// del modal vive en un IFRAME aparte, `ptModFrame_0`, con
+// title="View My Classes Popup window" y un src con ICType=Panel.
+//
+// Por eso el selector viejo no servía: apuntaba a `table.PSLEVEL1GRID`, que es
+// la gramática clásica, y esta pantalla es Fluid (`ps_grid-flex`). Y sobre todo
+// lo buscaba en el frame del enlace, donde el contenido no está.
+//
+// El nombre del iframe lleva el índice de la clase: hay un enlace por materia
+// inscrita ($0..$3 con cuatro materias), así que el modal de la segunda es
+// ptModFrame_1.
+export const ENROLLMENT_DEADLINES_MODAL_FRAME = /^ptModFrame_\d+$/;
+
+// Lo que ancla que el modal ya cargó, del lado de adentro del iframe.
+export const ENROLLMENT_DEADLINES_PANEL = 'table[class*="ps_grid-flex"], table.PSLEVEL1GRID';
