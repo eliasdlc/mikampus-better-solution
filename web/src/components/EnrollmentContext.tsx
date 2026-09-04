@@ -155,11 +155,7 @@ export function EnrollmentContext({
     mutationFn: () => {
       const chosen = portalAppointment ?? manualAt;
       if (!chosen) return Promise.reject(new Error('Escribí la hora que te comunicó tu escuela.'));
-      const expiresAt = enrollmentWindow?.endsAt ?? 'el cierre de inscripción';
-      if (!window.confirm(`Para ejecutar el disparo aunque cierres la app, mikampus guardará tu credencial cifrada hasta ${expiresAt}. ¿Aceptás?`)) {
-        return Promise.reject(new Error('No autorizaste el disparo programado.'));
-      }
-      return scheduleAt({ atISO: new Date(chosen).toISOString(), term: termId, consent: true });
+      return scheduleAt({ atISO: new Date(chosen).toISOString() });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
   });
@@ -173,17 +169,14 @@ export function EnrollmentContext({
 
   const watch = useMutation({
     mutationFn: (input: { enabled: boolean; autoEnroll?: boolean; scope?: WatcherScope }) => {
-      const raisesAuthority = (input.enabled && !watcherOn) || (input.autoEnroll === true && !autoEnrollOn);
-      if (raisesAuthority) {
-        const expiresAt = enrollmentWindow?.endsAt ?? 'el cierre de inscripción';
-        const purpose = input.autoEnroll
-          ? 'Auto-inscripción puede modificar tu matrícula'
-          : 'El watcher consulta el portal aunque la pestaña esté cerrada';
-        if (!window.confirm(`${purpose}. Se guardará tu credencial cifrada hasta ${expiresAt}. ¿Aceptás?`)) {
-          return Promise.reject(new Error('No autorizaste la auto-inscripción.'));
+      // Encender la auto-inscripción es la única acción que puede modificar
+      // la matrícula sin la persona presente: se confirma una vez, al subir.
+      if (input.autoEnroll === true && !autoEnrollOn) {
+        if (!window.confirm('La auto-inscripción puede modificar tu matrícula sin que estés mirando. ¿Encenderla?')) {
+          return Promise.reject(new Error('No encendiste la auto-inscripción.'));
         }
       }
-      return setWatcher({ ...input, term: termId, appointmentAt: scheduledAt ?? null, consent: true });
+      return setWatcher({ ...input, appointmentAt: scheduledAt ?? null });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
   });

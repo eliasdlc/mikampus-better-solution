@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import path from 'node:path';
 import express from 'express';
-import { persistRamCredential, withPage, resetSession, shutdown } from './session.js';
+import { withPage, resetSession, shutdown } from './session.js';
 import { readCart, removeFromCart, saveCart, syncCart, validateCart } from './peoplesoft/cart.js';
 import { getSearchFormOptions, searchClasses, addExactSectionToCart } from './peoplesoft/classSearch.js';
 import { readClassDropDeadlines, syncEnrollmentDeadlines } from './peoplesoft/enrollmentDeadlines.js';
@@ -30,7 +30,7 @@ import { buildProjection, creditsInProgressFor } from './shared/projection.ts';
 import { db, lastSync, deleteAllUserData, logAction, readActions } from './db.js';
 import { getUser, LOCAL_USER_ID } from './users.js';
 import * as auth from './auth.js';
-import { credentialInfo, deleteCredential, purgeExpiredCredentials } from './credentialVault.js';
+import { credentialInfo, deleteCredential, ensureCredentialFile } from './credentialStore.js';
 import * as plans from './plans.js';
 import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
@@ -73,35 +73,7 @@ app.get('/api/health', (req, res) => {
 // http. El único que puede mentir en esta cabecera es algo que ya está en
 // loopback, y lo peor que consigue es que la cookie no se envíe: molesta, no
 // escala privilegios.
-function secureCookies(req) {
-  return String(req.headers['x-forwarded-proto'] ?? '').toLowerCase() === 'https';
-}
-
-// El portal solo publicó fechas en el recon actual. Para que la credencial no
-// sobreviva al período de inscripción, convertimos el cierre publicado en el
-// último instante de ese día Santo Domingo; nunca aceptamos una fecha elegida
-// libremente por el cliente.
-function unattendedExpiry(userId, term) {
-  if (!term) throw new Error('Elegí el ciclo de inscripción antes de activar una función desatendida');
-  const window = db
-    .prepare('SELECT ends_at FROM enrollment_windows WHERE user_id = ? AND term_code = ? ORDER BY ends_at DESC LIMIT 1')
-    .get(userId, String(term));
-  if (!window?.ends_at) throw new Error('Actualizá tu ventana de inscripción antes de activar esta función');
-  const expiresAt = new Date(`${window.ends_at}T23:59:59.999-04:00`).toISOString();
-  if (new Date(expiresAt).getTime() <= Date.now()) throw new Error('La ventana de inscripción de ese ciclo ya cerró');
-  return expiresAt;
-}
-
-function authorizeUnattendedCredential(userId, { consent, term, reason }) {
-  if (consent !== true) throw new Error('Confirmá el consentimiento para guardar la credencial cifrada hasta el cierre de inscripción');
-  persistRamCredential(userId, { expiresAt: unattendedExpiry(userId, term), reason });
-}
-
-function revokeUnattendedCredentialIfUnused(userId) {
-  const scheduled = db.prepare('SELECT 1 FROM schedules WHERE user_id = ?').get(userId);
-  const watching = db.prepare('SELECT 1 FROM watchers WHERE user_id = ?').get(userId);
-  if (!scheduled && !watching) deleteCredential(userId);
-}
+const secureCookies = auth.secureCookies;
 
 // La política de refresco ya no vive acá: es el registro de fuentes de
 // src/syncOrchestrator.js, con dependencias, relevancia y prioridad. Este
@@ -189,7 +161,7 @@ app.get('/api/account/overview', (req, res) => {
   ];
   res.json({
     user: getUser(req.userId),
-    credential: credentialInfo(req.userId),
+    credential: credentialInfo(),
     syncs: syncKinds.map(([kind, label]) => ({ kind, label, syncedAt: lastSync(kind, { userId: req.userId }) })),
   });
 });
@@ -356,7 +328,7 @@ app.delete('/api/account/data', async (req, res) => {
     scheduler.cancelSchedule(req.userId);
     scheduler.stopWatcher(req.userId);
     await resetSession(req.userId);
-    deleteCredential(req.userId);
+    deleteCredential();
     auth.revokeAllSessions(req.userId);
     deleteAllUserData(req.userId);
     clearNotifications();
@@ -1595,11 +1567,6 @@ app.post('/api/schedule', (req, res) => {
     requireScraperMutationSupport();
     const at = new Date(req.body?.atISO).getTime();
     if (Number.isNaN(at) || at <= Date.now()) throw new Error('La hora debe ser futura y válida');
-    authorizeUnattendedCredential(req.userId, {
-      consent: req.body?.consent,
-      term: req.body?.term,
-      reason: 'disparo programado',
-    });
     scheduler.scheduleFixedTime(req.userId, req.body.atISO);
     res.json({ ok: true });
   } catch (err) {
@@ -1609,7 +1576,6 @@ app.post('/api/schedule', (req, res) => {
 
 app.delete('/api/schedule', (req, res) => {
   scheduler.cancelSchedule(req.userId);
-  revokeUnattendedCredentialIfUnused(req.userId);
   res.json({ ok: true });
 });
 
@@ -1619,8 +1585,6 @@ app.post('/api/watch', (req, res) => {
       enabled,
       autoEnroll = false,
       appointmentAt = null,
-      term,
-      consent = false,
       scope = scheduler.DEFAULT_WATCHER_SCOPE,
       intervalMs,
     } = req.body ?? {};
@@ -1631,15 +1595,6 @@ app.post('/api/watch', (req, res) => {
     if (enabled) {
       if (!scheduler.WATCHER_SCOPES.includes(scope)) throw new Error(`Alcance de watcher desconocido: ${scope}`);
       if (autoEnroll) requireScraperMutationSupport();
-      // La razón queda escrita junto a la credencial guardada: si alguien abre
-      // Ajustes en dos meses, tiene que poder leer para qué la autorizó.
-      authorizeUnattendedCredential(req.userId, {
-        consent,
-        term,
-        reason: autoEnroll
-          ? `watcher con auto-inscripción (${scheduler.WATCHER_SCOPE_LABELS[scope]})`
-          : `watcher (${scheduler.WATCHER_SCOPE_LABELS[scope]}, solo notificar)`,
-      });
       const parsedAppointment = appointmentAt ? new Date(appointmentAt) : null;
       if (appointmentAt && Number.isNaN(parsedAppointment.getTime())) throw new Error('La hora de inscripción no es válida');
       scheduler.startWatcher(req.userId, {
@@ -1649,7 +1604,6 @@ app.post('/api/watch', (req, res) => {
       });
     } else {
       scheduler.stopWatcher(req.userId);
-      revokeUnattendedCredentialIfUnused(req.userId);
     }
     res.json({ ok: true });
   } catch (err) {
@@ -1657,10 +1611,7 @@ app.post('/api/watch', (req, res) => {
   }
 });
 
-// Solo el ritmo, sin tocar el encendido ni la autorización. Cambiar cada cuánto
-// se consulta no eleva permisos —no guarda credencial ni habilita
-// auto-inscripción—, así que no tiene por qué pasar por el consentimiento que
-// exige encender el watcher.
+// Solo el ritmo, sin tocar el encendido ni la auto-inscripción.
 app.patch('/api/watch', (req, res) => {
   try {
     const tickMs = scheduler.setWatcherTickMs(req.body?.intervalMs);
@@ -1716,9 +1667,10 @@ reconcileTerms();
 const bootMode = publishRuntimeMode();
 if (bootMode) console.log(`[agent] modo de runtime: ${bootMode}`);
 const runtimeStart = recordRuntimeStart();
-// Higiene al arrancar: sesiones vencidas fuera, credenciales vencidas fuera.
+// Higiene al arrancar: sesiones vencidas fuera. El archivo de credencial se
+// crea vacío si no existe, para que la persona sepa dónde va.
 auth.purgeExpiredSessions();
-purgeExpiredCredentials();
+console.log(`[agent] credencial del portal: ${ensureCredentialFile()}`);
 // Los disparos y watchers persistidos se rearman: el reboot de las 5:59 no
 // puede costar el cupo de las 6:00.
 const timers = scheduler.restoreTimers();

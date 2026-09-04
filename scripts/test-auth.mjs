@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-auth-'));
 process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
+process.env.MIKAMPUS_CREDENTIALS_FILE = path.join(dir, 'credenciales.env');
 
 const {
   createSession,
@@ -29,6 +30,7 @@ const {
   CSRF_HEADER,
 } = await import('../src/auth.js');
 const { db } = await import('../src/db.js');
+const { writeCredential, deleteCredential } = await import('../src/credentialStore.js');
 
 // ── Sesión: ida y vuelta, y el token no se guarda en claro. ──
 const s1 = createSession(42);
@@ -74,11 +76,14 @@ noteLoginSuccess('ana');
 for (let i = 0; i < 4; i++) noteLoginFailure('ana');
 assert.equal(loginBlocked('ana'), false, 'el éxito reinicia el contador');
 
-// ── Middleware: 401 sin cookie, 403 sin CSRF en mutación, pasa con todo. ──
+// ── Middleware: la sesión existe mientras el archivo tenga credencial. ──
+// Sin credencial ninguna cookie vale; con credencial y sin cookie se emite una
+// en el momento; una mutación sigue exigiendo CSRF.
 const fakeRes = () => {
-  const res = { statusCode: 200, body: null };
+  const res = { statusCode: 200, body: null, headers: {} };
   res.status = (code) => ((res.statusCode = code), res);
   res.json = (body) => ((res.body = body), res);
+  res.set = (name, value) => ((res.headers[name] = value), res);
   return res;
 };
 const call = (req) => {
@@ -88,17 +93,28 @@ const call = (req) => {
   return { res, passed, req };
 };
 
-const live = createSession(9);
-
 let out = call({ path: '/grades', method: 'GET', headers: {} });
-assert.equal(out.res.statusCode, 401, 'sin cookie no se entra');
+assert.equal(out.res.statusCode, 401, 'sin credencial guardada no se entra');
 
 out = call({ path: '/health', method: 'GET', headers: {} });
 assert.ok(out.passed, '/health es público');
 
+writeCredential({ username: 'ana', password: 'secreta' });
+out = call({ path: '/grades', method: 'GET', headers: {} });
+assert.ok(out.passed, 'con credencial en el archivo, abrir la app es entrar');
+assert.equal(out.req.userId, 1, 'la identidad es la del operador local');
+assert.match(out.res.headers['Set-Cookie'] ?? '', new RegExp(`${SESSION_COOKIE}=`), 'y se emite la cookie en el momento');
+assert.equal(db.prepare('SELECT portal_username FROM users WHERE id = 1').get().portal_username, 'ana', 'el usuario del archivo es el de la instalación');
+
+const live = createSession(1);
 out = call({ path: '/grades', method: 'GET', headers: { cookie: `${SESSION_COOKIE}=${live.token}` } });
 assert.ok(out.passed, 'con sesión viva un GET pasa');
-assert.equal(out.req.userId, 9, 'el middleware resuelve el dueño');
+assert.equal(out.res.headers['Set-Cookie'], undefined, 'y no se reemite la cookie');
+
+deleteCredential();
+out = call({ path: '/grades', method: 'GET', headers: { cookie: `${SESSION_COOKIE}=${live.token}` } });
+assert.equal(out.res.statusCode, 401, 'vaciar el archivo saca aunque la cookie siga vigente');
+writeCredential({ username: 'ana', password: 'secreta' });
 
 out = call({ path: '/cart/sync', method: 'POST', headers: { cookie: `${SESSION_COOKIE}=${live.token}` } });
 assert.equal(out.res.statusCode, 403, 'una mutación sin CSRF header se rechaza');
@@ -135,7 +151,7 @@ assert.ok(
 );
 
 // ── Hosts de confianza: el proxy de identidad entra, el resto no. ──
-// Lo que se protege: que declarar un host para `tailscale serve` no se
+// Lo que se protege: que declarar un host para el proxy de identidad no se
 // convierta sin querer en "cualquiera puede hablarle al agente". El Host pasa a
 // estar permitido; el Origin sigue teniendo que coincidir, que es lo que
 // impide que un sitio ajeno mute nada.
@@ -143,31 +159,31 @@ assert.ok(
 // para no depender de cómo esté configurada la máquina que la corre.
 delete process.env.MIKAMPUS_TRUSTED_HOSTS;
 assert.equal(
-  guard({ method: 'GET', headers: { host: 'agentbox.tailaa5099.ts.net' } }).res.statusCode,
+  guard({ method: 'GET', headers: { host: 'proxy.example.net' } }).res.statusCode,
   421,
-  'sin declararlo, el hostname del tailnet es un desconocido más'
+  'sin declararlo, el hostname del proxy es un desconocido más'
 );
 
-process.env.MIKAMPUS_TRUSTED_HOSTS = 'agentbox.tailaa5099.ts.net';
+process.env.MIKAMPUS_TRUSTED_HOSTS = 'proxy.example.net';
 assert.ok(
-  guard({ method: 'GET', headers: { host: 'agentbox.tailaa5099.ts.net' } }).passed,
+  guard({ method: 'GET', headers: { host: 'proxy.example.net' } }).passed,
   'declarado, el host de confianza entra'
 );
 assert.ok(
-  guard({ method: 'GET', headers: { host: 'AgentBox.TailAA5099.ts.net' } }).passed,
+  guard({ method: 'GET', headers: { host: 'Proxy.Example.Net' } }).passed,
   'y la comparación no depende de mayúsculas'
 );
 assert.ok(
-  guard({ method: 'POST', headers: { host: 'agentbox.tailaa5099.ts.net', origin: 'https://agentbox.tailaa5099.ts.net' } }).passed,
+  guard({ method: 'POST', headers: { host: 'proxy.example.net', origin: 'https://proxy.example.net' } }).passed,
   'la SPA servida por el proxy puede mutar'
 );
 assert.equal(
-  guard({ method: 'POST', headers: { host: 'agentbox.tailaa5099.ts.net', origin: 'https://evil.example' } }).res.statusCode,
+  guard({ method: 'POST', headers: { host: 'proxy.example.net', origin: 'https://evil.example' } }).res.statusCode,
   403,
   'pero un origen ajeno sigue sin poder, aunque el Host sea de confianza'
 );
 assert.equal(
-  guard({ method: 'GET', headers: { host: 'otro.tailaa5099.ts.net' } }).res.statusCode,
+  guard({ method: 'GET', headers: { host: 'otro.example.net' } }).res.statusCode,
   421,
   'declarar un host no habilita a sus vecinos del mismo dominio'
 );

@@ -433,10 +433,10 @@ node scripts/sync-catalog.mjs ICC MAT      # títulos + secciones por carrera`}<
                 sesión local y solo las usa el Playwright que se loguea al portal por vos.
               </li>
               <li>
-                <strong className="text-fg">La contraseña sirve para tu sesión y no se guarda de forma permanente.</strong>{' '}
-                Solo si activás funciones programadas (inscripción a hora fija) mikampus pide consentimiento aparte
-                para guardar una credencial cifrada, con fecha de vencimiento atada a la ventana de inscripción — se
-                destruye sola después.
+                <strong className="text-fg">La contraseña queda en un archivo tuyo.</strong> Vive en la carpeta de
+                datos de mikampus, solo legible por tu usuario del sistema, y se lee en cada operación: podés editarlo
+                o vaciarlo a mano. Cerrar sesión lo vacía; si el portal la rechaza, mikampus la borra y te saca de la
+                sesión.
               </li>
               <li>
                 <strong className="text-fg">Nunca compartas un script con tus credenciales adentro.</strong> Así fue

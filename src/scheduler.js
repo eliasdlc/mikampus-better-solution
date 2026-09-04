@@ -1,5 +1,5 @@
 import { enrollFromCart, finishPreparedEnrollment, prepareEnrollment } from './peoplesoft/enroll.js';
-import { hasLiveCredentials, hasUnattendedCredential, withPage, resetSession } from './session.js';
+import { hasLiveCredentials, withPage, resetSession } from './session.js';
 import { LOCAL_USER_ID } from './users.js';
 import { notifyFromEvent } from './notify.js';
 import { db, logAction } from './db.js';
@@ -256,10 +256,10 @@ export function prewarmAtFor(userId, atISO, now = Date.now()) {
 
 async function prewarmSchedule(userId, schedule) {
   if (schedule.prewarmed || Date.now() >= new Date(schedule.atISO).getTime()) return;
-  if (!hasUnattendedCredential(userId)) {
+  if (!hasLiveCredentials(userId)) {
     cancelSchedule(userId);
     await resetSession(userId);
-    emit({ type: 'notice', userId, level: 'error', title: 'Disparo detenido: venció la autorización', body: 'Iniciá sesión y autorizalo de nuevo antes de programar una inscripción.', key: 'schedule-credentials-required' });
+    emit({ type: 'notice', userId, level: 'error', title: 'Disparo detenido: no hay credencial guardada', body: 'Iniciá sesión de nuevo antes de programar una inscripción.', key: 'schedule-credentials-required' });
     return;
   }
   emit({ type: 'log', userId, message: 'Preparando sesión y asistente de inscripción…' });
@@ -595,9 +595,9 @@ async function handleCourseScan(target, progress = {}) {
   const hadBaseline = [...before.values()].some((section) => section.status != null);
   const owners = watchersForCourse(target.courseCode);
   for (const owner of owners) {
-    if (!hasUnattendedCredential(owner.user_id)) {
-      pauseWatcher(owner.user_id, 'credentials-required', 'La autorización o la credencial ya no está disponible');
-      emit({ type: 'notice', userId: owner.user_id, level: 'error', title: 'Watcher detenido: venció la autorización', body: 'Iniciá sesión y autorizalo de nuevo para volver a consultar el portal.', key: 'watcher-credentials-required' });
+    if (!hasLiveCredentials(owner.user_id)) {
+      pauseWatcher(owner.user_id, 'credentials-required', 'No hay credencial guardada');
+      emit({ type: 'notice', userId: owner.user_id, level: 'error', title: 'Watcher detenido: no hay credencial guardada', body: 'Iniciá sesión de nuevo para volver a consultar el portal.', key: 'watcher-credentials-required' });
     }
   }
   const credentialedOwners = watchersForCourse(target.courseCode);
@@ -873,7 +873,7 @@ export function restoreTimers(now = Date.now()) {
 export async function reconcileUncertainSchedules() {
   const rows = db.prepare("SELECT user_id, at_iso FROM schedules WHERE state = 'uncertain'").all();
   for (const row of rows) {
-    if (!hasUnattendedCredential(row.user_id)) {
+    if (!hasLiveCredentials(row.user_id)) {
       emit({ type: 'notice', userId: row.user_id, level: 'error', title: 'Inscripción incierta requiere revisión', body: 'El agente se detuvo durante el submit y no hay credencial vigente para reconciliar. Revisá Mi Horario antes de reintentar.', key: `schedule-uncertain:${row.at_iso}` });
       continue;
     }

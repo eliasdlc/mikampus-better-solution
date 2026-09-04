@@ -15,7 +15,7 @@ const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-erase-'));
 const env = {
   MIKAMPUS_DATA_DIR: dir,
   MIKAMPUS_DB: path.join(dir, 'mikampus.db'),
-  MIKAMPUS_CRED_DB: path.join(dir, 'credentials.db'),
+  MIKAMPUS_CREDENTIALS_FILE: path.join(dir, 'credenciales.env'),
   MIKAMPUS_BACKUP_DIR: path.join(dir, 'backups'),
   MIKAMPUS_RUNTIME_DIR: path.join(dir, 'runtime'),
   PLAYWRIGHT_BROWSERS_PATH: path.join(dir, 'browsers'),
@@ -26,14 +26,14 @@ const { erasePreview, eraseTargets, eraseLocalArtifacts } = await import('../src
 const { diagnosticsDir } = await import('../src/diagnostics.js');
 
 try {
-  // Se fabrica una instalación "usada": base, vault, copias, diagnósticos y
+  // Se fabrica una instalación "usada": base, credencial, copias, diagnósticos y
   // runtime, que es exactamente lo que un borrado incompleto suele olvidar.
   fs.mkdirSync(env.MIKAMPUS_BACKUP_DIR, { recursive: true });
   fs.mkdirSync(env.MIKAMPUS_RUNTIME_DIR, { recursive: true });
   fs.mkdirSync(diagnosticsDir, { recursive: true });
   fs.writeFileSync(env.MIKAMPUS_DB, 'datos');
   fs.writeFileSync(`${env.MIKAMPUS_DB}-wal`, 'wal');
-  fs.writeFileSync(env.MIKAMPUS_CRED_DB, 'vault');
+  fs.writeFileSync(env.MIKAMPUS_CREDENTIALS_FILE, 'MIKAMPUS_PORTAL_USER=ana\n');
   fs.writeFileSync(path.join(env.MIKAMPUS_BACKUP_DIR, 'mikampus-2026-07-20.sqlite'), 'copia');
   fs.writeFileSync(path.join(diagnosticsDir, '2026-login.png'), 'captura');
   fs.writeFileSync(path.join(env.MIKAMPUS_RUNTIME_DIR, 'agent.token'), 'token');
@@ -49,12 +49,12 @@ try {
     );
   }
   const ids = preview.targets.map((target) => target.id);
-  for (const required of ['db', 'db-wal', 'db-shm', 'vault', 'backups', 'diagnostics', 'runtime', 'browsers']) {
+  for (const required of ['db', 'db-wal', 'db-shm', 'credentials', 'backups', 'diagnostics', 'runtime', 'browsers']) {
     assert.ok(ids.includes(required), `el preview enumera ${required}`);
   }
   assert.ok(
-    preview.external.some((item) => item.id === 'keychain'),
-    'el preview incluye lo que no es un archivo: el secreto en el almacén del sistema'
+    preview.external.some((item) => item.id === 'sessions'),
+    'el preview incluye lo que no es un archivo: las sesiones emitidas'
   );
   assert.ok(preview.totalBytes > 0, 'el preview dice cuánto ocupa');
   assert.match(preview.note, /micampus/, 'aclara que la cuenta del portal no se toca');
@@ -80,10 +80,10 @@ try {
   // La desinstalación que conserva datos preserva SOLO lo preservable.
   fs.mkdirSync(env.MIKAMPUS_BACKUP_DIR, { recursive: true });
   fs.writeFileSync(path.join(env.MIKAMPUS_BACKUP_DIR, 'mikampus-2026-07-21.sqlite'), 'copia');
-  fs.writeFileSync(env.MIKAMPUS_CRED_DB, 'vault');
+  fs.writeFileSync(env.MIKAMPUS_CREDENTIALS_FILE, 'MIKAMPUS_PORTAL_USER=ana\n');
   eraseLocalArtifacts({ keep: ['backups'] });
   assert.equal(fs.existsSync(env.MIKAMPUS_BACKUP_DIR), true, 'las copias se conservan si se pidió');
-  assert.equal(fs.existsSync(env.MIKAMPUS_CRED_DB), false, 'el secreto nunca se conserva');
+  assert.equal(fs.existsSync(env.MIKAMPUS_CREDENTIALS_FILE), false, 'la credencial nunca se conserva');
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

@@ -19,7 +19,7 @@ export const MODES = {
     summary: 'Corre en esta computadora y vigila solo mientras esté encendida, despierta y con internet.',
     guarantees: [
       'Notificaciones nativas del sistema, aunque cierres la pestaña.',
-      'La credencial persistida vive en el almacén seguro del sistema operativo.',
+      'Tu credencial queda en un archivo de la carpeta de datos, solo legible por tu usuario.',
       'Dormir, hibernar o apagar pausa todo: al volver se registra el intervalo no vigilado.',
     ],
   },

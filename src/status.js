@@ -1,6 +1,6 @@
 import { db, schemaState } from './db.js';
 import { readAgentLock, processIsAlive } from './runtime.js';
-import { credentialInfo } from './credentialVault.js';
+import { credentialInfo } from './credentialStore.js';
 import { backupState } from './backups.js';
 import { runtimeMode } from './onboarding.js';
 import { currentVersion, lastUpdateCheck, updatePolicy, updateState } from './updates.js';
@@ -87,7 +87,7 @@ export function fullStatus(userId, { now = new Date() } = {}) {
   const watcher = watcherInfo(userId);
   const schedule = scheduleInfo(userId);
   const mode = runtimeMode() ?? 'desktop';
-  const credential = credentialInfo(userId);
+  const credential = credentialInfo();
 
   // Desktop solo vigila con el equipo despierto: si hay trabajo desatendido
   // pendiente, la UI tiene que decirlo antes de que alguien cierre la tapa.
@@ -104,7 +104,7 @@ export function fullStatus(userId, { now = new Date() } = {}) {
     watcher,
     schedule,
     monitoringGap: monitoringGap(now),
-    credential: credential ? { reason: credential.reason, expiresAt: credential.expiresAt, store: credential.store ?? 'vault' } : null,
+    credential,
     backup: backupState(now),
     update: { policy: updatePolicy(), lastCheck: lastUpdateCheck(), inProgress: updateState() },
     power: {

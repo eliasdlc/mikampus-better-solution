@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
 import {
   checkForUpdate,
   createBackupNow,
@@ -32,7 +31,6 @@ const PERSONAL_QUERIES = ['cart', 'grades', 'holds', 'my-schedule', 'pensum', 'r
 
 export function Ajustes() {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const { me, logout } = useAuth();
   const overview = useQuery({ queryKey: ['account-overview'], queryFn: fetchAccountOverview });
   const actions = useQuery({ queryKey: ['actions'], queryFn: fetchActions });
@@ -87,12 +85,16 @@ export function Ajustes() {
         <p className="text-muted mt-1 text-sm">
           Entraste como <span className="text-fg font-medium">{me?.user?.username ?? overview.data?.user?.portalUsername ?? 'tu cuenta PUCMM'}</span>.
         </p>
+        {credential && (
+          <p className="text-muted mt-2 text-xs leading-5">
+            Tu usuario y contraseña del portal están en{' '}
+            <code className="font-mono text-fg break-all">{credential.path}</code>. Podés editarlo o vaciarlo cuando quieras;
+            mikampus lo lee en cada operación. Si el portal rechaza la credencial, se borra sola y volvés a la home.
+          </p>
+        )}
         <button
           type="button"
-          onClick={async () => {
-            await logout();
-            navigate('/', { replace: true });
-          }}
+          onClick={() => logout()}
           className="border-line hover:bg-surface-2 mt-4 rounded-[var(--radius)] border px-3 py-2 text-sm font-medium"
         >
           Cerrar sesión
@@ -156,14 +158,7 @@ export function Ajustes() {
           ))}
         </dl>
         <div className="border-line mt-4 border-t pt-4 text-sm">
-          {credential ? (
-            <p className="text-muted leading-6">
-              Hay una credencial cifrada guardada para <span className="text-fg">{credential.reason ?? 'una función programada'}</span>. Se borra el{' '}
-              <span className="text-fg">{new Date(credential.expiresAt).toLocaleDateString('es-DO', { dateStyle: 'long' })}</span>.
-            </p>
-          ) : (
-            <p className="text-muted leading-6">No hay una contraseña guardada. Tu sesión actual vive solo en memoria.</p>
-          )}
+          <p className="text-muted leading-6">Borrar todo también vacía el archivo de credencial y cierra la sesión.</p>
           <ErasePreview />
           <label className="mt-4 block space-y-1.5">
             <span className="text-muted text-xs">Escribí <span className="font-mono text-fg">BORRAR</span> para confirmar</span>

@@ -8,15 +8,14 @@ import assert from 'node:assert/strict';
 
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-phase4-'));
 process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
-process.env.MIKAMPUS_CRED_DB = path.join(dir, 'credentials.db');
-process.env.MIKAMPUS_CRED_KEY = 'a'.repeat(64);
+process.env.MIKAMPUS_CREDENTIALS_FILE = path.join(dir, 'credenciales.env');
 process.env.MIKAMPUS_SILENT = '1';
 process.env.SYNC_TERM = '1930';
 
 const { db } = await import('../src/db.js');
 const { saveSection } = await import('../src/peoplesoft/catalog.js');
 const { scrapedSectionSchema } = await import('../src/shared/schemas.ts');
-const { storeCredential } = await import('../src/credentialVault.js');
+const { writeCredential } = await import('../src/credentialStore.js');
 const scheduler = await import('../src/scheduler.js');
 const operator = await import('../src/operatorNotify.js');
 
@@ -31,10 +30,8 @@ try {
   for (const userId of [1, 2]) {
     db.prepare(`INSERT INTO cart_rows (user_id, idx, class_label, course_code, title, class_nbr, status)
                 VALUES (?, 0, 'ICC-321', 'ICC-321', 'ICC-321', '1000', 'closed')`).run(userId);
-    storeCredential(userId, { username: `u${userId}`, password: 'secret' }, {
-      expiresAt: new Date(Date.now() + 86_400_000).toISOString(), reason: 'test',
-    });
   }
+  writeCredential({ username: 'operator', password: 'secret' });
   const past = new Date(Date.now() - 60_000).toISOString();
   // Usuario 2 se activó primero: debe recibir el único intento aunque el rowid
   // y el orden de inserción favorezcan al usuario 1.

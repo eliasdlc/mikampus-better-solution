@@ -185,7 +185,7 @@ instalador por plataforma llega con la fase de distribución (ver
 | Cuenta y datos | Corre single-user en tu hardware; no hay base central ni telemetría. | Usa solo tu propia cuenta; la licencia MIT no elimina riesgos de ToS o académicos. |
 | Desktop local | El agente sigue al cerrar la pestaña y muestra gaps/estado. | No vigila si el equipo duerme, se apaga, se queda sin red o el agente se detiene. |
 | Home Server | Puede continuar en un equipo tuyo encendido, con datos en su volumen. | Solo es continuo si ese hardware sigue encendido y conectado; no expongas el servicio a Internet. |
-| Credenciales | La sesión interactiva queda en RAM y la automatización requiere consentimiento. | MFA, CAPTCHA, contraseña rechazada o keychain bloqueado detienen el trabajo; no reintenta logins en bucle. |
+| Credenciales | Usuario y contraseña quedan en un archivo `.env` del usuario (solo legible por él) que la app lee en cada operación. | MFA, CAPTCHA o contraseña rechazada detienen el trabajo; un rechazo vacía el archivo y cierra la sesión. No reintenta logins en bucle. |
 | Red y updates | PUCMM es el destino de runtime; browser/updates son explícitos y verificables. | GitHub, npm, Vercel y CDN de Playwright reciben datos normales de distribución (IP/plataforma), nunca datos académicos. |
 | Salida | Puedes parar el agente, hacer/exportar copias y previsualizar el borrado. | Un backup en el mismo disco no salva de robo, incendio o fallo físico. |
 
@@ -283,7 +283,7 @@ node scripts/sync-catalog.mjs ICC MAT       # títulos + secciones de un subject
 
 ## Riesgos a tener en cuenta
 
-- **Credenciales**: se ingresan en la UI. La sesión interactiva queda en RAM; las funciones desatendidas requieren consentimiento y usan el almacén seguro del OS o el vault cifrado de Home Server. Nunca las compartas ni las subas a un repo.
+- **Credenciales**: se ingresan en la UI una vez y quedan en `credenciales.env` dentro de la carpeta de datos (`~/.local/share/mikampus/` en Linux), en texto claro y con permisos 0600. Podés editar o vaciar ese archivo a mano; cerrar sesión lo vacía. Nunca lo compartas ni lo subas a un repo.
 - **Política institucional**: varias universidades consideran estos bots una forma de saltarse el proceso de inscripción frente a otros estudiantes y han introducido límites de intentos de login o monitoreo tras detectarlos. Vale la pena revisar el reglamento de PUCMM antes de dejarlo corriendo en producción.
 - **No sumar carga en el pico**: el intervalo de polling del watcher no debe bajar de los ~30-45s durante la ventana de alta demanda.
 - **Selección de sección relacionada**: si una materia tiene varias secciones de práctico disponibles, `addClassToCart` elige la primera que encuentra — no hay todavía forma de elegir manualmente cuál.

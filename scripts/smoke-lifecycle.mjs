@@ -20,7 +20,7 @@ const screenshotsBefore = await readdir(path.join(root, 'screenshots')).catch(()
 
 const child = spawn(process.execPath, [path.join(root, 'src', 'launcher.js')], {
   cwd: tmpdir(),
-  env: { ...process.env, PORT: String(port), MIKAMPUS_DATA_DIR: dataDir, MIKAMPUS_SILENT: '1', MIKAMPUS_DB: '', MIKAMPUS_BACKUP_DIR: '', MIKAMPUS_RUNTIME_DIR: '', MIKAMPUS_CRED_DB: '' },
+  env: { ...process.env, PORT: String(port), MIKAMPUS_DATA_DIR: dataDir, MIKAMPUS_SILENT: '1', MIKAMPUS_DB: '', MIKAMPUS_BACKUP_DIR: '', MIKAMPUS_RUNTIME_DIR: '', MIKAMPUS_CREDENTIALS_FILE: '' },
   stdio: 'ignore',
 });
 

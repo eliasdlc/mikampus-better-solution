@@ -107,8 +107,8 @@ export function Onboarding() {
 
       <Step index={4} title="Tu cuenta de PUCMM" done={data.account} active={data.step === 'credentials'}>
         <p className="text-muted mt-2 text-xs leading-5">
-          Recién ahora se te pide la contraseña, cuando mikampus ya puede verificarla contra micampus. Para el uso
-          normal vive solo en memoria; las funciones programadas piden consentimiento aparte.
+          Recién ahora se te pide la contraseña, cuando mikampus ya puede verificarla contra micampus. Queda guardada
+          en un archivo tuyo, solo legible por tu usuario, y no la volvés a escribir hasta que cierres sesión.
         </p>
         <button
           type="button"

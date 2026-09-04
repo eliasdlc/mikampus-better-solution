@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../lib/auth.tsx';
 import { Check, X } from 'lucide-react';
 import { ThemeToggle } from '../components/ThemeToggle.tsx';
 import { courseColor } from '../lib/color.ts';
@@ -221,8 +222,15 @@ function MockLog() {
 }
 
 export function Landing() {
+  const { sessionLost } = useAuth();
   return (
     <div className="min-h-full">
+      {sessionLost && (
+        <p className="border-line bg-surface-2 text-fg border-b px-5 py-2.5 text-center text-sm">
+          Tu sesión se cerró: micampus rechazó la credencial guardada o el archivo quedó vacío.{' '}
+          <Link to="/entrar" className="text-accent font-medium">Entrá de nuevo</Link>.
+        </p>
+      )}
       {/* Header liviano: el CTA vive acá y en el hero, nada más compite. */}
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-5 py-4 sm:px-8">
         <span className="font-display text-lg font-semibold tracking-tight">mikampus</span>

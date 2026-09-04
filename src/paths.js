@@ -22,7 +22,7 @@ export function dataPaths(env = process.env) {
   return {
     dataDir,
     db: path.resolve(env.MIKAMPUS_DB || path.join(dataDir, 'mikampus.db')),
-    credentials: path.resolve(env.MIKAMPUS_CRED_DB || path.join(dataDir, 'credentials.db')),
+    credentials: path.resolve(env.MIKAMPUS_CREDENTIALS_FILE || path.join(dataDir, 'credenciales.env')),
     backups: path.resolve(env.MIKAMPUS_BACKUP_DIR || path.join(dataDir, 'backups')),
     runtime: path.resolve(env.MIKAMPUS_RUNTIME_DIR || path.join(dataDir, 'runtime')),
     browsers: path.resolve(env.PLAYWRIGHT_BROWSERS_PATH || path.join(dataDir, 'browsers')),
@@ -33,7 +33,7 @@ export function configureRuntimePaths(env = process.env) {
   const paths = dataPaths(env);
   env.MIKAMPUS_DATA_DIR ??= paths.dataDir;
   env.MIKAMPUS_DB ??= paths.db;
-  env.MIKAMPUS_CRED_DB ??= paths.credentials;
+  env.MIKAMPUS_CREDENTIALS_FILE ??= paths.credentials;
   env.MIKAMPUS_BACKUP_DIR ??= paths.backups;
   env.MIKAMPUS_RUNTIME_DIR ??= paths.runtime;
   env.PLAYWRIGHT_BROWSERS_PATH ??= paths.browsers;

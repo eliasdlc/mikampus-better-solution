@@ -42,7 +42,7 @@ const readGraph = await staticGraph(path.join(root, 'src', 'mcp', 'server.js'));
 const relative = [...readGraph].map((file) => path.relative(root, file)).sort();
 
 const FORBIDDEN = [
-  'src/credentialVault.js',
+  'src/credentialStore.js',
   'src/session.js',
   'src/browser.js',
   'src/login.js',

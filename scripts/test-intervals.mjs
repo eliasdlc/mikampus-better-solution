@@ -12,12 +12,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-intervals-'));
 process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
-process.env.MIKAMPUS_CRED_DB = path.join(dir, 'credentials.db');
-process.env.MIKAMPUS_CRED_KEY = crypto.randomBytes(32).toString('hex');
 process.env.MIKAMPUS_SILENT = '1';
 // El default del despliegue queda explícito: el test comprueba la preferencia
 // guardada, no el valor que traiga el entorno de quien lo corre.

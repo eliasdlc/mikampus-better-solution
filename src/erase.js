@@ -42,9 +42,7 @@ export function eraseTargets(env = process.env) {
     { id: 'db', label: 'Base de datos local', path: paths.db, purpose: 'Notas, horario, avance, planes e historial' },
     { id: 'db-wal', label: 'Journal WAL', path: `${paths.db}-wal`, purpose: 'Escrituras pendientes de la base' },
     { id: 'db-shm', label: 'Memoria compartida SQLite', path: `${paths.db}-shm`, purpose: 'Índice del WAL' },
-    { id: 'vault', label: 'Vault de credenciales', path: paths.credentials, purpose: 'Credencial cifrada de Home Server' },
-    { id: 'vault-wal', label: 'Journal del vault', path: `${paths.credentials}-wal`, purpose: 'Escrituras pendientes del vault' },
-    { id: 'vault-shm', label: 'Memoria compartida del vault', path: `${paths.credentials}-shm`, purpose: 'Índice del vault' },
+    { id: 'credentials', label: 'Archivo de credencial', path: paths.credentials, purpose: 'Usuario y contraseña del portal en claro' },
     { id: 'backups', label: 'Copias de seguridad', path: paths.backups, purpose: 'Copias diarias y pre-upgrade', keepable: true, runtimeSafe: true },
     { id: 'diagnostics', label: 'Diagnósticos', path: diagnosticsDir, purpose: 'Capturas y textos de fallas (pueden contener PII del portal)', runtimeSafe: true },
     { id: 'runtime', label: 'Runtime del agente', path: paths.runtime, purpose: 'Lock, PID y token del healthcheck' },
@@ -62,12 +60,11 @@ export function eraseTargets(env = process.env) {
   });
 }
 
-// Lo que no es un archivo: el secreto en el almacén del sistema y las
-// suscripciones push registradas en la base. Se enumeran aparte porque su
-// borrado pasa por otra API, pero el usuario tiene que verlos en el preview.
+// Lo que no es un archivo: las suscripciones push y las sesiones registradas
+// en la base. Se enumeran aparte porque su borrado pasa por otra API, pero el
+// usuario tiene que verlos en el preview.
 export function externalErasures() {
   return [
-    { id: 'keychain', label: 'Credencial en el almacén del sistema', purpose: 'Credential Manager, Keychain o Secret Service' },
     { id: 'push', label: 'Suscripciones push', purpose: 'Endpoints de notificación registrados por cada navegador' },
     { id: 'sessions', label: 'Sesiones de mikampus', purpose: 'Cookies emitidas a los navegadores de este equipo' },
   ];

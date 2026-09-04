@@ -2,13 +2,14 @@ import crypto from 'node:crypto';
 import { db, deleteAllUserData } from './db.js';
 import { LOCAL_USER_ID, adoptLocalUsername, getUser, touchLastLogin } from './users.js';
 import { verifyPortalCredentials, adoptSession, resetSession } from './session.js';
-import { deleteCredential } from './credentialVault.js';
+import { readCredential, writeCredential, deleteCredential } from './credentialStore.js';
 
-// El login de mikampus ES el login del portal (§5): no hay cuenta paralela.
-// El estudiante entra con sus credenciales de micampus, mikampus las verifica
-// logueándose a PeopleSoft, y recién ahí crea/encuentra el usuario y le emite
-// una sesión propia por cookie. La contraseña queda en RAM atada a su context
-// (regla 1 de §5) — nunca en la DB principal.
+// El login de mikampus ES el login del portal: no hay cuenta paralela. El
+// estudiante entra con sus credenciales de micampus, mikampus las verifica
+// logueándose a PeopleSoft, las escribe en el archivo de credencial del
+// usuario y emite una sesión propia por cookie. Esa cookie solo vale mientras
+// el archivo tenga credencial: vaciarlo (cerrar sesión, edición manual o un
+// rechazo del portal) saca al usuario en la próxima request.
 
 export const SESSION_COOKIE = 'mikampus_session';
 export const CSRF_HEADER = 'x-csrf-token';
@@ -79,6 +80,11 @@ export function clearedSessionCookieHeader({ secure } = {}) {
   return sessionCookieHeader('', { secure, maxAgeSeconds: 0 });
 }
 
+// Loopback es http; el proxy de identidad, si existe, termina TLS y lo declara.
+export function secureCookies(req) {
+  return String(req.headers['x-forwarded-proto'] ?? '').toLowerCase() === 'https';
+}
+
 // ── Rate-limit de intentos (§5): PeopleSoft bloquea cuentas por intentos
 // fallidos — mikampus no puede ser el vector. Por username, en memoria: 5
 // fallos → 15 minutos de espera. Un login exitoso limpia el contador.
@@ -132,35 +138,34 @@ export async function loginWithPortal({ username, password }) {
   }
 
   noteLoginSuccess(user);
-  // Esta distribución solo tiene un operador. Reutilizar siempre la identidad
-  // local evita que una segunda cuenta del portal cree un segundo espacio de
-  // datos en la misma instalación.
-  const previous = getUser(LOCAL_USER_ID);
-  // Una instalación representa a una sola persona. Cambiar de cuenta no crea
-  // un segundo espacio ni deja una autorización desatendida de la anterior.
-  // El context nuevo todavía no se adoptó, así que cortar el anterior acá no
-  // interrumpe la verificación que acabamos de completar.
-  if (previous?.portalUsername && previous.portalUsername.toLowerCase() !== user.toLowerCase()) {
-    deleteCredential(LOCAL_USER_ID);
-    revokeAllSessions(LOCAL_USER_ID);
-    await resetSession(LOCAL_USER_ID);
-    // Los datos académicos pertenecen a la cuenta anterior. Antes de adoptar
-    // la nueva identidad se purgan completos; recreamos únicamente el registro
-    // local fijo que representa esta instalación.
-    deleteAllUserData(LOCAL_USER_ID);
-    db.prepare('INSERT OR IGNORE INTO users (id) VALUES (?)').run(LOCAL_USER_ID);
-  }
-  adoptLocalUsername(user);
+  adoptIdentity(user);
+  writeCredential({ username: user, password });
   const account = getUser(LOCAL_USER_ID);
   touchLastLogin(account.id);
-  await adoptSession(account.id, live, { username: user, password });
+  await adoptSession(account.id, live);
   const session = createSession(account.id);
   return { user: account, ...session };
 }
 
+// Una instalación representa a una sola persona. Cambiar de cuenta no crea un
+// segundo espacio: los datos académicos de la cuenta anterior se purgan
+// completos y solo queda el registro local fijo con la identidad nueva.
+function adoptIdentity(username) {
+  const previous = getUser(LOCAL_USER_ID);
+  if (previous?.portalUsername && previous.portalUsername.toLowerCase() !== username.toLowerCase()) {
+    revokeAllSessions(LOCAL_USER_ID);
+    deleteAllUserData(LOCAL_USER_ID);
+    db.prepare('INSERT OR IGNORE INTO users (id) VALUES (?)').run(LOCAL_USER_ID);
+  }
+  adoptLocalUsername(username);
+}
+
+// Cerrar sesión vacía el archivo de credencial: sin eso, la próxima apertura
+// volvería a entrar sola.
 export async function logout(token) {
   const session = sessionFor(token);
   revokeSession(token);
+  deleteCredential();
   if (session) await resetSession(session.userId);
 }
 
@@ -229,12 +234,25 @@ export function localRequestGuard(req, res, next) {
   next();
 }
 
+// La sesión de mikampus existe mientras el archivo tenga credencial. Con
+// credencial y sin cookie válida (primer arranque, cookie vencida, archivo
+// escrito a mano) se emite una cookie nueva en el momento: abrir la app es
+// entrar. Sin credencial, ninguna cookie vale, aunque esté vigente en la DB.
 export function authMiddleware(req, res, next) {
   if (PUBLIC_API.has(req.path)) return next();
 
-  const token = cookieValue(req.headers.cookie, SESSION_COOKIE);
-  const session = sessionFor(token);
-  if (!session) return res.status(401).json({ error: 'Sesión inválida o vencida: iniciá sesión' });
+  const credential = readCredential();
+  if (!credential) return res.status(401).json({ error: 'No hay credencial guardada: iniciá sesión' });
+
+  let token = cookieValue(req.headers.cookie, SESSION_COOKIE);
+  let session = sessionFor(token);
+  if (!session) {
+    adoptIdentity(credential.username);
+    const issued = createSession(LOCAL_USER_ID);
+    token = issued.token;
+    session = { userId: LOCAL_USER_ID, csrfToken: issued.csrfToken };
+    res.set('Set-Cookie', sessionCookieHeader(token, { secure: secureCookies(req) }));
+  }
 
   if (!SAFE_METHODS.has(req.method) && req.headers[CSRF_HEADER] !== session.csrfToken) {
     return res.status(403).json({ error: 'Falta o no coincide el token CSRF' });

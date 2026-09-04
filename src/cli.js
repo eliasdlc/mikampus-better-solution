@@ -96,7 +96,7 @@ function serviceDefinition() {
   // WorkingDirectory no es cosmético: `dotenv` resuelve `.env` contra el cwd, y
   // un servicio de systemd arranca en el home del usuario. Sin esto el agente
   // durable pierde silenciosamente lo que el arranque manual sí lee (llaves
-  // VAPID, secreto del vault) y la diferencia solo se nota cuando algo no avisa.
+  // VAPID, topic de ntfy) y la diferencia solo se nota cuando algo no avisa.
   if (process.platform === 'linux') return { file: path.join(process.env.XDG_CONFIG_HOME || path.join(process.env.HOME, '.config'), 'systemd/user/mikampus.service'), content: `[Unit]\nDescription=mikampus local agent\n[Service]\nWorkingDirectory=${resourceRoot}\nExecStart=${node} ${entry}\nRestart=on-failure\nRestartSec=3\nEnvironment=MIKAMPUS_AGENT_TOKEN=${agentToken()}\n[Install]\nWantedBy=default.target\n` };
   if (process.platform === 'darwin') return { file: path.join(process.env.HOME, 'Library/LaunchAgents/dev.mikampus.agent.plist'), content: `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Label</key><string>dev.mikampus.agent</string><key>ProgramArguments</key><array><string>${node}</string><string>${entry}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>\n` };
   return { file: path.join(runtimeDir, 'mikampus-task.cmd'), content: `@echo off\r\n"${node}" "${entry}"\r\n` };

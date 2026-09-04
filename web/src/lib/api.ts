@@ -64,6 +64,21 @@ export function setCsrfToken(token: string | null) {
   csrfToken = token;
 }
 
+// El backend responde 401 en cuanto el archivo de credencial queda vacío (cerrar
+// sesión, edición a mano o rechazo del portal). Quien maneja el estado de auth
+// se registra acá para sacar al usuario a la home sin que cada pantalla tenga
+// que reconocer el error por su cuenta.
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  onUnauthorized = handler;
+}
+
+function failed(res: Response, data: unknown): ApiError {
+  if (res.status === 401 && !res.url.endsWith('/api/auth/me')) onUnauthorized?.();
+  return new ApiError((data as { error?: string }).error || `HTTP ${res.status}`, res.status);
+}
+
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number) {
     super(message);
@@ -76,7 +91,7 @@ export class ApiError extends Error {
 async function getJSON(url: string): Promise<unknown> {
   const res = await fetch(url);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError((data as { error?: string }).error || `HTTP ${res.status}`, res.status);
+  if (!res.ok) throw failed(res, data);
   return data;
 }
 
@@ -90,7 +105,7 @@ async function send(url: string, method: string, body?: unknown): Promise<unknow
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError((data as { error?: string }).error || `HTTP ${res.status}`, res.status);
+  if (!res.ok) throw failed(res, data);
   return data;
 }
 
@@ -233,7 +248,7 @@ export async function dropScheduleCourse(input: {
   return dropResultSchema.parse(await send('/api/my-schedule/drop', 'POST', input));
 }
 
-export function scheduleAt(input: { atISO: string; term?: string; consent?: boolean }) {
+export function scheduleAt(input: { atISO: string }) {
   return send('/api/schedule', 'POST', input);
 }
 export function cancelSchedule() {
@@ -248,8 +263,6 @@ export function setWatcher(input: {
   enabled: boolean;
   autoEnroll?: boolean;
   appointmentAt?: string | null;
-  term?: string;
-  consent?: boolean;
   scope?: WatcherScope;
   intervalMs?: number;
 }) {
@@ -492,8 +505,15 @@ const authMeSchema = z.object({
 });
 export type AuthMe = z.infer<typeof authMeSchema>;
 
+// Sin credencial guardada el backend responde 401: eso no es un error de la
+// app, es "nadie entró todavía".
 export async function fetchAuthMe(): Promise<AuthMe> {
-  return authMeSchema.parse(await getJSON('/api/auth/me'));
+  try {
+    return authMeSchema.parse(await getJSON('/api/auth/me'));
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return { mode: 'local', user: null, csrfToken: null };
+    throw err;
+  }
 }
 
 export async function login(input: { username: string; password: string }) {
@@ -509,9 +529,7 @@ export async function logout() {
 
 const accountOverviewSchema = z.object({
   user: z.object({ id: z.number(), portalUsername: z.string().nullable(), createdAt: z.string(), lastLoginAt: z.string().nullable() }).nullable(),
-  credential: z
-    .object({ username: z.string(), reason: z.string().nullable(), expiresAt: z.string(), createdAt: z.string() })
-    .nullable(),
+  credential: z.object({ username: z.string(), path: z.string() }).nullable(),
   syncs: z.array(z.object({ kind: z.string(), label: z.string(), syncedAt: z.string().nullable() })),
 });
 export type AccountOverview = z.infer<typeof accountOverviewSchema>;
@@ -620,7 +638,7 @@ const statusSchema = z.object({
       detail: z.string().nullable(),
     })
     .nullable(),
-  credential: z.object({ reason: z.string().nullable(), expiresAt: z.string(), store: z.string() }).nullable(),
+  credential: z.object({ username: z.string(), path: z.string() }).nullable(),
   backup: z.object({
     lastSuccessfulAt: z.string().nullable(),
     nextRunAt: z.string().nullable(),

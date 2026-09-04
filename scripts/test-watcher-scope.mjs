@@ -13,12 +13,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 
 const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-watcher-scope-'));
 process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
-process.env.MIKAMPUS_CRED_DB = path.join(dir, 'credentials.db');
-process.env.MIKAMPUS_CRED_KEY = crypto.randomBytes(32).toString('hex');
+process.env.MIKAMPUS_CREDENTIALS_FILE = path.join(dir, 'credenciales.env');
 process.env.MIKAMPUS_BACKUP_DIR = path.join(dir, 'backups');
 process.env.MIKAMPUS_RUNTIME_DIR = path.join(dir, 'runtime');
 process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(dir, 'browsers');
@@ -26,7 +24,7 @@ process.env.MIKAMPUS_SILENT = '1';
 process.env.SYNC_TERM = '1930';
 
 const { db } = await import('../src/db.js');
-const { storeCredential } = await import('../src/credentialVault.js');
+const { writeCredential } = await import('../src/credentialStore.js');
 const { saveSection } = await import('../src/peoplesoft/catalog.js');
 const { scrapedSectionSchema } = await import('../src/shared/schemas.ts');
 const scheduler = await import('../src/scheduler.js');
@@ -90,10 +88,7 @@ try {
       (2, 45000, 'groups'),
       (3, 45000, 'both');
   `);
-  const expiresAt = new Date(Date.now() + 3600_000).toISOString();
-  for (const userId of [1, 2, 3]) {
-    storeCredential(userId, { username: `operator-${userId}`, password: 'test-only' }, { expiresAt, reason: 'scope test' });
-  }
+  writeCredential({ username: 'operator', password: 'test-only' });
 
   const restoreScanner = scheduler.setSharedWatcherScanner(async () => {
     saveSection(section('ICC-321', '1000', 'open')); // se liberó TU asiento

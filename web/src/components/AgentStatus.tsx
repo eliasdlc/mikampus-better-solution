@@ -22,8 +22,7 @@ export const WATCHER_LABEL: Record<string, string> = {
 };
 
 export function useAgentStatus() {
-  // Un minuto: el estado lee el almacén de credenciales del sistema, y no vale
-  // la pena tocarlo cada pocos segundos para refrescar un texto.
+  // Un minuto: es texto de estado, no vale la pena pedirlo cada pocos segundos.
   return useQuery({ queryKey: ['agent-status'], queryFn: fetchStatus, refetchInterval: 60_000 });
 }
 
@@ -65,10 +64,6 @@ export function AgentStatusBar() {
         </span>
       )}
 
-      {data.credential && (
-        <span>credencial guardada hasta {new Date(data.credential.expiresAt).toLocaleDateString('es-DO')}</span>
-      )}
-
       {data.power.mustStayAwake && (
         <span className="text-fg" title={data.power.note}>
           {active ? 'este equipo tiene que seguir encendido y despierto' : 'hay trabajo programado: no apagues el equipo'}
@@ -96,12 +91,7 @@ export function AgentStatusDetail({ status }: { status: AgentStatus }) {
       'Disparo programado',
       status.schedule ? `${new Date(status.schedule.atISO).toLocaleString('es-DO')} (${status.schedule.state})` : 'ninguno',
     ],
-    [
-      'Credencial desatendida',
-      status.credential
-        ? `${status.credential.reason ?? 'función programada'} · vence ${new Date(status.credential.expiresAt).toLocaleDateString('es-DO')}`
-        : 'ninguna guardada',
-    ],
+    ['Credencial del portal', status.credential ? `${status.credential.username} · ${status.credential.path}` : 'ninguna guardada'],
     [
       'Última copia',
       status.backup.lastSuccessfulAt ? ago(status.backup.lastSuccessfulAt) : 'todavía no hay copia verificada',

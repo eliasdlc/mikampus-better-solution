@@ -88,15 +88,20 @@ Nada se escribe en el CWD del proceso ni junto al ejecutable.
 
 ## Credenciales y trabajo desatendido
 
-La contraseña interactiva vive solo en RAM. Para crear un disparo programado o
-un watcher —incluso el que solo notifica— la UI pide consentimiento explícito,
-propósito y el vencimiento basado en la ventana de inscripción. Desktop la
-guarda en Credential Manager, Keychain o Secret Service; Home Server usa un
-vault AES-256-GCM separado de la base principal y una clave fuera del volumen.
-Desactivar la última función desatendida, cambiar cuenta, expirar el permiso o
-borrar datos revoca el secreto y las sesiones correspondientes. Un rechazo de
-password, MFA, CAPTCHA o keychain inaccesible detiene la automatización: no se
-realizan reintentos de login en bucle.
+Usuario y contraseña del portal viven en un solo archivo del usuario,
+`credenciales.env` dentro de la carpeta de datos, en texto claro y con permisos
+0600. Iniciar sesión lo escribe tras verificar contra el portal; cerrar sesión o
+borrar datos lo vacía; la persona puede editarlo o vaciarlo a mano y el cambio
+aplica en la próxima operación, sin reiniciar. La sesión de mikampus existe
+mientras el archivo tenga credencial: con credencial, abrir la app es entrar;
+sin ella, ninguna cookie vale. Watcher y disparos programados usan esa misma
+credencial y se detienen si desaparece. Un rechazo de password vacía el archivo
+y cierra la sesión; MFA, CAPTCHA o portal caído detienen la automatización sin
+tocarlo. No se realizan reintentos de login en bucle.
+
+El costo elegido es explícito: la contraseña está en claro en disco. Lo que la
+protege es el permiso del archivo y que nunca entra en copias de seguridad,
+diagnósticos ni fixtures.
 
 El cifrado protege copias y archivos extraviados; no protege un host local ya
 comprometido, donde un proceso malicioso podría usar un secreto mientras el
