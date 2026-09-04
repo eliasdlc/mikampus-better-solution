@@ -247,7 +247,7 @@ export function Horario() {
           </button>
         </div>
       ) : view === 'grid' ? (
-        <WeeklyGrid blocks={toBlocks(courses)} onSelect={setDetail} />
+        <WeeklyGrid blocks={toBlocks(courses)} onSelect={setDetail} now={new Date()} />
       ) : (
         <Agenda data={data} onSelect={setDetail} />
       )}

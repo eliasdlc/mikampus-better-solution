@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
-import { DAY_LABELS, formatRange12, formatTime12, type DayCode } from '../../../src/shared/meetings.ts';
+import { AlertTriangle, MapPin } from 'lucide-react';
+import { DAY_LABELS, formatRange12, formatTime12, toMinutes, type DayCode } from '../../../src/shared/meetings.ts';
 import { hueColor } from '../lib/color.ts';
 import {
   FILAS_POR_HORA,
@@ -44,6 +44,15 @@ import {
 //   6. LA GRILLA ES UNA SOLA PARADA DE TABULACIÓN con foco rotativo por
 //      flechas, no doce paradas que hay que atravesar para llegar al botón de
 //      abajo.
+//   7. LA HORA VIVE DENTRO DE SU CELDA, arriba y pegada a la línea que abre.
+//      Montarla sobre la línea (estilo Google Calendar) exigía desplazarla
+//      media línea hacia arriba y rellenar la cabecera para que la primera no
+//      chocara, y aun así se leía torcida. Una sola regla por hora cruza la
+//      canaleta y los días.
+//   8. EL BLOQUE SE LEE COMO UN EVENTO: anclado arriba, el nombre de la materia
+//      primero, el código como identificador, el aula porque es lo que se busca
+//      entre dos clases. La hora solo cuando el bloque es tan corto que la
+//      canaleta no la dice sola.
 
 // Alto de una fila de media hora. Fijo y no 1fr: así la grilla mide lo que
 // tiene que medir y el bloque más corto deja de decidir el alto de todo.
@@ -54,6 +63,12 @@ const FILA_PLEGADA = '2.9em';
 // La canaleta de horas. Con AM/PM la etiqueta más ancha es "12 a.m.", que a
 // 10px mono no entra en las 3.25rem que bastaban para "12:00".
 const GUTTER = '4.25rem';
+// Un bloque más corto que esto no cruza suficientes líneas de la canaleta como
+// para leer su hora de ahí, así que la lleva escrita.
+const MINUTOS_SIN_HORA = 90;
+
+// JS cuenta los días desde el domingo; el catálogo desde el lunes.
+const DIA_DE_JS: DayCode[] = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 export type BloqueDetalle = PlacedBlock & { hue: number };
 
@@ -95,6 +110,8 @@ function Bloque({
     .filter(Boolean)
     .join(', ');
 
+  const corto = toMinutes(block.end) - toMinutes(block.start) < MINUTOS_SIN_HORA;
+
   return (
     <button
       type="button"
@@ -105,7 +122,9 @@ function Bloque({
       // El click sincroniza el índice de foco: sin esto, tocar un bloque y
       // después apretar Enter abría el detalle del que tuviera el índice.
       onClick={onSelect ? () => onSelect({ ...block, hue }) : undefined}
-      className={`overflow-hidden rounded-[var(--radius)] py-1 pr-1.5 pl-1.5 text-left text-[11px] leading-tight ${
+      // Un botón centra su contenido en vertical; un evento se lee desde el
+      // borde donde empieza. De ahí el flex-col con items-start.
+      className={`flex flex-col items-start gap-0.5 overflow-hidden rounded-[var(--radius)] py-1 pr-1.5 pl-1.5 text-left text-[11px] leading-tight ${
         block.ghost ? 'pointer-events-none z-20' : 'z-10'
       } ${animate && !block.ghost ? 'block-land' : ''} ${
         onSelect ? 'cursor-pointer hover:brightness-95 dark:hover:brightness-110' : ''
@@ -132,22 +151,29 @@ function Bloque({
         boxShadow: selected ? 'inset 0 0 0 1.5px var(--accent)' : undefined,
       }}
     >
-      <div className="flex items-baseline gap-1">
-        <span className="min-w-0 flex-1 truncate font-medium">{block.code}</span>
-        {/* El componente se dice con palabra además de con la forma de la
-            barra: una forma es una pista, la palabra es el dato. */}
-        {block.component && <span className="shrink-0 text-[9px] opacity-70">{block.component}</span>}
-        {selected && <span className="bg-accent size-1.5 shrink-0 rounded-full" aria-hidden />}
-      </div>
-      <div className="truncate opacity-80">{block.title}</div>
-      <div className="tabular truncate font-mono text-[10px] opacity-70">
-        {formatRange12(block.start, block.end)}
-      </div>
+      {/* El nombre es lo que se busca; hasta dos líneas y en un bloque corto una. */}
+      <span className={`w-full font-medium ${corto ? 'truncate' : 'line-clamp-2'}`}>{block.title}</span>
+      <span className="tabular flex w-full items-center gap-1 font-mono text-[10px] opacity-70">
+        <span className="truncate">
+          {block.code}
+          {/* El componente se dice con palabra además de con la forma de la
+              barra: una forma es una pista, la palabra es el dato. */}
+          {block.component && ` · ${block.component}`}
+        </span>
+        {corto && <span className="shrink-0">· {formatRange12(block.start, block.end)}</span>}
+        {selected && <span className="bg-accent ml-auto size-1.5 shrink-0 rounded-full" aria-hidden />}
+      </span>
+      {!corto && (
+        <span className="text-muted flex w-full items-center gap-1 text-[10px]">
+          <MapPin className="size-3 shrink-0" aria-hidden />
+          <span className="truncate">{block.room ?? 'aula no publicada'}</span>
+        </span>
+      )}
       {choca && (
-        <div className="text-closed flex items-center gap-1 text-[10px] font-medium">
+        <span className="text-closed mt-auto flex items-center gap-1 text-[10px] font-medium">
           <AlertTriangle className="size-3 shrink-0" aria-hidden />
           choca
-        </div>
+        </span>
       )}
     </button>
   );
@@ -171,26 +197,44 @@ function Plegada({
     <button
       type="button"
       onClick={onDesplegar}
-      className="border-line/60 text-muted hover:bg-surface-2 hover:text-fg z-10 flex items-center justify-center gap-2 border-y border-dashed text-[10px]"
-      style={{ gridColumn: `1 / span ${columnas + 1}`, gridRow: fila }}
+      className="border-line/60 text-muted hover:bg-surface-2 hover:text-fg z-10 flex items-center gap-2 border-y border-l border-dashed px-2 text-[10px]"
+      style={{ gridColumn: `2 / span ${columnas}`, gridRow: fila }}
     >
-      <span className="tabular font-mono">
-        {formatRange12(hh(band.fromHour), hh(band.toHour))}
+      <span className="grid size-3 shrink-0 place-items-center rounded-[3px] border border-current/70 text-[9px] leading-none" aria-hidden>
+        +
       </span>
-      <span>· {band.hours} h sin clases · desplegar</span>
+      <span>
+        {band.hours} h libres, <span className="tabular font-mono">{formatRange12(hh(band.fromHour), hh(band.toHour))}</span>
+      </span>
+      <span className="text-accent ml-auto font-medium">mostrar</span>
     </button>
+  );
+}
+
+// La etiqueta de una hora: el número en tinta, el sufijo apagado. "10 a.m." es
+// una sola cosa para la voz y dos para el ojo.
+function Hora({ hour }: { hour: number }) {
+  const [numero, sufijo] = formatTime12(`${String(hour).padStart(2, '0')}:00`).split(' ');
+  return (
+    <span className="tabular font-mono text-[10px] leading-none whitespace-nowrap">
+      <span className="text-fg font-semibold">{numero}</span>
+      {sufijo && <span className="text-muted ml-0.5">{sufijo}</span>}
+    </span>
   );
 }
 
 /**
  * `animate` prende el único momento orquestado de la app: el bloque aterrizando
  * al elegir una sección. `selectedIds` marca lo elegido con anillo y punto.
+ * `now` resalta el día de hoy y traza la hora actual: solo tiene sentido sobre
+ * el horario inscrito, no sobre uno que se está armando.
  */
 export function WeeklyGrid({
   blocks,
   animate = false,
   onSelect,
   selectedIds,
+  now,
 }: {
   blocks: Block[];
   animate?: boolean;
@@ -198,6 +242,8 @@ export function WeeklyGrid({
   onSelect?: (block: BloqueDetalle) => void;
   /** classNbr de las secciones elegidas: anillo de acento más punto. */
   selectedIds?: ReadonlySet<string>;
+  /** El momento presente: día resaltado en la cabecera y línea de la hora. */
+  now?: Date;
 }) {
   const [verTodos, setVerTodos] = useState(false);
   const [desplegadas, setDesplegadas] = useState<ReadonlySet<number>>(new Set<number>());
@@ -234,6 +280,17 @@ export function WeeklyGrid({
   // El orden de tabulación es el de lectura: día por día, de arriba abajo.
   const navegables = useMemo(() => colocados.flat().filter((block) => !block.ghost), [colocados]);
   const choques = useMemo(() => navegables.filter((block) => block.conflictsWith.length > 0), [navegables]);
+
+  // El día de hoy solo se marca si está en pantalla; la línea de la hora solo
+  // si cae dentro de una banda visible, no en una plegada ni fuera de la ventana.
+  const hoy = now ? DIA_DE_JS[now.getDay()] : undefined;
+  const columnaHoy = hoy ? days.indexOf(hoy) : -1;
+  const lineaAhora = useMemo(() => {
+    if (!now || columnaHoy < 0) return null;
+    const hora = now.getHours();
+    if (!bands.some((b) => b.kind === 'hora' && b.hour === hora)) return null;
+    return { fila: bandLine(bands, `${String(hora).padStart(2, '0')}:00`), fraccion: now.getMinutes() / 60 };
+  }, [now, columnaHoy, bands]);
 
   const filas = bands.map((band) => (band.kind === 'hora' ? `${FILA} ${FILA}` : FILA_PLEGADA)).join(' ');
   const filaDe = (i: number) =>
@@ -294,30 +351,29 @@ export function WeeklyGrid({
             gridTemplateRows: `auto ${filas}`,
           }}
         >
-          {/* La cabecera reserva un poco de aire abajo (pb-3 en vez de py-1.5)
-              porque la etiqueta de la PRIMERA hora se monta sobre la línea que
-              es justo este borde: sin ese margen quedaba medio texto debajo de
-              la cabecera, que fue el motivo por el que la primera hora se
-              trataba distinto que las demás. */}
           <div className="bg-surface border-line sticky left-0 z-10 border-b" style={{ gridColumn: 1, gridRow: 1 }} />
           {days.map((day, i) => (
             <div
               key={day}
-              className="bg-surface border-line text-muted border-b border-l px-2 pt-1.5 pb-3 text-center text-xs font-medium"
+              className={`bg-surface border-line flex items-center justify-center gap-1.5 border-b border-l px-2 py-1.5 text-xs font-medium ${
+                i === columnaHoy ? 'text-accent' : 'text-muted'
+              }`}
               style={{ gridColumn: i + 2, gridRow: 1 }}
             >
               {DAY_LABELS[day]}
+              {/* El número del día dice que "hoy" es una fecha y no un color. */}
+              {i === columnaHoy && now && (
+                <span className="bg-accent text-accent-fg tabular grid size-4 place-items-center rounded-full text-[10px] font-semibold">
+                  {now.getDate()}
+                </span>
+              )}
             </div>
           ))}
 
-          {/* Canaleta y hairlines.
-              La etiqueta se centra SOBRE la línea que abre su hora, que es
-              donde empieza el bloque de esa hora: "10 a.m." tiene que quedar a
-              la altura del borde superior de una clase que arranca a las 10.
-              Dejarla apoyada en el techo de su celda la hacía colgar quince
-              píxeles por debajo de esa línea, y ahí es donde se leía torcida.
-              Todas reciben el mismo trato, incluida la primera: el espacio para
-              ella lo da el pb-3 de la cabecera. */}
+          {/* Canaleta y hairlines. La etiqueta vive DENTRO de la celda de su
+              hora, arriba y pegada a la línea que la abre: una clase que
+              arranca a las 10 empieza en la misma línea que dice "10 a.m.". La
+              regla de cada hora cruza canaleta y días como una sola. */}
           {bands.map((band, i) =>
             band.kind === 'plegada' ? (
               <Plegada
@@ -330,14 +386,10 @@ export function WeeklyGrid({
             ) : (
               <div key={`h${band.hour}`} className="contents">
                 <div
-                  className="bg-surface border-line/60 relative sticky left-0 z-20 border-t"
+                  className="bg-surface border-line/60 sticky left-0 z-20 border-t pt-1 pl-2"
                   style={{ gridColumn: 1, gridRow: `${filaDe(i)} / span ${FILAS_POR_HORA}` }}
                 >
-                  <span className="text-muted tabular absolute -translate-y-1/2 pr-2 text-right font-mono text-[10px] leading-none whitespace-nowrap"
-                    style={{ right: 0 }}
-                  >
-                    {formatTime12(`${String(band.hour).padStart(2, '0')}:00`)}
-                  </span>
+                  <Hora hour={band.hour} />
                 </div>
                 <div
                   className="border-line/60 pointer-events-none border-t"
@@ -356,6 +408,24 @@ export function WeeklyGrid({
               aria-hidden
             />
           ))}
+
+          {/* La hora actual, sobre los días y por encima de los bloques. El
+              punto marca la columna de hoy; la línea sigue por el resto para
+              leer qué está pasando ahora en toda la semana. */}
+          {lineaAhora && (
+            <div
+              className="pointer-events-none relative z-30"
+              style={{ gridColumn: `2 / span ${days.length}`, gridRow: `${lineaAhora.fila} / span ${FILAS_POR_HORA}` }}
+              aria-hidden
+            >
+              <div className="bg-closed absolute right-0 left-0 h-0.5" style={{ top: `${lineaAhora.fraccion * 100}%` }}>
+                <span
+                  className="bg-closed absolute top-1/2 size-2.5 -translate-y-1/2 rounded-full"
+                  style={{ left: `calc(${(columnaHoy * 100) / days.length}% - 0.3125rem)` }}
+                />
+              </div>
+            </div>
+          )}
 
           {colocados.flatMap((delDia, i) =>
             delDia.map((block) => (
