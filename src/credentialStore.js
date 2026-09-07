@@ -14,11 +14,22 @@ import { dataPaths } from './paths.js';
 export const USER_KEY = 'MIKAMPUS_PORTAL_USER';
 export const PASSWORD_KEY = 'MIKAMPUS_PORTAL_PASSWORD';
 
+// La PVA (el Moodle de PUCMM) es la segunda fuente y pide su propia
+// contraseña: el usuario es el mismo del portal, la contraseña no. Su token de
+// Web Service vive acá y no en la base, porque no caduca solo: vale hasta que
+// alguien lo revoque, así que es una credencial y no un dato. Por eso tampoco
+// entra a los backups, que copian la base y nada más.
+export const PVA_PASSWORD_KEY = 'MIKAMPUS_PVA_PASSWORD';
+export const PVA_TOKEN_KEY = 'MIKAMPUS_PVA_TOKEN';
+
 const HEADER = [
-  '# Credencial de micampus que usa mikampus para entrar al portal por vos.',
-  '# Iniciar sesión en la app escribe estas dos líneas; cerrar sesión las vacía.',
+  '# Credenciales que usa mikampus para entrar por vos. Son dos fuentes.',
+  '# micampus (PeopleSoft): usuario y contraseña del portal.',
+  '# PVA (Moodle): el MISMO usuario, con SU propia contraseña, y el token que',
+  '# mikampus saca con ella. El token no caduca: vale hasta que se revoque.',
+  '# Iniciar sesión en la app las escribe; cerrar sesión las vacía todas.',
   '# Podés editarlas a mano: el cambio aplica en la próxima operación.',
-  '# Si el portal rechaza la credencial, mikampus la borra y te saca de la sesión.',
+  '# Si una fuente rechaza su contraseña, mikampus borra la suya y deja la otra.',
 ].join('\n');
 
 export function credentialFilePath(env = process.env) {
@@ -92,7 +103,7 @@ function upsert(file, values) {
 
 export function ensureCredentialFile(file = credentialFilePath()) {
   if (readText(file) != null) return file;
-  upsert(file, { [USER_KEY]: '', [PASSWORD_KEY]: '' });
+  upsert(file, { [USER_KEY]: '', [PASSWORD_KEY]: '', [PVA_PASSWORD_KEY]: '', [PVA_TOKEN_KEY]: '' });
   return file;
 }
 
@@ -113,8 +124,59 @@ export function writeCredential({ username, password }, file = credentialFilePat
 }
 
 // Vaciar en vez de borrar el archivo: la persona sigue viendo dónde iría.
+// Solo las llaves del portal: que PeopleSoft rechace su contraseña no dice nada
+// de la de la PVA, y tumbar las dos fuentes por un rechazo de una sola es
+// exactamente lo que no puede pasar. Cerrar sesión sí vacía todo, llamando
+// también a deletePvaCredential.
 export function deleteCredential(file = credentialFilePath()) {
   upsert(file, { [USER_KEY]: '', [PASSWORD_KEY]: '' });
+}
+
+// ── PVA (Moodle) ───────────────────────────────────────────────────────────
+
+// El usuario sale de la llave del portal: es la misma persona, y así no hay dos
+// copias del nombre de usuario que puedan discrepar. La consecuencia, y es
+// deliberada: vaciar la credencial del portal deja a la PVA sin con qué sacar
+// un token nuevo, aunque el que ya tenga siga sirviendo. Volver a entrar al
+// portal la devuelve a como estaba, porque su contraseña nunca se tocó.
+export function readPvaCredential(file = credentialFilePath()) {
+  const text = readText(file);
+  if (text == null) return null;
+  const values = parse(text);
+  const username = values[USER_KEY]?.trim() ?? '';
+  const password = values[PVA_PASSWORD_KEY] ?? '';
+  if (!username || !password) return null;
+  return { username, password };
+}
+
+export function writePvaPassword(password, file = credentialFilePath()) {
+  if (!password) throw new Error('La contraseña de la PVA es obligatoria');
+  upsert(file, { [PVA_PASSWORD_KEY]: String(password) });
+}
+
+export function readPvaToken(file = credentialFilePath()) {
+  const text = readText(file);
+  if (text == null) return null;
+  const token = parse(text)[PVA_TOKEN_KEY]?.trim() ?? '';
+  return token || null;
+}
+
+export function writePvaToken(token, file = credentialFilePath()) {
+  if (!token) throw new Error('El token de la PVA es obligatorio');
+  upsert(file, { [PVA_TOKEN_KEY]: String(token) });
+}
+
+// El token murió (revocado, o cambió la contraseña de la PVA) pero la
+// contraseña guardada puede seguir sirviendo: se tira solo el token y la
+// próxima llamada saca uno nuevo.
+export function forgetPvaToken(file = credentialFilePath()) {
+  upsert(file, { [PVA_TOKEN_KEY]: '' });
+}
+
+// La PVA rechazó la contraseña, o se cerró sesión: fuera las dos llaves. El
+// portal no se toca.
+export function deletePvaCredential(file = credentialFilePath()) {
+  upsert(file, { [PVA_PASSWORD_KEY]: '', [PVA_TOKEN_KEY]: '' });
 }
 
 // Lo que la UI puede mostrar: quién está guardado y en qué archivo. Nunca la

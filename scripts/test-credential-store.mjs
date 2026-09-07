@@ -11,8 +11,20 @@ const dir = await mkdtemp(path.join(tmpdir(), 'mikampus-credential-'));
 const file = path.join(dir, 'nested', 'credenciales.env');
 process.env.MIKAMPUS_CREDENTIALS_FILE = file;
 
-const { ensureCredentialFile, readCredential, writeCredential, deleteCredential, credentialInfo, credentialFilePath } =
-  await import('../src/credentialStore.js');
+const {
+  ensureCredentialFile,
+  readCredential,
+  writeCredential,
+  deleteCredential,
+  credentialInfo,
+  credentialFilePath,
+  readPvaCredential,
+  writePvaPassword,
+  readPvaToken,
+  writePvaToken,
+  forgetPvaToken,
+  deletePvaCredential,
+} = await import('../src/credentialStore.js');
 
 try {
   assert.equal(credentialFilePath(), file, 'la ruta sale del entorno');
@@ -23,6 +35,8 @@ try {
   const empty = await readFile(file, 'utf8');
   assert.match(empty, /^MIKAMPUS_PORTAL_USER=$/m, 'el archivo vacío ya enseña la llave del usuario');
   assert.match(empty, /^MIKAMPUS_PORTAL_PASSWORD=$/m, 'y la de la contraseña');
+  assert.match(empty, /^MIKAMPUS_PVA_PASSWORD=$/m, 'y las dos de la PVA, que son otra fuente');
+  assert.match(empty, /^MIKAMPUS_PVA_TOKEN=$/m);
   assert.equal(readCredential(), null, 'vacío sigue siendo "sin credencial"');
   if (process.platform !== 'win32') {
     assert.equal((await stat(file)).mode & 0o777, 0o600, 'solo el dueño puede leerlo');
@@ -56,6 +70,30 @@ try {
   await writeFile(file, 'MIKAMPUS_PORTAL_USER=juan\n');
   assert.equal(readCredential(), null, 'sin contraseña no hay con qué entrar');
   assert.throws(() => writeCredential({ username: 'juan', password: '' }), /obligatorios/);
+
+  // ── La PVA: mismo usuario, otra contraseña, y un token que es credencial. ──
+  writeCredential({ username: 'ana', password: 'clave-portal' });
+  assert.equal(readPvaCredential(), null, 'entrar al portal no vincula la PVA');
+  writePvaPassword('clave-pva');
+  writePvaToken('token-de-prueba');
+  assert.deepEqual(readPvaCredential(), { username: 'ana', password: 'clave-pva' }, 'el usuario es el del portal');
+  assert.equal(readPvaToken(), 'token-de-prueba');
+
+  // El token muere pero la contraseña puede seguir sirviendo.
+  forgetPvaToken();
+  assert.equal(readPvaToken(), null);
+  assert.deepEqual(readPvaCredential(), { username: 'ana', password: 'clave-pva' }, 'la contraseña sobrevive al token');
+
+  // Ninguna fuente vacía a la otra: es la regla de las dos credenciales.
+  writePvaToken('token-de-prueba');
+  deleteCredential();
+  assert.equal(readCredential(), null, 'el portal rechazó su contraseña');
+  assert.equal(readPvaToken(), 'token-de-prueba', 'y la PVA sigue con su token');
+  writeCredential({ username: 'ana', password: 'clave-portal' });
+  deletePvaCredential();
+  assert.equal(readPvaCredential(), null, 'la PVA rechazó la suya');
+  assert.equal(readPvaToken(), null, 'y su token se va con ella');
+  assert.deepEqual(readCredential(), { username: 'ana', password: 'clave-portal' }, 'el portal ni se entera');
 } finally {
   await rm(dir, { recursive: true, force: true });
 }
