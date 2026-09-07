@@ -785,14 +785,14 @@ const PERSONAL_TABLES = [
   'pva_course_total', 'pva_gradebook_access', 'pva_submission',
   'pva_assignment_inaccessible', 'pva_assignment', 'pva_module',
   'pva_course_section', 'pva_course_sync', 'pva_course', 'pva_functions', 'pva_identity',
-  'pva_file', 'pva_link',
+  'pva_file', 'pva_link', 'pva_alert',
 ];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
 const PERSONAL_SYNC_KINDS = [
   'grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows',
   'pvaIdentity', 'pvaCourses', 'pvaContents', 'pvaAssignments', 'pvaSubmissions',
-  'pvaGrades', 'pvaCalendar', 'pvaForums', 'pvaNotifications', 'pvaFiles',
+  'pvaGrades', 'pvaCalendar', 'pvaForums', 'pvaNotifications', 'pvaFiles', 'pvaAlerts',
 ];
 
 // Borra todo lo que es de UNA persona: sus filas, nunca las de otro usuario ni

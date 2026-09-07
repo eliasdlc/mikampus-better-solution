@@ -17,6 +17,7 @@ import { syncGrades } from './moodle/grades.js';
 import { syncCalendar } from './moodle/calendar.js';
 import { syncForums, syncNotifications } from './moodle/forums.js';
 import { syncFiles, filesUsage } from './moodle/files.js';
+import { deliverAlerts, alertPrefs } from './moodle/alerts.js';
 import { recordHeartbeat } from './runtime.js';
 import * as scheduler from './scheduler.js';
 
@@ -357,6 +358,29 @@ export const SOURCES = [
     async run({ userId }) {
       const result = await syncNotifications(userId);
       return { detail: `${result.received} aviso(s), ${result.unreadCount} sin leer` };
+    },
+  },
+  {
+    key: 'pvaAlerts',
+    label: 'PVA: avisos',
+    // Depende de las cuatro ramas que los detectan: cada una asienta lo suyo en
+    // el libro cuando corre, y esta entrega lo que quedó pendiente.
+    dependsOn: ['pvaAssignments', 'pvaGrades', 'pvaNotifications', 'pvaForums'],
+    ttlMs: 5 * 60_000,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-alerts', 'notifications'],
+    async run({ userId, emit }) {
+      const result = deliverAlerts(userId, { emit });
+      if (!result.pending) return { detail: 'nada nuevo que avisar' };
+      const prefs = alertPrefs();
+      // Con los avisos apagados igual se marcan entregados: así el día que se
+      // enciendan no llega de golpe todo lo acumulado del semestre.
+      return {
+        detail: prefs.enabled
+          ? `${result.delivered} aviso(s) entregado(s)`
+          : `${result.silenced} aviso(s) detectados, en silencio (los avisos del aula están apagados)`,
+      };
     },
   },
   {

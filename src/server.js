@@ -31,6 +31,7 @@ import { db, lastSync, deleteAllUserData, logAction, readActions } from './db.js
 import { getUser, LOCAL_USER_ID } from './users.js';
 import * as auth from './auth.js';
 import { credentialInfo, deleteCredential, ensureCredentialFile } from './credentialStore.js';
+import { alertPrefs, readAlerts, setAlertPrefs } from './moodle/alerts.js';
 import * as plans from './plans.js';
 import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
@@ -216,6 +217,21 @@ app.get('/api/notifications', (req, res) => {
 
 app.post('/api/notifications/read', (req, res) => {
   res.json({ marked: markFeedRead(req.userId) });
+});
+
+// Los avisos del aula nacen apagados: se detectan y se asientan igual, y esta
+// es la llave que decide si además interrumpen.
+app.get('/api/pva/alerts', (req, res) => {
+  res.json({ prefs: alertPrefs(), items: readAlerts(req.userId) });
+});
+
+app.patch('/api/pva/alerts', (req, res) => {
+  try {
+    const prefs = setAlertPrefs({ enabled: req.body?.enabled, kinds: req.body?.kinds });
+    res.json({ prefs });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get('/api/notifications/channels', (req, res) => {

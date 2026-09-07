@@ -47,7 +47,7 @@ const statusOf = (results, key) => results.find((entry) => entry.key === key);
 try {
   // ── El registro ──
   {
-    assert.equal(PVA_KEYS.length, 11, 'once fuentes: identidad, config, materias y las ocho ramas del aula');
+    assert.equal(PVA_KEYS.length, 12, 'doce fuentes: identidad, config, materias y las nueve ramas del aula');
     for (const source of orchestrator.SOURCES.filter((entry) => PVA_KEYS.includes(entry.key))) {
       assert.equal(source.needsPva, true, `${source.key} declara que necesita la credencial de la PVA`);
       assert.equal(source.needsPortal, false, `${source.key} no usa Playwright, así que no compite por la cola del portal`);
@@ -77,6 +77,13 @@ try {
       orchestrator.orderedSources(['pvaFiles']).map((source) => source.key).includes('pvaContents'),
       'los materiales se anotan al bajar el árbol: sin contenido no hay nada que descargar'
     );
+    // Los avisos se entregan al final: dependen de las cuatro ramas que los
+    // detectan, y sin ellas no hay nada que entregar.
+    const cadenaAvisos = orchestrator.orderedSources(['pvaAlerts']).map((source) => source.key);
+    for (const rama of ['pvaAssignments', 'pvaGrades', 'pvaNotifications', 'pvaForums']) {
+      assert.ok(cadenaAvisos.includes(rama), `los avisos esperan a ${rama}`);
+    }
+    assert.equal(cadenaAvisos.at(-1), 'pvaAlerts');
   }
 
   // ── Sin vincular la PVA: pausa, y el portal ni se entera ──
@@ -152,7 +159,7 @@ try {
       )
       .all()
       .map((row) => row.name);
-    assert.equal(tablas.length, 26, 'las 26 tablas del esquema de la PVA, sin contar las internas del índice');
+    assert.equal(tablas.length, 27, 'las 27 tablas del esquema de la PVA, sin contar las internas del índice');
     const conFilas = tablas.filter((tabla) => db.prepare(`SELECT count(*) AS n FROM ${tabla}`).get().n > 0);
     // pva_site_config es del sitio, no de la persona, y acá no se llenó.
     assert.equal(conFilas.length >= 12, true, `hay datos que borrar: ${conFilas.join(', ')}`);
