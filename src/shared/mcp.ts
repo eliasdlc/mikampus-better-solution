@@ -180,10 +180,38 @@ export const actionPayloadSchema = z.discriminatedUnion('kind', [
     courseCode: z.string().min(1),
     classNbr: z.string().nullable().default(null),
   }),
+  // La PVA. Un agente puede proponer una entrega, nunca hacerla: las tres
+  // exigen el código que sale por push, y el nombre de la tarea lo escribe
+  // Elias, no el modelo.
+  z.object({
+    kind: z.literal('pva_save_submission'),
+    assignmentId: z.number().int(),
+    assignmentName: z.string().min(1),
+    body: z.string().min(1),
+    confirmName: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('pva_submit_for_grading'),
+    assignmentId: z.number().int(),
+    assignmentName: z.string().min(1),
+    confirmName: z.string().min(1),
+    acceptStatement: z.boolean().default(false),
+  }),
+  z.object({
+    kind: z.literal('pva_forum_reply'),
+    postId: z.number().int(),
+    discussionId: z.number().int().nullable().default(null),
+    forumName: z.string().min(1),
+    subject: z.string().default(''),
+    message: z.string().min(1),
+  }),
 ]);
 export type ActionPayload = z.infer<typeof actionPayloadSchema>;
 
-export const ACTION_KINDS = ['sync', 'add_to_cart', 'enroll_from_cart', 'drop_class'] as const;
+export const ACTION_KINDS = [
+  'sync', 'add_to_cart', 'enroll_from_cart', 'drop_class',
+  'pva_save_submission', 'pva_submit_for_grading', 'pva_forum_reply',
+] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 export const actionKindSchema = z.enum(ACTION_KINDS);
 

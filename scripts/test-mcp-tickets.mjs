@@ -69,6 +69,23 @@ try {
   assert.equal(pushed.length, 0, 'un sync no gasta una push');
   assert.deepEqual(tickets.authorize(sync.ticketId, null), { kind: 'sync', datasets: ['cart'] });
 
+  // ── Entregar una tarea de la PVA es tan irreversible como una baja ──────
+  {
+    const entrega = await tickets.createTicket({
+      kind: 'pva_submit_for_grading',
+      assignmentId: 900001,
+      assignmentName: 'Práctica 3',
+      confirmName: 'Práctica 3',
+      acceptStatement: false,
+    });
+    assert.equal(entrega.reversible, false);
+    assert.equal(entrega.requiresCode, true, 'un modelo no entrega una tarea porque le pareció');
+    assert.match(entrega.summary, /Práctica 3/, 'y el resumen que Elias lee lo redacta mikampus');
+    assert.equal(pushed.length, 1, 'el código salió al teléfono');
+    pushed.length = 0;
+    tickets.cancelTicket(entrega.ticketId);
+  }
+
   // ── Una baja exige el código, y el código sale SOLO por push ────────────
   const proposal = await propose.run({ payload: DROP });
   const drop = proposal.payload;
