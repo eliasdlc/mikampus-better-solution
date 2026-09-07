@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ChevronDown, ChevronLeft, ExternalLink, FileText, Link2, ListChecks, MessageSquare, Type } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { fetchAulaCourse } from '../lib/api.ts';
-import { moduleKind, moduleMeta, whenLabel } from '../lib/aula.ts';
+import { decodeGrade, moduleKind, moduleMeta, whenLabel } from '../lib/aula.ts';
 import type { AulaModule } from '../../../src/shared/schemas.ts';
 
 // Una materia del aula (fase 7, decisión 1A): el estado arriba y las unidades
@@ -143,11 +143,17 @@ export function AulaMateria() {
                   puede ver la nota. */}
               <p className="text-muted mt-1 text-xs">{data.grade.reason}</p>
             </>
+          ) : !data.grade.checked ? (
+            <>
+              <p className="mt-1 text-lg leading-none font-semibold">sin leer</p>
+              <p className="text-muted mt-1 text-xs">Todavía no se consultó el libro de esta materia.</p>
+            </>
           ) : (
             <>
+              {/* Sin sufijo "/100": el total llega ya formateado por Moodle y su
+                  máximo no tiene que ser 100. */}
               <p className="mt-1 text-lg leading-none font-semibold">
-                {data.grade.total ?? '—'}
-                {data.grade.total && <span className="text-muted ml-1 text-xs font-medium">/100</span>}
+                {data.grade.total ? decodeGrade(data.grade.total) : 'sin nota'}
               </p>
               <p className="text-muted mt-1 text-xs">
                 {data.grade.gradableItems

@@ -1,4 +1,4 @@
-import type { AulaFeedItem as FeedItem, AulaModule } from '../../../src/shared/schemas.ts';
+import type { AulaCourseCard, AulaFeedItem as FeedItem, AulaModule } from '../../../src/shared/schemas.ts';
 
 // Las etiquetas de la pantalla Aula, aparte del render: son decisiones de qué
 // se le dice al estudiante, y así se pueden verificar sin montar React.
@@ -26,7 +26,8 @@ export function whenLabel(iso: string, now = new Date()): string {
   if (dias === 1) return `mañana ${hora}`;
   if (dias === -1) return 'ayer';
   if (dias > 1 && dias < 7) return `${DIAS[at.getDay()]} ${hora}`;
-  if (dias < 0 && dias > -7) return DIAS[at.getDay()];
+  // Hacia atrás el nombre del día se lee como el próximo: "mié" para algo
+  // que venció el miércoles pasado es la misma trampa que la hora sin día.
   return `${at.getDate()}/${at.getMonth() + 1}`;
 }
 
@@ -47,6 +48,32 @@ export function feedLabel(item: AulaFeedItem): { texto: string; tono: 'urgente' 
   if (item.kind === 'anuncio') return { texto: 'Anuncio del profesor', tono: 'pendiente' };
   if (item.kind === 'tarea_nueva') return { texto: 'Tarea nueva', tono: 'pendiente' };
   return { texto: item.detail ?? '', tono: 'pendiente' };
+}
+
+const ENTIDADES: Record<string, string> = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', ndash: '-', mdash: '-' };
+
+/**
+ * Moodle formatea las notas para HTML: "85,00&nbsp;/&nbsp;100,00" llega tal
+ * cual desde el web service, y pintarla sin decodificar le muestra la entidad
+ * al estudiante.
+ */
+export function decodeGrade(text: string): string {
+  return text
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&([a-z]+);/gi, (match, name) => ENTIDADES[name.toLowerCase()] ?? match)
+    .trim();
+}
+
+/**
+ * El libro de una materia en una línea. Son cuatro estados y ninguno es un
+ * cero: oculto por el profesor, nunca consultado, consultado y sin nota, y con
+ * nota. Los tres primeros se confunden en cuanto se escribe un guion.
+ */
+export function gradeLabel(grade: AulaCourseCard['grade']): string {
+  if (grade.hidden) return 'Libro oculto por el profesor';
+  if (!grade.checked) return 'Todavía no se consultó el libro de esta materia';
+  if (!grade.total) return 'Sin nota publicada todavía';
+  return `Nota del aula ${decodeGrade(grade.total)} · ${grade.gradedItems} de ${grade.gradableItems} items calificados`;
 }
 
 const TIPOS: Record<string, string> = {
@@ -74,7 +101,7 @@ export function moduleKind(modname: string): string {
 export function moduleMeta(module: AulaModule): string {
   if (module.assignment) {
     const { submitted, graded, gradeText, isLate, isOverdue } = module.assignment;
-    if (graded) return `Calificada${gradeText ? ` · ${gradeText}` : ''}`;
+    if (graded) return `Calificada${gradeText ? ` · ${decodeGrade(gradeText)}` : ''}`;
     if (submitted === true) return isLate ? 'Entregada tarde · sin calificar' : 'Entregada · sin calificar';
     if (submitted === null) return 'Estado sin consultar';
     return isOverdue ? 'Venció y no está entregada' : 'Sin entregar';

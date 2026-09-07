@@ -1,7 +1,7 @@
 // Lo que la pantalla Aula le dice al estudiante. Son funciones puras: se
 // verifican sin montar React, que es donde estas frases se vuelven mentira.
 import assert from 'node:assert/strict';
-import { whenLabel, feedLabel, moduleMeta, moduleKind } from '../web/src/lib/aula.ts';
+import { whenLabel, feedLabel, gradeLabel, decodeGrade, moduleMeta, moduleKind } from '../web/src/lib/aula.ts';
 
 const ahora = new Date(2026, 8, 7, 9, 0); // lunes 7 de septiembre de 2026
 const en = (d, h, m = 0) => new Date(2026, 8, 7 + d, h, m).toISOString();
@@ -13,6 +13,7 @@ assert.equal(whenLabel(en(0, 23, 59), ahora), 'hoy 11:59p', 'la hora sola obliga
 assert.equal(whenLabel(en(1, 8, 0), ahora), 'mañana 8:00a');
 assert.equal(whenLabel(en(3, 12, 0), ahora), 'jue 12:00p', 'dentro de la semana, con el día');
 assert.equal(whenLabel(en(-1, 10, 0), ahora), 'ayer');
+assert.equal(whenLabel(en(-4, 10, 0), ahora), '3/9', 'hacia atrás la fecha: "jue" se leería como el jueves que viene');
 assert.equal(whenLabel(en(20, 10, 0), ahora), '27/9', 'más lejos, con la fecha');
 assert.equal(whenLabel('no es una fecha', ahora), '', 'una fecha rota no rompe la fila');
 
@@ -25,6 +26,18 @@ assert.equal(feedLabel(vence(null)).texto, 'Estado sin consultar');
 assert.equal(feedLabel(vence(null)).tono, 'pendiente', 'lo que no se sabe no se pinta como urgente');
 assert.equal(feedLabel({ ...vence(null), kind: 'nota_publicada' }).texto, 'Nota publicada');
 assert.equal(feedLabel({ ...vence(null), kind: 'anuncio' }).texto, 'Anuncio del profesor');
+
+// ── El libro de una materia ──
+// Las tres ausencias se dicen distinto, porque son distintas.
+const libro = (extra) => ({ checked: true, hidden: false, reason: null, total: null, gradedItems: 0, gradableItems: 0, ...extra });
+assert.equal(gradeLabel(libro({ hidden: true, reason: 'x' })), 'Libro oculto por el profesor');
+assert.equal(gradeLabel(libro({ checked: false })), 'Todavía no se consultó el libro de esta materia', 'nunca leído no es vacío');
+assert.equal(gradeLabel(libro()), 'Sin nota publicada todavía', 'leído y sin nota tampoco es un cero');
+assert.equal(gradeLabel(libro({ total: '85.50', gradedItems: 2, gradableItems: 6 })), 'Nota del aula 85.50 · 2 de 6 items calificados');
+
+// Moodle formatea sus notas para HTML y las manda con las entidades adentro.
+assert.equal(decodeGrade('85,00&nbsp;/&nbsp;100,00'), '85,00 / 100,00');
+assert.equal(decodeGrade('0&ndash;100'), '0-100');
 
 // ── La segunda línea de un módulo ──
 const modulo = (extra) => ({

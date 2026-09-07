@@ -5,7 +5,7 @@ import { BookOpen, ChevronRight, ExternalLink } from 'lucide-react';
 import { fetchAula } from '../lib/api.ts';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import type { AulaFeedItem } from '../lib/aula.ts';
-import { feedLabel, whenLabel } from '../lib/aula.ts';
+import { feedLabel, gradeLabel, whenLabel } from '../lib/aula.ts';
 
 // El Aula (fase 7, decisión 2B): la pantalla raíz es TODO JUNTO y la materia es
 // un filtro, no una carpeta.
@@ -135,13 +135,7 @@ export function Aula() {
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{activa.fullname}</span>
-                <span className="text-muted mt-0.5 block text-xs">
-                  {activa.grade.hidden
-                    ? 'Libro oculto por el profesor'
-                    : activa.grade.total
-                      ? `Nota del aula ${activa.grade.total} · ${activa.grade.gradedItems} de ${activa.grade.gradableItems} items calificados`
-                      : 'Sin nota publicada todavía'}
-                </span>
+                <span className="text-muted mt-0.5 block text-xs">{gradeLabel(activa.grade)}</span>
               </span>
               <ChevronRight className="text-muted size-4 shrink-0" aria-hidden />
             </Link>
