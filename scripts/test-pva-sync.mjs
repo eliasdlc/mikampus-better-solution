@@ -47,7 +47,7 @@ const statusOf = (results, key) => results.find((entry) => entry.key === key);
 try {
   // ── El registro ──
   {
-    assert.equal(PVA_KEYS.length, 10, 'diez fuentes: identidad, config, materias y las siete ramas del aula');
+    assert.equal(PVA_KEYS.length, 11, 'once fuentes: identidad, config, materias y las ocho ramas del aula');
     for (const source of orchestrator.SOURCES.filter((entry) => PVA_KEYS.includes(entry.key))) {
       assert.equal(source.needsPva, true, `${source.key} declara que necesita la credencial de la PVA`);
       assert.equal(source.needsPortal, false, `${source.key} no usa Playwright, así que no compite por la cola del portal`);
@@ -73,6 +73,10 @@ try {
     assert.equal(ttl.pvaNotifications, 5 * 60_000);
     assert.equal(ttl.pvaCalendar, 15 * 60_000);
     assert.equal(ttl.pvaContents, 24 * 3600_000, 'la respuesta más pesada tiene el piso más alto');
+    assert.ok(
+      orchestrator.orderedSources(['pvaFiles']).map((source) => source.key).includes('pvaContents'),
+      'los materiales se anotan al bajar el árbol: sin contenido no hay nada que descargar'
+    );
   }
 
   // ── Sin vincular la PVA: pausa, y el portal ni se entera ──
@@ -127,11 +131,28 @@ try {
     saveForums(USER, await fixture('pva-forums.json'));
     saveNotifications(USER, await fixture('pva-notifications.json'));
 
+    // Los materiales: se anotan solos al guardar el árbol, y su texto se indexa
+    // en una tabla FTS5 que no se vacía por cascada.
+    const { indexFileText } = await import('../src/moodle/files.js');
+    const archivo = db.prepare('SELECT file_id, filename, mimetype FROM pva_file WHERE user_id = ?').get(USER);
+    assert.ok(archivo, 'el árbol del curso trajo al menos un material');
+    await indexFileText({ ...archivo, sha256: 'abc' }, Buffer.from('<p>la integral definida</p>'), {
+      contentType: 'text/html',
+    });
+    assert.equal(
+      db.prepare('SELECT count(*) AS n FROM pva_file_text_fts WHERE pva_file_text_fts MATCH ?').get('integral').n,
+      1,
+      'el texto quedó indexado'
+    );
+
     const tablas = db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'pva\\_%' ESCAPE '\\' ORDER BY name")
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'pva\\_%' ESCAPE '\\'
+           AND name NOT LIKE 'pva\\_file\\_text\\_fts%' ESCAPE '\\' ORDER BY name`
+      )
       .all()
       .map((row) => row.name);
-    assert.equal(tablas.length, 21, 'las 21 tablas del esquema de la PVA');
+    assert.equal(tablas.length, 26, 'las 26 tablas del esquema de la PVA, sin contar las internas del índice');
     const conFilas = tablas.filter((tabla) => db.prepare(`SELECT count(*) AS n FROM ${tabla}`).get().n > 0);
     // pva_site_config es del sitio, no de la persona, y acá no se llenó.
     assert.equal(conFilas.length >= 12, true, `hay datos que borrar: ${conFilas.join(', ')}`);
@@ -142,6 +163,11 @@ try {
       .map((tabla) => [tabla, db.prepare(`SELECT count(*) AS n FROM ${tabla}`).get().n])
       .filter(([tabla, n]) => n > 0 && tabla !== 'pva_site_config');
     assert.deepEqual(quedan, [], 'ni una fila de la PVA sobrevive, incluidas las hijas que caen por FK');
+    assert.equal(
+      db.prepare('SELECT count(*) AS n FROM pva_file_text_fts WHERE pva_file_text_fts MATCH ?').get('integral').n,
+      0,
+      'y el índice de texto se vacía a mano: por cascada NO se limpia, y sus términos aparecerían en la cuenta siguiente'
+    );
 
     const sincronias = db
       .prepare("SELECT DISTINCT kind FROM sync_log WHERE user_id = ? AND kind LIKE 'pva%'")

@@ -2,6 +2,7 @@ import { db, logSync } from '../db.js';
 import { callPva } from './session.js';
 import { moodleUserId } from './identity.js';
 import { bool01, epoch, hashOf, int, nowSeconds, real, text, textOrNull } from './shape.js';
+import { harvestCourseFiles } from './files.js';
 
 // Materias, secciones y módulos: la columna vertebral del dominio.
 //
@@ -289,7 +290,12 @@ export function saveCourseContents(userId, courseId, sections, { now = Date.now(
     throw err;
   }
 
-  return { sections: sections.length, modules: moduleCount, hash, stamp };
+  // Los archivos se anotan acá porque acá está el payload: `contents[]` solo
+  // viene dentro del árbol y no hay ninguna función que los liste aparte.
+  // Anotar no es bajar: la descarga decide después, con presupuesto.
+  const harvested = harvestCourseFiles(userId, courseId, sections, { now });
+
+  return { sections: sections.length, modules: moduleCount, hash, stamp, ...harvested };
 }
 
 export async function syncCourseContents(userId, courseId, { call = callPva, now = Date.now() } = {}) {

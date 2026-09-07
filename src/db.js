@@ -785,13 +785,14 @@ const PERSONAL_TABLES = [
   'pva_course_total', 'pva_gradebook_access', 'pva_submission',
   'pva_assignment_inaccessible', 'pva_assignment', 'pva_module',
   'pva_course_section', 'pva_course_sync', 'pva_course', 'pva_functions', 'pva_identity',
+  'pva_file', 'pva_link',
 ];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
 const PERSONAL_SYNC_KINDS = [
   'grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows',
   'pvaIdentity', 'pvaCourses', 'pvaContents', 'pvaAssignments', 'pvaSubmissions',
-  'pvaGrades', 'pvaCalendar', 'pvaForums', 'pvaNotifications',
+  'pvaGrades', 'pvaCalendar', 'pvaForums', 'pvaNotifications', 'pvaFiles',
 ];
 
 // Borra todo lo que es de UNA persona: sus filas, nunca las de otro usuario ni
@@ -808,11 +809,19 @@ export function clearPersonalData(userId) {
       userId,
       ...PERSONAL_SYNC_KINDS
     );
+    // El índice de texto de los materiales es una tabla FTS5 de contenido
+    // externo: borrar pva_file_text por cascada NO lo vacía, y sus términos
+    // seguirían apareciendo en una búsqueda de la cuenta siguiente.
+    db.exec("INSERT INTO pva_file_text_fts (pva_file_text_fts) VALUES ('delete-all')");
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
   }
+
+  // Los materiales del aula viven en disco, fuera de la base. Cambiar de cuenta
+  // sin borrarlos dejaría los PDF de la persona anterior en el equipo.
+  fs.rmSync(dataPaths().pvaFiles, { recursive: true, force: true });
 }
 
 // El "Borrar todos mis datos" del §8: lo de clearPersonalData MÁS el trabajo

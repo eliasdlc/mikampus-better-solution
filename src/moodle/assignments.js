@@ -2,6 +2,7 @@ import { db, logSync } from '../db.js';
 import { callPva } from './session.js';
 import { bool01, epoch, int, nowSeconds, real, text, textOrNull } from './shape.js';
 import { submissionState } from '../shared/pva.ts';
+import { harvestAssignmentFiles } from './files.js';
 
 // Tareas y estado de entrega.
 //
@@ -128,7 +129,11 @@ export function saveAssignments(userId, payload, { now = Date.now() } = {}) {
     throw err;
   }
 
-  return { assignments, courses: payload.courses?.length ?? 0, inaccessible: payload.warnings?.length ?? 0, seen };
+  // Los adjuntos del enunciado llegan con otra forma que los del árbol (8
+  // claves en vez de 13, sin type ni sortorder) y solo vienen acá.
+  const { files } = harvestAssignmentFiles(userId, payload, { now });
+
+  return { assignments, courses: payload.courses?.length ?? 0, inaccessible: payload.warnings?.length ?? 0, seen, files };
 }
 
 export async function syncAssignments(userId, { call = callPva, courseIds, now = Date.now() } = {}) {

@@ -16,6 +16,7 @@ import { syncAssignments, syncSubmissions } from './moodle/assignments.js';
 import { syncGrades } from './moodle/grades.js';
 import { syncCalendar } from './moodle/calendar.js';
 import { syncForums, syncNotifications } from './moodle/forums.js';
+import { syncFiles, filesUsage } from './moodle/files.js';
 import { recordHeartbeat } from './runtime.js';
 import * as scheduler from './scheduler.js';
 
@@ -306,6 +307,27 @@ export const SOURCES = [
     async run({ userId }) {
       const result = await syncContents(userId);
       return { detail: `${result.fetched} materia(s) bajadas, ${result.skipped} sin cambios` };
+    },
+  },
+  {
+    key: 'pvaFiles',
+    label: 'PVA: materiales',
+    // Los archivos se anotan al bajar el árbol, así que sin contenido no hay
+    // nada que descargar.
+    dependsOn: ['pvaContents'],
+    // El blob NO caduca por TTL: se revalida con If-None-Match y el servidor
+    // dice max-age de 6 h. Este TTL es cada cuánto se mira si hay material
+    // nuevo, no cada cuánto se vuelve a bajar lo mismo.
+    ttlMs: 12 * HOUR,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-files', 'pva-contents'],
+    async run({ userId }) {
+      const result = await syncFiles(userId);
+      const usage = filesUsage(userId);
+      const megabytes = (usage.bytes / 1024 / 1024).toFixed(1);
+      const detail = `${result.downloaded} bajado(s), ${result.indexed} indexado(s) · ${megabytes} MB de ${Math.round(usage.budgetBytes / 1024 / 1024)} MB`;
+      return { detail: result.skipped ? `${detail}, ${result.skipped} fuera de presupuesto` : detail };
     },
   },
   {
