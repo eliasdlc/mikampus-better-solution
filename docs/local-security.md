@@ -99,9 +99,19 @@ credencial y se detienen si desaparece. Un rechazo de password vacía el archivo
 y cierra la sesión; MFA, CAPTCHA o portal caído detienen la automatización sin
 tocarlo. No se realizan reintentos de login en bucle.
 
+Los materiales que la app baja de la PVA (PDF, presentaciones, páginas) viven en
+`pva/` dentro de la carpeta de datos, con permisos 0600 y fuera de la base, así
+que no engordan las copias de seguridad. Se descargan por `tokenpluginfile.php`,
+que autentica con una llave en la ruta en vez de poner el token en la query, y
+un enlace externo de un módulo nunca recibe credencial alguna: va a otro host.
+Cambiar de cuenta o borrar los datos elimina la carpeta entera junto con su
+índice de texto.
+
 La PVA (el Moodle de PUCMM) es la segunda fuente y vive en el mismo archivo:
 el usuario es el mismo del portal, la contraseña es distinta, y junto a ella se
-guarda el token de Web Service que mikampus obtiene con esa contraseña. El token
+guardan el token de Web Service que mikampus obtiene con esa contraseña y la
+llave privada de acceso que el sitio devuelve con él, que abre el calendario y
+los archivos sin sesión y por eso se trata igual que el token. El token
 no está en `mikampus.db` y por lo tanto tampoco en las copias de seguridad, que
 copian la base y nada más; viaja siempre en el cuerpo del POST, nunca en una URL
 ni en un log, y cerrar sesión o cambiar de cuenta lo descarta. Esa disciplina es
