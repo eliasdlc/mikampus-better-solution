@@ -42,10 +42,11 @@ try {
     assert.equal(materia.shortname, 'MAT-101-01');
     assert.equal(materia.grade.total, '85.50');
     assert.equal(materia.grade.hidden, false);
+    assert.equal(materia.grade.checked, true, 'esta materia sí se consultó');
     assert.deepEqual(
       { calificados: materia.grade.gradedItems, calificables: materia.grade.gradableItems },
-      { calificados: 0, calificables: 2 },
-      'dos items califican y ninguno tiene nota todavía'
+      { calificados: 0, calificables: 1 },
+      'un solo item del libro califica de verdad, y todavía no tiene nota'
     );
 
     // Lo próximo es la entrega SIN hacer más cercana. Una ya entregada no es
@@ -85,7 +86,7 @@ try {
     const tarea = modulos.find((module) => module.modname === 'assign');
     assert.equal(tarea.assignment.submitted, true, 'la tarea trae su estado de entrega, no solo su nombre');
     assert.equal(tarea.assignment.graded, true);
-    assert.equal(tarea.assignment.gradeText, '85.00000');
+    assert.equal(tarea.assignment.gradeText, '85,00&nbsp;/&nbsp;100,00', 'la nota formateada, no el crudo de 5 decimales');
     assert.ok(tarea.dueAt, 'y su fecha efectiva');
 
     const label = modulos.find((module) => module.modname === 'label');
@@ -95,6 +96,21 @@ try {
     const recurso = modulos.find((module) => module.modname === 'resource');
     assert.equal(recurso.files.length, 1, 'el material cuelga de su módulo');
     assert.equal(recurso.files[0].downloaded, false, 'y dice que todavía no se bajó');
+  }
+
+  // ── El total del curso no es una tarea calificada ──
+  {
+    // El item de total del curso llega con rango y máximo, así que califica
+    // igual que una tarea para `isGradable`.
+    const total = db.prepare("SELECT item_id AS itemId FROM pva_grade_item WHERE course_id = 800101 AND itemtype = 'course'").get();
+    db.prepare('UPDATE pva_grade_item SET is_gradable = 1 WHERE item_id = ?').run(total.itemId);
+    db.prepare(
+      `INSERT OR REPLACE INTO pva_grade_value (item_id, graderaw, graderaw_src, grade_display, percentage_display, range_display, fetched_at)
+       VALUES (?, 85.5, '85.50000', '85,50', '85,50 %', '0-100', 0)`
+    ).run(total.itemId);
+    const data = aulaCourse(USER, 800101, { now: NOW });
+    assert.equal(data.grade.gradableItems, 1, 'el total del curso vive en el libro pero no es un item que se entrega');
+    assert.equal(data.grade.gradedItems, 0, 'y contarlo inflaría "0 de 1" hasta "1 de 2"');
   }
 
   // ── El libro que el profesor cerró NO es un cero ──
@@ -118,6 +134,8 @@ try {
     db.prepare('UPDATE pva_course SET hidden = 0, missing_since = NULL WHERE course_id = 800202').run();
     const data = aulaCourse(USER, 800202, { now: NOW });
     assert.equal(data.contentsSynced, false, 'y la pantalla lo dice en vez de pintar un curso sin nada');
+    assert.equal(data.grade.checked, false, 'su libro nunca se leyó, que no es lo mismo que un libro vacío');
+    assert.equal(data.grade.hidden, false, 'y tampoco es un libro oculto: nadie lo cerró');
     assert.deepEqual(data.sections, []);
     assert.equal(aulaCourse(USER, 999999, { now: NOW }), null, 'una materia que no existe es null, no un objeto vacío');
   }

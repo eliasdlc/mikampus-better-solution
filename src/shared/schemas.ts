@@ -1194,6 +1194,8 @@ export const aulaCourseCardSchema = z.object({
   fullname: z.string(),
   pending: z.number().int(),
   grade: z.object({
+    // `checked` distingue "el libro está vacío" de "nunca se leyó el libro".
+    checked: z.boolean(),
     hidden: z.boolean(),
     reason: z.string().nullable(),
     total: z.string().nullable(),
@@ -1210,6 +1212,8 @@ export const aulaCourseCardSchema = z.object({
     })
     .nullable(),
 });
+
+export type AulaCourseCard = z.infer<typeof aulaCourseCardSchema>;
 
 export const aulaFeedItemSchema = z.object({
   id: z.string(),

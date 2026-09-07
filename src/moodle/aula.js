@@ -31,11 +31,14 @@ function courseStatus(userId, courseId, { now = Date.now() } = {}) {
   const access = db
     .prepare('SELECT show_grades AS showGrades, reachable, last_errorcode AS errorcode FROM pva_gradebook_access WHERE user_id = ? AND course_id = ?')
     .get(userId, courseId);
+  // El total del curso y los subtotales de categoría son items del libro,
+  // pero no son cosas que se entregan: contarlos infla "3 de 7 calificados".
   const items = db
     .prepare(
       `SELECT COUNT(1) AS total, SUM(CASE WHEN v.graderaw_src IS NOT NULL THEN 1 ELSE 0 END) AS graded
        FROM pva_grade_item i LEFT JOIN pva_grade_value v ON v.item_id = i.item_id
-       WHERE i.user_id = ? AND i.course_id = ? AND i.is_gradable = 1`
+       WHERE i.user_id = ? AND i.course_id = ? AND i.is_gradable = 1
+         AND i.itemtype NOT IN ('course', 'category')`
     )
     .get(userId, courseId);
 
@@ -68,6 +71,9 @@ function courseStatus(userId, courseId, { now = Date.now() } = {}) {
 
   return {
     grade: {
+      // Sin fila de acceso el libro nunca se consultó, y eso no es un libro
+      // vacío: decir "no tiene items calificables" ahí es inventar.
+      checked: access != null,
       // El libro puede estar deshabilitado por el sitio o cerrado por el
       // profesor: son dos ausencias distintas y las dos se nombran.
       hidden: access?.showGrades === 0 || access?.reachable === 0,
@@ -164,7 +170,7 @@ export function aulaCourse(userId, courseId, { now = Date.now() } = {}) {
         `SELECT a.cmid, a.assignment_id AS assignmentId, a.duedate, a.cutoffdate, a.submissiondrafts,
                 s.status, s.timemodified AS submittedAt, s.grading_status AS gradingStatus,
                 s.can_edit AS canEdit, s.extensionduedate AS extensionAt,
-                f.grade_raw_text AS gradeText
+                f.grade_raw_text AS gradeText, f.grade_for_display AS gradeDisplay
          FROM pva_assignment a
          LEFT JOIN pva_submission s ON s.assignment_id = a.assignment_id AND s.is_latest = 1
          LEFT JOIN pva_submission_feedback f ON f.assignment_id = a.assignment_id AND f.attemptnumber = s.attemptnumber
@@ -239,7 +245,9 @@ export function aulaCourse(userId, courseId, { now = Date.now() } = {}) {
               status: assignment.status ?? null,
               submitted: assignment.status == null ? null : assignment.status === 'submitted',
               graded: assignment.gradingStatus === 'graded',
-              gradeText: assignment.gradeText ?? null,
+              // Moodle da el número crudo ('92.00000') y el formateado
+              // ('92,00 / 100,00'). Al estudiante se le muestra el segundo.
+              gradeText: assignment.gradeDisplay ?? assignment.gradeText ?? null,
               isLate: state?.isLate ?? false,
               isOverdue: state?.isOverdue ?? false,
             }
