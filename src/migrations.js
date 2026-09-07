@@ -260,6 +260,12 @@ export const MIGRATIONS = [
     minCompatibleVersion: 1,
     up: createPvaFileTables,
   },
+  {
+    version: 16,
+    name: 'pva-avisos',
+    minCompatibleVersion: 1,
+    up: createPvaAlertTable,
+  },
 ];
 
 
@@ -1405,5 +1411,44 @@ export function createPvaFileTables(db) {
       repository_type TEXT,                        -- '' local; CLAVE AUSENTE cuando files_count = 0
       updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     );
+  `);
+}
+
+
+/**
+ * El libro de avisos de la PVA. Se crea recién ahora, con la fase que lo llena:
+ * una tabla que nadie escribe es una promesa vacía en el esquema.
+ *
+ * Su razón de ser es la idempotencia. `read` y `timeread` de la campanita son
+ * estado COMPARTIDO con el portal web: si el estudiante abre la campanita en el
+ * navegador, Moodle los mueve sin que la app se entere, así que no sirven para
+ * decidir si un aviso ya se mostró. Lo único que decide eso es `delivered_at`
+ * de acá.
+ *
+ * Y la llave de deduplicación es el OBJETO de Moodle, no la notificación: un
+ * recordatorio que el sitio repite y un diff que detecta lo mismo tienen que
+ * colapsar en un solo aviso.
+ */
+export function createPvaAlertTable(db) {
+  db.exec(`
+    -- Ledger local de avisos. Única verdad sobre "esto ya se le mostró al usuario":
+    -- read_remote no sirve porque el portal web lo cambia por su cuenta.
+    CREATE TABLE IF NOT EXISTS pva_alert (
+      alert_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         INTEGER NOT NULL,
+      kind            TEXT    NOT NULL CHECK (kind IN ('tarea_nueva','tarea_por_vencer','nota_publicada','anuncio')),
+      source          TEXT    NOT NULL CHECK (source IN ('notification','diff')),
+      subject_key     TEXT    NOT NULL,           -- 'assign:<instanceid>' | 'discussion:<id>' | 'gradeitem:<id>'
+      notification_id INTEGER REFERENCES pva_notification(notification_id) ON DELETE SET NULL,
+      course_id       INTEGER,
+      title           TEXT    NOT NULL,
+      url             TEXT,
+      occurred_at     INTEGER NOT NULL,
+      created_at      INTEGER NOT NULL,
+      delivered_at    INTEGER,
+      UNIQUE (user_id, kind, subject_key)          -- dedup por objeto de Moodle, no por notificación
+    );
+    CREATE INDEX IF NOT EXISTS idx_pva_alert_pendientes
+      ON pva_alert (occurred_at DESC) WHERE delivered_at IS NULL;
   `);
 }
