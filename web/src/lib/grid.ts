@@ -332,3 +332,78 @@ export function visibleDays(blocks: Block[], { all = false }: { all?: boolean } 
   // Sin un solo bloque no hay nada que deducir: se muestra la semana laboral.
   return conClase.length > 0 ? conClase : orden.slice(0, 5);
 }
+
+// ── Entregas del aula en la semana ─────────────────────────────────────────
+//
+// Una entrega no es un bloque: no tiene duración y no se repite. Va en un
+// carril propio sobre la grilla, con una celda por día, y por eso lo único que
+// necesita de acá es a qué columna pertenece.
+//
+// La grilla dibuja un PATRÓN semanal (lunes a domingo), no una semana concreta.
+// Colocar fechas encima solo es honesto mientras la ventana no supere siete
+// días: dentro de esa ventana cada día de la semana aparece una sola vez, así
+// que la columna no es ambigua. Con más días, dos entregas del mismo jueves
+// distinto caerían en la misma celda sin forma de distinguirlas.
+export const DEADLINE_WINDOW_DAYS = 7;
+
+export type DeadlineChip = {
+  id: string;
+  day: DayCode;
+  /** hh:mm local, para ordenar dentro de la celda. */
+  at: string;
+  /** La fecha completa, para el rótulo accesible: la celda sola no la dice. */
+  atLabel: string;
+  title: string;
+  courseLabel: string | null;
+  url: string | null;
+  submitted: boolean | null;
+  overdue: boolean;
+};
+
+const DIA_ISO: DayCode[] = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+export type DeadlineInput = {
+  id: string;
+  title: string;
+  dueAt: string;
+  courseShortname?: string | null;
+  url?: string | null;
+  submitted?: boolean | null;
+  overdue?: boolean;
+};
+
+/**
+ * Convierte entregas con fecha real en chips de columna. Descarta lo que cae
+ * fuera de la ventana de siete días y lo ya entregado, que no es un pendiente.
+ */
+export function toDeadlineChips(
+  items: DeadlineInput[],
+  now: Date,
+  { days = DEADLINE_WINDOW_DAYS }: { days?: number } = {}
+): DeadlineChip[] {
+  const from = now.getTime();
+  const to = from + days * 86_400_000;
+  return items
+    .filter((item) => item.submitted !== true)
+    .map((item) => ({ item, at: new Date(item.dueAt) }))
+    .filter(({ at }) => Number.isFinite(at.getTime()) && at.getTime() >= from && at.getTime() <= to)
+    .map(({ item, at }) => ({
+      id: item.id,
+      day: DIA_ISO[at.getDay()],
+      at: `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`,
+      atLabel: at.toLocaleString('es-DO', { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' }),
+      title: item.title,
+      courseLabel: item.courseShortname ?? null,
+      url: item.url ?? null,
+      submitted: item.submitted ?? null,
+      overdue: Boolean(item.overdue),
+    }))
+    .sort((left, right) => toMinutes(left.at) - toMinutes(right.at));
+}
+
+/** Las entregas agrupadas por columna, en el orden en que se pintan. */
+export function deadlinesByDay(chips: DeadlineChip[], days: DayCode[]): Map<DayCode, DeadlineChip[]> {
+  const map = new Map<DayCode, DeadlineChip[]>(days.map((day) => [day, []]));
+  for (const chip of chips) map.get(chip.day)?.push(chip);
+  return map;
+}

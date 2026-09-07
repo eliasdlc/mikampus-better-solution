@@ -1153,3 +1153,31 @@ export const mesaSolveResponseSchema = z.object({
   ),
 });
 export type MesaSolveResponse = z.infer<typeof mesaSolveResponseSchema>;
+
+// Las entregas del aula que vencen pronto. Van al mismo horario que las clases
+// (carril propio sobre la grilla), así que la pantalla del horario las pide
+// junto con el horario mismo.
+//
+// `submitted` es tri-estado a propósito: `null` significa que nunca se consultó
+// el estado de esa entrega, que no es lo mismo que "sin entregar". Un carril
+// que pinte el null como pendiente miente sobre algo que nadie preguntó.
+export const pvaDeadlineSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['assign_due', 'forum_due', 'event']),
+  title: z.string(),
+  courseShortname: z.string().nullable(),
+  dueAt: z.string(),
+  url: z.string().nullable(),
+  submitted: z.boolean().nullable(),
+  graded: z.boolean().nullable(),
+  overdue: z.boolean(),
+});
+export type PvaDeadline = z.infer<typeof pvaDeadlineSchema>;
+
+export const pvaDeadlinesResponseSchema = z.object({
+  items: z.array(pvaDeadlineSchema),
+  syncedAt: z.string().nullable(),
+  /** Si la PVA no está vinculada, la pantalla no puede pedir que se refresque. */
+  linked: z.boolean(),
+});
+export type PvaDeadlinesResponse = z.infer<typeof pvaDeadlinesResponseSchema>;

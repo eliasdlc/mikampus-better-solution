@@ -32,6 +32,8 @@ import { getUser, LOCAL_USER_ID } from './users.js';
 import * as auth from './auth.js';
 import { credentialInfo, deleteCredential, ensureCredentialFile } from './credentialStore.js';
 import { alertPrefs, readAlerts, setAlertPrefs } from './moodle/alerts.js';
+import { upcoming } from './moodle/calendar.js';
+import { hasPvaCredential } from './moodle/session.js';
 import * as plans from './plans.js';
 import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
@@ -217,6 +219,24 @@ app.get('/api/notifications', (req, res) => {
 
 app.post('/api/notifications/read', (req, res) => {
   res.json({ marked: markFeedRead(req.userId) });
+});
+
+// Las entregas del aula para el horario. Sirve siempre desde SQLite, como el
+// resto de las pantallas: entrar no dispara una consulta a la PVA.
+app.get('/api/aula/entregas', (req, res) => {
+  const days = Math.min(60, Math.max(1, Number(req.query.days) || 7));
+  const items = upcoming(req.userId, { days }).map((item) => ({
+    id: item.eventId ? `event:${item.eventId}` : `cmid:${item.cmid}`,
+    kind: item.assignmentId ? 'assign_due' : 'event',
+    title: item.activityName ?? item.name,
+    courseShortname: item.courseShortname ?? null,
+    dueAt: new Date(item.timesort * 1000).toISOString(),
+    url: item.url ?? null,
+    submitted: item.submissionStatus == null ? null : item.submissionStatus === 'submitted',
+    graded: item.gradingStatus == null ? null : item.gradingStatus === 'graded',
+    overdue: item.overdue === 1,
+  }));
+  res.json({ items, syncedAt: lastSync('pvaCalendar', { userId: req.userId }), linked: hasPvaCredential() });
 });
 
 // Los avisos del aula nacen apagados: se detectan y se asientan igual, y esta

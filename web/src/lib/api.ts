@@ -55,6 +55,8 @@ import {
   type MesaSolveResponse,
   type ScheduleConstraintsInput,
   type TermPhaseResponse,
+  pvaDeadlinesResponseSchema,
+  type PvaDeadlinesResponse,
 } from '../../../src/shared/schemas.ts';
 import { z } from 'zod';
 
@@ -192,6 +194,14 @@ export async function syncCourseSections(input: {
 export async function fetchMySchedule(term?: string): Promise<ScheduleResponse> {
   const qs = term ? `?term=${encodeURIComponent(term)}` : '';
   return scheduleResponseSchema.parse(await getJSON(`/api/my-schedule${qs}`));
+}
+
+// Las entregas del aula que vencen pronto, desde cache. Van al mismo horario
+// que las clases: la pantalla las pide junto con el horario y las pasa al
+// carril del grid. Sin la PVA vinculada devuelve una lista vacía con
+// `linked: false`, que es distinto de "no tenés nada que entregar".
+export async function fetchAulaDeadlines(days = 7): Promise<PvaDeadlinesResponse> {
+  return pvaDeadlinesResponseSchema.parse(await getJSON(`/api/aula/entregas?days=${days}`));
 }
 
 // Refresh en vivo contra PeopleSoft: tarda segundos y publica su progreso en

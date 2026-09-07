@@ -440,3 +440,47 @@ const enDia = (day, id, start, end) => ({ ...block(id, start, end), day });
 console.log(
   '✓ Layout del WeeklyGrid OK (carriles, choques, bordes, TBA, ventana horaria, paleta, bandas plegadas, días visibles y horas en a.m./p.m.).'
 );
+
+// ── Entregas del aula en el carril de la semana ───────────────────────────
+//
+// La grilla dibuja un patrón semanal, no una semana concreta: colocar fechas
+// encima solo es honesto dentro de una ventana de siete días, donde cada día
+// aparece una sola vez.
+{
+  const { toDeadlineChips, deadlinesByDay, DEADLINE_WINDOW_DAYS } = await import('../web/src/lib/grid.ts');
+  // Jueves 16 de julio de 2026, 9:00 am local.
+  const ahora = new Date(2026, 6, 16, 9, 0);
+  const iso = (d, h, m = 0) => new Date(2026, 6, d, h, m).toISOString();
+
+  const items = [
+    { id: 'cmid:1', title: 'Informe 2', dueAt: iso(16, 23, 59), courseShortname: 'MAT-101', url: 'https://x/1' },
+    { id: 'cmid:2', title: 'Quiz 3', dueAt: iso(18, 8, 0), courseShortname: 'FIS-201', submitted: false },
+    { id: 'cmid:3', title: 'Ya entregada', dueAt: iso(17, 10, 0), submitted: true },
+    { id: 'cmid:4', title: 'Muy lejos', dueAt: iso(30, 10, 0), submitted: false },
+    { id: 'cmid:5', title: 'Ya pasó', dueAt: iso(14, 10, 0), submitted: false },
+  ];
+
+  const chips = toDeadlineChips(items, ahora);
+  assert.deepEqual(
+    chips.map((chip) => chip.id),
+    ['cmid:2', 'cmid:1'],
+    'entra lo de la ventana y sin entregar, ordenado por hora del día'
+  );
+  assert.equal(chips.find((c) => c.id === 'cmid:1').day, 'Th', 'las 11:59 pm del jueves son del jueves, no del viernes');
+  assert.equal(chips.find((c) => c.id === 'cmid:2').day, 'Sa');
+  assert.equal(
+    items.filter((i) => i.submitted === true).length,
+    1,
+    'lo ya entregado existe en los datos pero no en el carril: no es un pendiente'
+  );
+  assert.match(chips[0].atLabel, /sábado/i, 'el rótulo accesible dice la fecha completa, que la celda sola no puede decir');
+  assert.equal(chips[0].url, null, 'sin URL no se pinta como enlace');
+
+  // Una entrega de un día que la grilla no muestra no rompe nada: su celda no
+  // existe y el chip simplemente no se pinta.
+  const porDia = deadlinesByDay(chips, ['Mo', 'Th']);
+  assert.equal(porDia.get('Th').length, 1);
+  assert.equal(porDia.get('Mo').length, 0);
+  assert.equal(porDia.has('Sa'), false);
+  assert.equal(DEADLINE_WINDOW_DAYS, 7, 'la ventana es de una semana: más días harían ambigua la columna');
+}
