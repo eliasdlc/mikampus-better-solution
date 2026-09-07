@@ -777,10 +777,22 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_sync_log_kind ON sync_log(kind, user_id,
 const PERSONAL_TABLES = [
   'grades', 'enrollments', 'progress_items', 'holds', 'cart_rows',
   'profile', 'enrollment_windows', 'term_events', 'pensum', 'requirement_progress',
+  // Lo de la PVA es tan personal como lo de micampus: cambiar de cuenta o
+  // borrar los datos se lo lleva igual. Solo van las tablas con user_id; sus
+  // hijas (fechas de módulo, config de tarea, valor de nota, retroalimentación,
+  // bitácora de cambios) caen por FK con ON DELETE CASCADE.
+  'pva_calendar_event', 'pva_notification', 'pva_forum', 'pva_grade_item',
+  'pva_course_total', 'pva_gradebook_access', 'pva_submission',
+  'pva_assignment_inaccessible', 'pva_assignment', 'pva_module',
+  'pva_course_section', 'pva_course_sync', 'pva_course', 'pva_functions', 'pva_identity',
 ];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
-const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows'];
+const PERSONAL_SYNC_KINDS = [
+  'grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows',
+  'pvaIdentity', 'pvaCourses', 'pvaContents', 'pvaAssignments', 'pvaSubmissions',
+  'pvaGrades', 'pvaCalendar', 'pvaForums', 'pvaNotifications',
+];
 
 // Borra todo lo que es de UNA persona: sus filas, nunca las de otro usuario ni
 // lo compartido. Lo usa el cambio de cuenta local y el "Borrar mis datos" (§8).

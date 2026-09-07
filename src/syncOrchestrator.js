@@ -9,6 +9,13 @@ import { fetchAdvisement, saveRequirementTree, earliestGradeTerm } from './peopl
 import { fetchHolds, saveHolds } from './peoplesoft/holds.js';
 import { syncEnrollmentWindows } from './peoplesoft/enrollmentWindows.js';
 import { syncAcademicCalendar } from './academicCalendar.js';
+import { hasPvaCredential } from './moodle/session.js';
+import { syncIdentity, syncSiteConfig } from './moodle/identity.js';
+import { syncCourses, syncContents, activeCourses } from './moodle/courses.js';
+import { syncAssignments, syncSubmissions } from './moodle/assignments.js';
+import { syncGrades } from './moodle/grades.js';
+import { syncCalendar } from './moodle/calendar.js';
+import { syncForums, syncNotifications } from './moodle/forums.js';
 import { recordHeartbeat } from './runtime.js';
 import * as scheduler from './scheduler.js';
 
@@ -176,6 +183,158 @@ export const SOURCES = [
     async run() {
       const { saved, failures } = await syncAcademicCalendar();
       return { detail: failures.length ? `${saved} fecha(s), parcial` : `${saved} fecha(s)` };
+    },
+  },
+  // ── La PVA (Moodle) ───────────────────────────────────────────────────────
+  // Fuente distinta, credencial distinta y transporte distinto: no usan
+  // Playwright, así que `needsPortal` es false y no ceden ante una inscripción
+  // en curso. Lo que sí las pausa es no tener la PVA vinculada (`needsPva`).
+  //
+  // Los TTL salen de la tabla del mapa, y el orden de `dependsOn` reproduce el
+  // arranque en frío: identidad primero (de ahí sale el moodle_userid que casi
+  // todas las demás piden como parámetro), después materias, y colgando de
+  // materias las cuatro ramas que se pueden pedir en paralelo.
+  {
+    key: 'pvaIdentity',
+    label: 'PVA: identidad',
+    dependsOn: [],
+    ttlMs: 6 * HOUR,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-identity', 'pva'],
+    async run({ userId }) {
+      const result = await syncIdentity(userId);
+      return { detail: `Moodle ${result.siteVersion} · ${result.functions} funciones expuestas` };
+    },
+  },
+  {
+    key: 'pvaConfig',
+    label: 'PVA: configuración del sitio',
+    dependsOn: ['pvaIdentity'],
+    ttlMs: 24 * HOUR,
+    needsPortal: false,
+    needsPva: true,
+    // Es del sitio, no de la persona: su frescura no se guarda por usuario.
+    shared: true,
+    invalidates: ['pva-config'],
+    async run() {
+      const result = await syncSiteConfig();
+      return { detail: `${result.settings} ajuste(s)` };
+    },
+  },
+  {
+    key: 'pvaCourses',
+    label: 'PVA: materias',
+    dependsOn: ['pvaIdentity'],
+    ttlMs: 12 * HOUR,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-courses', 'pva', 'dashboard'],
+    async run({ userId }) {
+      const result = await syncCourses(userId);
+      return { detail: `${result.active} materia(s) del ciclo de ${result.total} matriculadas` };
+    },
+  },
+  {
+    key: 'pvaCalendar',
+    label: 'PVA: qué vence',
+    dependsOn: ['pvaCourses'],
+    // El TTL más corto del bloque: los profesores mueven fechas cerca del
+    // vencimiento, y es una sola llamada para todas las materias.
+    ttlMs: 15 * 60_000,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-calendar', 'agenda', 'dashboard'],
+    async run({ userId }) {
+      const result = await syncCalendar(userId);
+      return { detail: `${result.events} evento(s) con acción pendiente` };
+    },
+  },
+  {
+    key: 'pvaGrades',
+    label: 'PVA: notas del aula',
+    dependsOn: ['pvaCourses'],
+    // El overview es el disparador barato: una llamada marca qué libros
+    // cambiaron y solo esos gastan una llamada de detalle.
+    ttlMs: 30 * 60_000,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-grades', 'dashboard'],
+    async run({ userId }) {
+      const result = await syncGrades(userId);
+      const changes = result.changes.length ? `, ${result.changes.length} cambio(s)` : '';
+      return { detail: `${result.detailed} libro(s) al detalle${changes}` };
+    },
+  },
+  {
+    key: 'pvaAssignments',
+    label: 'PVA: tareas',
+    dependsOn: ['pvaCourses'],
+    ttlMs: 6 * HOUR,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-assignments', 'agenda', 'dashboard'],
+    async run({ userId }) {
+      const courseIds = activeCourses(userId).map((course) => course.courseId);
+      const result = await syncAssignments(userId, { courseIds });
+      return { detail: `${result.assignments} tarea(s) en ${result.courses} materia(s)` };
+    },
+  },
+  {
+    key: 'pvaSubmissions',
+    label: 'PVA: estado de mis entregas',
+    dependsOn: ['pvaAssignments'],
+    ttlMs: 30 * 60_000,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-assignments', 'dashboard'],
+    async run({ userId }) {
+      const result = await syncSubmissions(userId);
+      return { detail: result.saved ? `${result.saved} entrega(s) al día` : 'nada que refrescar' };
+    },
+  },
+  {
+    key: 'pvaContents',
+    label: 'PVA: contenido de las materias',
+    dependsOn: ['pvaCourses'],
+    // La respuesta más pesada del dominio: piso de 24 h y, adentro, solo se
+    // baja el curso que el delta del servidor marcó.
+    ttlMs: 24 * HOUR,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-contents'],
+    async run({ userId }) {
+      const result = await syncContents(userId);
+      return { detail: `${result.fetched} materia(s) bajadas, ${result.skipped} sin cambios` };
+    },
+  },
+  {
+    key: 'pvaForums',
+    label: 'PVA: foros',
+    dependsOn: ['pvaCourses'],
+    ttlMs: 24 * HOUR,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-forums'],
+    async run({ userId }) {
+      const courseIds = activeCourses(userId).map((course) => course.courseId);
+      const result = await syncForums(userId, { courseIds });
+      return { detail: `${result.forums} foro(s), ${result.announcements} de anuncios` };
+    },
+  },
+  {
+    key: 'pvaNotifications',
+    label: 'PVA: campanita',
+    // Depende de foros porque un aviso de mod_forum solo se puede clasificar
+    // como anuncio del profesor resolviendo su cmid contra la tabla de foros.
+    dependsOn: ['pvaForums'],
+    ttlMs: 5 * 60_000,
+    needsPortal: false,
+    needsPva: true,
+    invalidates: ['pva-notifications', 'dashboard'],
+    async run({ userId }) {
+      const result = await syncNotifications(userId);
+      return { detail: `${result.received} aviso(s), ${result.unreadCount} sin leer` };
     },
   },
   {
@@ -392,6 +551,9 @@ export function syncState(userId, { now = Date.now() } = {}) {
     now: new Date(now).toISOString(),
     running: inFlight.has(userId),
     hold,
+    // La pausa de la PVA es independiente de la del portal: son dos fuentes con
+    // dos credenciales y una caída no arrastra a la otra.
+    pvaHold: pvaHold(userId),
     interval: {
       ms: syncIntervalMs(),
       defaultMs: DEFAULT_SYNC_INTERVAL_MS,
@@ -416,6 +578,7 @@ export function syncState(userId, { now = Date.now() } = {}) {
         ttlMs: effectiveTtlMs(source),
         naturalTtlMs: source.ttlMs,
         needsPortal: source.needsPortal,
+        needsPva: Boolean(source.needsPva),
         syncedAt,
         ageMs,
         expired,
@@ -457,6 +620,24 @@ export function portalHold(userId) {
   return null;
 }
 
+// La PVA tiene su propia credencial, así que su pausa es propia: que micampus
+// esté caído no impide leer el aula, y que la PVA no esté vinculada no puede
+// pausar nada de PeopleSoft. Misma costura de prueba que la sesión del portal.
+let pvaProbe = hasPvaCredential;
+
+export function setPvaProbe(fn) {
+  const previous = pvaProbe;
+  pvaProbe = fn;
+  return () => {
+    pvaProbe = previous;
+  };
+}
+
+export function pvaHold(userId) {
+  if (!pvaProbe(userId)) return 'la PVA no está vinculada: agregá su contraseña para consultar el aula';
+  return null;
+}
+
 // ── La corrida ──────────────────────────────────────────────────────────────
 
 const inFlight = new Map();
@@ -487,6 +668,7 @@ async function executeSync(userId, { force, keys, emit }) {
   const now = Date.now();
   const results = [];
   const hold = portalHold(userId);
+  const pvaPaused = pvaHold(userId);
   const failed = new Set();
 
   for (const source of orderedSources(keys)) {
@@ -515,6 +697,14 @@ async function executeSync(userId, { force, keys, emit }) {
 
     if (!force && !expired) {
       results.push({ ...base, status: 'fresh' });
+      continue;
+    }
+
+    if (source.needsPva && pvaPaused) {
+      // Sin credencial de la PVA no hay nada que consultar, pero lo que ya está
+      // en base sigue sirviendo: es una pausa, no un error.
+      writeRow(userId, source.key, { status: 'paused', touchRun: false });
+      results.push({ ...base, status: 'paused', reason: pvaPaused });
       continue;
     }
 
