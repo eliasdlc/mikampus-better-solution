@@ -57,6 +57,10 @@ import {
   type TermPhaseResponse,
   pvaDeadlinesResponseSchema,
   type PvaDeadlinesResponse,
+  aulaOverviewResponseSchema,
+  aulaCourseResponseSchema,
+  type AulaOverviewResponse,
+  type AulaCourseResponse,
 } from '../../../src/shared/schemas.ts';
 import { z } from 'zod';
 
@@ -202,6 +206,16 @@ export async function fetchMySchedule(term?: string): Promise<ScheduleResponse> 
 // `linked: false`, que es distinto de "no tenés nada que entregar".
 export async function fetchAulaDeadlines(days = 7): Promise<PvaDeadlinesResponse> {
   return pvaDeadlinesResponseSchema.parse(await getJSON(`/api/aula/entregas?days=${days}`));
+}
+
+// El Aula: la raíz con las materias del ciclo y lo que está pasando, y una
+// materia con sus unidades. Las dos desde cache, como el resto de la app.
+export async function fetchAula(days = 7): Promise<AulaOverviewResponse> {
+  return aulaOverviewResponseSchema.parse(await getJSON(`/api/aula?days=${days}`));
+}
+
+export async function fetchAulaCourse(courseId: number): Promise<AulaCourseResponse> {
+  return aulaCourseResponseSchema.parse(await getJSON(`/api/aula/materia/${courseId}`));
 }
 
 // Refresh en vivo contra PeopleSoft: tarda segundos y publica su progreso en
