@@ -99,6 +99,17 @@ credencial y se detienen si desaparece. Un rechazo de password vacía el archivo
 y cierra la sesión; MFA, CAPTCHA o portal caído detienen la automatización sin
 tocarlo. No se realizan reintentos de login en bucle.
 
+La PVA (el Moodle de PUCMM) es la segunda fuente y vive en el mismo archivo:
+el usuario es el mismo del portal, la contraseña es distinta, y junto a ella se
+guarda el token de Web Service que mikampus obtiene con esa contraseña. El token
+no está en `mikampus.db` y por lo tanto tampoco en las copias de seguridad, que
+copian la base y nada más; viaja siempre en el cuerpo del POST, nunca en una URL
+ni en un log, y cerrar sesión o cambiar de cuenta lo descarta. Esa disciplina es
+más estricta que la de una cookie por una razón concreta: un token de Moodle no
+caduca solo, vale hasta que alguien lo revoque. Las dos fuentes son
+independientes: un rechazo de contraseña en una vacía solo la suya y deja viva
+la otra.
+
 El costo elegido es explícito: la contraseña está en claro en disco. Lo que la
 protege es el permiso del archivo y que nunca entra en copias de seguridad,
 diagnósticos ni fixtures.

@@ -118,10 +118,15 @@ app.post('/api/onboarding/complete', (req, res) => {
 // ── Auth (§5): el login de mikampus ES el login del portal ──────────────────
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { user, token, csrfToken, expiresAt } = await auth.loginWithPortal(req.body ?? {});
+    const { user, token, csrfToken, expiresAt, pva } = await auth.loginWithPortal(req.body ?? {});
     scheduler.emitEvent({ type: 'log', message: `Sesión iniciada: ${user.portalUsername}` });
+    // La PVA es la segunda fuente y no bloquea el login: si su contraseña no
+    // vino o no sirvió, se entra igual y el aviso dice qué quedó sin vincular.
+    if (!pva.linked) {
+      scheduler.emitEvent({ type: 'log', message: `PVA sin vincular (${pva.reason})` });
+    }
     res.set('Set-Cookie', auth.sessionCookieHeader(token, { secure: secureCookies(req) }));
-    res.json({ ok: true, user: { id: user.id, username: user.portalUsername }, csrfToken, expiresAt });
+    res.json({ ok: true, user: { id: user.id, username: user.portalUsername }, csrfToken, expiresAt, pva });
   } catch (err) {
     res.status(err.status ?? 500).json({ error: err.message });
   }

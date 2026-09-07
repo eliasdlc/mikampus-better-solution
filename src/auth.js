@@ -3,6 +3,7 @@ import { db, deleteAllUserData } from './db.js';
 import { LOCAL_USER_ID, adoptLocalUsername, getUser, touchLastLogin } from './users.js';
 import { verifyPortalCredentials, adoptSession, resetSession } from './session.js';
 import { readCredential, writeCredential, deleteCredential } from './credentialStore.js';
+import { linkPvaCredential, forgetPvaSession, hasPvaCredential } from './moodle/session.js';
 
 // El login de mikampus ES el login del portal: no hay cuenta paralela. El
 // estudiante entra por el formulario con sus credenciales de micampus, mikampus
@@ -11,6 +12,12 @@ import { readCredential, writeCredential, deleteCredential } from './credentialS
 // reinicio) y emite una sesión propia por cookie. Esa cookie solo vale mientras
 // el archivo tenga credencial: vaciarlo (cerrar sesión, edición manual o un
 // rechazo del portal) saca al usuario en la próxima request.
+//
+// Son DOS fuentes y por lo tanto dos credenciales: micampus (PeopleSoft) y la
+// PVA (el Moodle). El usuario es el mismo, la contraseña no, así que el login
+// acepta una segunda contraseña opcional. La regla que gobierna todo lo de
+// abajo: un rechazo en una fuente no puede tumbar la otra. El portal decide si
+// hay sesión de mikampus; la PVA, como mucho, queda sin vincular.
 
 export const SESSION_COOKIE = 'mikampus_session';
 export const CSRF_HEADER = 'x-csrf-token';
@@ -116,7 +123,7 @@ export function noteLoginSuccess(username) {
 // ── El flujo de login completo ─────────────────────────────────────────────
 // Verifica contra el portal, crea/encuentra el usuario, adopta el context ya
 // logueado (el primer sync no paga un segundo signon) y emite la sesión.
-export async function loginWithPortal({ username, password }) {
+export async function loginWithPortal({ username, password, pvaPassword }) {
   const user = String(username ?? '').trim();
   if (!user || !password) throw Object.assign(new Error('Faltan usuario o contraseña'), { status: 400 });
   if (loginBlocked(user)) {
@@ -141,11 +148,29 @@ export async function loginWithPortal({ username, password }) {
   noteLoginSuccess(user);
   adoptIdentity(user);
   writeCredential({ username: user, password });
+  const pva = await linkPva(user, pvaPassword);
   const account = getUser(LOCAL_USER_ID);
   touchLastLogin(account.id);
   await adoptSession(account.id, live);
   const session = createSession(account.id);
-  return { user: account, ...session };
+  return { user: account, pva, ...session };
+}
+
+// La PVA es la segunda fuente, no un requisito para entrar. Sin contraseña
+// nueva se informa el estado que ya había; con una, se verifica contra
+// `login/token.php`, y si la rechaza o el sitio no responde el login sigue
+// siendo válido: micampus no depende de Moodle para nada.
+async function linkPva(username, pvaPassword) {
+  if (!pvaPassword) {
+    const linked = hasPvaCredential();
+    return { linked, reason: linked ? null : 'sin-contraseña' };
+  }
+  try {
+    await linkPvaCredential({ username, password: pvaPassword });
+    return { linked: true, reason: null };
+  } catch (err) {
+    return { linked: false, reason: err?.credentialRejected ? 'rechazada' : 'sin-respuesta' };
+  }
 }
 
 // Una instalación representa a una sola persona. Cambiar de cuenta no crea un
@@ -156,17 +181,22 @@ function adoptIdentity(username) {
   if (previous?.portalUsername && previous.portalUsername.toLowerCase() !== username.toLowerCase()) {
     revokeAllSessions(LOCAL_USER_ID);
     deleteAllUserData(LOCAL_USER_ID);
+    // La contraseña y el token de la PVA son de la persona anterior: irse de la
+    // cuenta también es irse de la PVA.
+    forgetPvaSession();
     db.prepare('INSERT OR IGNORE INTO users (id) VALUES (?)').run(LOCAL_USER_ID);
   }
   adoptLocalUsername(username);
 }
 
 // Cerrar sesión vacía el archivo de credencial: sin eso, la próxima apertura
-// volvería a entrar sola.
+// volvería a entrar sola. Se van las dos fuentes, y con la PVA se va su token,
+// que es lo único de mikampus que sigue valiendo aunque nadie lo use.
 export async function logout(token) {
   const session = sessionFor(token);
   revokeSession(token);
   deleteCredential();
+  forgetPvaSession();
   if (session) await resetSession(session.userId);
 }
 

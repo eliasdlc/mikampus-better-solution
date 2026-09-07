@@ -234,6 +234,7 @@ node scripts/make-fixture.mjs screenshots/recon-schedule-list.html  # revisar y 
 
 - `src/login.js` — login contra el signon real de PUCMM.
 - `src/session.js` — la única sesión del operador, en fila (nunca dos acciones de Playwright en paralelo), con re-login solo si la credencial autorizada sigue vigente.
+- `src/moodle/`: la PVA por sus Web Services oficiales, sin navegador: `client.js` (parámetros aplanados, excepciones que llegan con HTTP 200, reintentos ante 429 y 5xx, tope de dos llamadas en vuelo) y `session.js` (el token como credencial: se saca de la contraseña guardada, se renueva cuando el sitio dice que murió y se descarta al cerrar sesión).
 - `src/peoplesoft/cart.js` — lee el carrito y el estado (Open/Closed/Wait List) de cada materia.
 - `src/peoplesoft/enroll.js` — corre el asistente de inscripción (Step 1→2→3) sobre todo el carrito y reporta éxito/error por materia.
 - `src/peoplesoft/classSearch.js` — busca clases por término/carrera/código y las agrega al carrito, incluyendo los pasos intermedios que PeopleSoft pida (sección relacionada, preferencias de inscripción).
@@ -283,7 +284,7 @@ node scripts/sync-catalog.mjs ICC MAT       # títulos + secciones de un subject
 
 ## Riesgos a tener en cuenta
 
-- **Credenciales**: se ingresan en la UI una vez y quedan en `credenciales.env` dentro de la carpeta de datos (`~/.local/share/mikampus/` en Linux), en texto claro y con permisos 0600. Podés editar o vaciar ese archivo a mano; cerrar sesión lo vacía. Nunca lo compartas ni lo subas a un repo.
+- **Credenciales**: se ingresan en la UI una vez y quedan en `credenciales.env` dentro de la carpeta de datos (`~/.local/share/mikampus/` en Linux), en texto claro y con permisos 0600. Son dos fuentes con el mismo usuario: micampus (PeopleSoft) y la PVA (Moodle), cada una con su contraseña, más el token de Web Service que mikampus obtiene con la de la PVA. Podés editar o vaciar ese archivo a mano; cerrar sesión lo vacía entero. Nunca lo compartas ni lo subas a un repo.
 - **Política institucional**: varias universidades consideran estos bots una forma de saltarse el proceso de inscripción frente a otros estudiantes y han introducido límites de intentos de login o monitoreo tras detectarlos. Vale la pena revisar el reglamento de PUCMM antes de dejarlo corriendo en producción.
 - **No sumar carga en el pico**: el intervalo de polling del watcher no debe bajar de los ~30-45s durante la ventana de alta demanda.
 - **Selección de sección relacionada**: si una materia tiene varias secciones de práctico disponibles, `addClassToCart` elige la primera que encuentra — no hay todavía forma de elegir manualmente cuál.

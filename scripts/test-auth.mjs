@@ -26,11 +26,20 @@ const {
   noteLoginSuccess,
   authMiddleware,
   localRequestGuard,
+  logout,
   SESSION_COOKIE,
   CSRF_HEADER,
 } = await import('../src/auth.js');
 const { db } = await import('../src/db.js');
-const { writeCredential, deleteCredential } = await import('../src/credentialStore.js');
+const {
+  writeCredential,
+  deleteCredential,
+  readCredential,
+  writePvaPassword,
+  writePvaToken,
+  readPvaToken,
+  readPvaCredential,
+} = await import('../src/credentialStore.js');
 
 // ── Sesión: ida y vuelta, y el token no se guarda en claro. ──
 const s1 = createSession(42);
@@ -190,6 +199,21 @@ assert.equal(
   'y la LAN sigue afuera'
 );
 process.env.MIKAMPUS_TRUSTED_HOSTS = '';
+
+// ── Cerrar sesión se lleva las dos fuentes ──
+// El token de la PVA no caduca solo: si sobreviviera al logout seguiría
+// valiendo contra la plataforma sin que nadie lo esté usando.
+{
+  writeCredential({ username: 'ana', password: 'clave-portal' });
+  writePvaPassword('clave-pva');
+  writePvaToken('token-de-prueba');
+  const session = createSession(42);
+  await logout(session.token);
+  assert.equal(sessionFor(session.token), null, 'la sesión de mikampus queda revocada');
+  assert.equal(readCredential(), null, 'y el portal vaciado');
+  assert.equal(readPvaCredential(), null, 'la contraseña de la PVA también');
+  assert.equal(readPvaToken(), null, 'y su token, que es lo único que seguiría valiendo solo');
+}
 
 await rm(dir, { recursive: true, force: true });
 console.log('✓ auth: sesiones con hash + expiración, cookie SameSite, CSRF obligatorio en mutaciones, rate-limit de login');

@@ -42,7 +42,7 @@ export function eraseTargets(env = process.env) {
     { id: 'db', label: 'Base de datos local', path: paths.db, purpose: 'Notas, horario, avance, planes e historial' },
     { id: 'db-wal', label: 'Journal WAL', path: `${paths.db}-wal`, purpose: 'Escrituras pendientes de la base' },
     { id: 'db-shm', label: 'Memoria compartida SQLite', path: `${paths.db}-shm`, purpose: 'Índice del WAL' },
-    { id: 'credentials', label: 'Archivo de credencial', path: paths.credentials, purpose: 'Usuario y contraseña del portal en claro' },
+    { id: 'credentials', label: 'Archivo de credencial', path: paths.credentials, purpose: 'Contraseñas del portal y de la PVA, y el token de la PVA, en claro' },
     { id: 'backups', label: 'Copias de seguridad', path: paths.backups, purpose: 'Copias diarias y pre-upgrade', keepable: true, runtimeSafe: true },
     { id: 'diagnostics', label: 'Diagnósticos', path: diagnosticsDir, purpose: 'Capturas y textos de fallas (pueden contener PII del portal)', runtimeSafe: true },
     { id: 'runtime', label: 'Runtime del agente', path: paths.runtime, purpose: 'Lock, PID y token del healthcheck' },
