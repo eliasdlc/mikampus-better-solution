@@ -33,6 +33,7 @@ import * as auth from './auth.js';
 import { credentialInfo, deleteCredential, ensureCredentialFile } from './credentialStore.js';
 import { alertPrefs, readAlerts, setAlertPrefs } from './moodle/alerts.js';
 import { upcoming } from './moodle/calendar.js';
+import { aulaCourse, aulaOverview } from './moodle/aula.js';
 import { hasPvaCredential } from './moodle/session.js';
 import * as plans from './plans.js';
 import * as goals from './goals.js';
@@ -237,6 +238,23 @@ app.get('/api/aula/entregas', (req, res) => {
     overdue: item.overdue === 1,
   }));
   res.json({ items, syncedAt: lastSync('pvaCalendar', { userId: req.userId }), linked: hasPvaCredential() });
+});
+
+// La pantalla Aula: la raíz (materias y qué está pasando) y una materia.
+// Sirven desde SQLite como todo lo demás: entrar no dispara una consulta.
+app.get('/api/aula', (req, res) => {
+  const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+  res.json({
+    ...aulaOverview(req.userId, { days }),
+    linked: hasPvaCredential(),
+    syncedAt: lastSync('pvaCourses', { userId: req.userId }),
+  });
+});
+
+app.get('/api/aula/materia/:courseId', (req, res) => {
+  const data = aulaCourse(req.userId, Number(req.params.courseId));
+  if (!data) return res.status(404).json({ error: 'Esa materia no está en el aula sincronizada' });
+  res.json(data);
 });
 
 // Los avisos del aula nacen apagados: se detectan y se asientan igual, y esta

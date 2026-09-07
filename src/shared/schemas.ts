@@ -1181,3 +1181,108 @@ export const pvaDeadlinesResponseSchema = z.object({
   linked: z.boolean(),
 });
 export type PvaDeadlinesResponse = z.infer<typeof pvaDeadlinesResponseSchema>;
+
+// La pantalla Aula. Dos formas: la raíz (materias y qué está pasando) y una
+// materia (su estado y las unidades del profesor).
+//
+// `submitted` es tri-estado en las dos: null significa que nunca se consultó el
+// estado de esa entrega. La pantalla lo pinta distinto de "sin entregar",
+// porque son cosas distintas.
+export const aulaCourseCardSchema = z.object({
+  courseId: z.number().int(),
+  shortname: z.string(),
+  fullname: z.string(),
+  pending: z.number().int(),
+  grade: z.object({
+    hidden: z.boolean(),
+    reason: z.string().nullable(),
+    total: z.string().nullable(),
+    gradedItems: z.number().int(),
+    gradableItems: z.number().int(),
+  }),
+  next: z
+    .object({
+      assignmentId: z.number().int(),
+      cmid: z.number().int(),
+      name: z.string(),
+      dueAt: z.string().nullable(),
+      submitted: z.boolean().nullable(),
+    })
+    .nullable(),
+});
+
+export const aulaFeedItemSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  courseId: z.number().int().nullable(),
+  courseShortname: z.string().nullable(),
+  title: z.string(),
+  detail: z.string().nullable(),
+  at: z.string(),
+  submitted: z.boolean().nullable(),
+  url: z.string().nullable(),
+});
+
+export type AulaFeedItem = z.infer<typeof aulaFeedItemSchema>;
+export type AulaModule = z.infer<typeof aulaModuleSchema>;
+
+export const aulaOverviewResponseSchema = z.object({
+  courses: z.array(aulaCourseCardSchema),
+  items: z.array(aulaFeedItemSchema),
+  linked: z.boolean(),
+  syncedAt: z.string().nullable(),
+});
+export type AulaOverviewResponse = z.infer<typeof aulaOverviewResponseSchema>;
+
+export const aulaModuleSchema = z.object({
+  cmid: z.number().int(),
+  modname: z.string(),
+  name: z.string(),
+  url: z.string().nullable(),
+  inlineOnly: z.boolean(),
+  completion: z.enum(['sin_seguimiento', 'pendiente', 'hecho']),
+  dueAt: z.string().nullable(),
+  assignment: z
+    .object({
+      assignmentId: z.number().int(),
+      status: z.string().nullable(),
+      submitted: z.boolean().nullable(),
+      graded: z.boolean(),
+      gradeText: z.string().nullable(),
+      isLate: z.boolean(),
+      isOverdue: z.boolean(),
+    })
+    .nullable(),
+  files: z.array(
+    z.object({
+      fileId: z.number().int(),
+      filename: z.string(),
+      mimetype: z.string().nullable(),
+      downloaded: z.boolean(),
+      indexed: z.boolean(),
+    })
+  ),
+  links: z.array(z.object({ name: z.string(), url: z.string(), host: z.string() })),
+});
+
+export const aulaCourseResponseSchema = aulaCourseCardSchema
+  .pick({ pending: true, grade: true, next: true })
+  .extend({
+    course: z.object({
+      courseId: z.number().int(),
+      shortname: z.string(),
+      fullname: z.string(),
+      progress: z.number().nullable(),
+    }),
+    sections: z.array(
+      z.object({
+        sectionId: z.number().int(),
+        number: z.number().int(),
+        name: z.string(),
+        summary: z.string().nullable(),
+        modules: z.array(aulaModuleSchema),
+      })
+    ),
+    contentsSynced: z.boolean(),
+  });
+export type AulaCourseResponse = z.infer<typeof aulaCourseResponseSchema>;
