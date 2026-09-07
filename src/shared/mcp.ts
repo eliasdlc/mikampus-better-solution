@@ -18,6 +18,18 @@ export const DATASET_KINDS = [
   'advisement',
   'holds',
   'enrollmentWindows',
+  // La PVA (el Moodle) es la otra fuente. Sus datasets van con el mismo
+  // prefijo que sus fuentes del orquestador, que es lo que escribe sync_log:
+  // así una respuesta puede decir "esto lo leí del aula hace 4 minutos" sin
+  // que nadie tenga que saber de dónde salió.
+  'pvaCourses',
+  'pvaContents',
+  'pvaAssignments',
+  'pvaSubmissions',
+  'pvaGrades',
+  'pvaCalendar',
+  'pvaForums',
+  'pvaNotifications',
 ] as const;
 export type DatasetKind = (typeof DATASET_KINDS)[number];
 export const datasetKindSchema = z.enum(DATASET_KINDS);
@@ -182,3 +194,158 @@ export const ticketSchema = z.object({
   expiresAt: z.string(),
 });
 export type Ticket = z.infer<typeof ticketSchema>;
+
+
+// ── La PVA (Moodle) ────────────────────────────────────────────────────────
+// El aula es una fuente distinta de MiCampus y contesta preguntas distintas.
+// La confusión cara, y por eso está en el tipo y no solo en la documentación:
+// la nota de la PVA es la del AULA (lo que el profesor puso en su libro) y la
+// de MiCampus es la OFICIAL del expediente. No son la misma y no tienen por
+// qué coincidir.
+
+export const pvaCourseSchema = z.object({
+  courseId: z.number().int(),
+  shortname: z.string(),
+  fullname: z.string(),
+  progress: z.number().nullable(),
+  lastAccessAt: z.string().nullable(),
+  // El libro puede existir y no ser legible: showGrades es la precondición del
+  // sitio y reachable es lo que dijo la última llamada.
+  gradebook: z.object({
+    showGrades: z.boolean(),
+    reachable: z.boolean().nullable(),
+    errorcode: z.string().nullable(),
+    total: z.string().nullable(),
+  }),
+  assignments: z.object({ total: z.number().int(), submitted: z.number().int(), graded: z.number().int(), openNow: z.number().int() }),
+  contentsSyncedAt: z.string().nullable(),
+  sections: z.number().int().nullable(),
+  modules: z.number().int().nullable(),
+});
+
+export const pvaDueItemSchema = z.object({
+  // Estable entre corridas: es la llave de dedupe de quien lo consuma.
+  id: z.string(),
+  kind: z.enum(['assign_due', 'forum_due', 'event']),
+  courseId: z.number().int().nullable(),
+  courseShortname: z.string().nullable(),
+  title: z.string(),
+  dueAt: z.string(),
+  localDay: z.string().nullable(),
+  cmid: z.number().int().nullable(),
+  assignmentId: z.number().int().nullable(),
+  url: z.string().nullable(),
+  overdue: z.boolean(),
+  submitted: z.boolean().nullable(),
+  graded: z.boolean().nullable(),
+  // null cuando no hay entrega que mirar (un foro con fecha, por ejemplo).
+  status: z.string().nullable(),
+});
+
+export const pvaAssignmentDetailSchema = z.object({
+  assignmentId: z.number().int(),
+  cmid: z.number().int(),
+  courseId: z.number().int(),
+  courseShortname: z.string().nullable(),
+  name: z.string(),
+  intro: z.string().nullable(),
+  opensAt: z.string().nullable(),
+  dueAt: z.string().nullable(),
+  cutoffAt: z.string().nullable(),
+  extensionAt: z.string().nullable(),
+  gradeMax: z.number(),
+  submission: z
+    .object({
+      status: z.string(),
+      attempt: z.number().int(),
+      submittedAt: z.string().nullable(),
+      gradingStatus: z.string(),
+      canEdit: z.boolean(),
+      isLate: z.boolean(),
+      isOverdue: z.boolean(),
+      acceptsLate: z.boolean(),
+      closedForever: z.boolean(),
+    })
+    .nullable(),
+  grade: z
+    .object({
+      value: z.number().nullable(),
+      raw: z.string().nullable(),
+      display: z.string().nullable(),
+      gradedAt: z.string().nullable(),
+      comment: z.string().nullable(),
+    })
+    .nullable(),
+});
+
+export const pvaGradeItemSchema = z.object({
+  itemId: z.number().int(),
+  name: z.string().nullable(),
+  itemtype: z.string(),
+  cmid: z.number().int().nullable(),
+  isGradable: z.boolean(),
+  // El texto es el dato: el número derivado pierde el centinela del servidor.
+  raw: z.string().nullable(),
+  display: z.string(),
+  range: z.string(),
+  percentage: z.string(),
+  gradedAt: z.string().nullable(),
+  hidden: z.boolean(),
+  feedback: z.string().nullable(),
+});
+
+export const pvaAnnouncementSchema = z.object({
+  kind: z.enum(['anuncio', 'tarea_por_vencer', 'otro']),
+  notificationId: z.number().int().nullable(),
+  courseId: z.number().int().nullable(),
+  courseShortname: z.string().nullable(),
+  subject: z.string(),
+  contextName: z.string().nullable(),
+  url: z.string().nullable(),
+  createdAt: z.string(),
+  readInPortal: z.boolean(),
+});
+
+export const pvaModuleSchema = z.object({
+  cmid: z.number().int(),
+  modname: z.string(),
+  name: z.string(),
+  url: z.string().nullable(),
+  // true = se pinta en la página del curso y no se abre (los label).
+  inlineOnly: z.boolean(),
+  purpose: z.string().nullable(),
+  description: z.string().nullable(),
+  completion: z.enum(['sin_seguimiento', 'pendiente', 'hecho']),
+  dates: z.array(z.object({ kind: z.string(), at: z.string(), label: z.string().nullable() })),
+});
+
+export const pvaSectionSchema = z.object({
+  sectionId: z.number().int(),
+  number: z.number().int(),
+  name: z.string(),
+  summary: z.string().nullable(),
+  modules: z.array(pvaModuleSchema),
+});
+
+export const pvaCoursesEnvelopeSchema = envelopeSchema(z.object({ courses: z.array(pvaCourseSchema) }));
+export const pvaDueEnvelopeSchema = envelopeSchema(
+  z.object({ horizonDays: z.number().int(), items: z.array(pvaDueItemSchema) })
+);
+export const pvaAssignmentEnvelopeSchema = envelopeSchema(
+  z.object({ assignment: pvaAssignmentDetailSchema.nullable(), matches: z.array(z.object({ assignmentId: z.number().int(), name: z.string() })) })
+);
+export const pvaGradesEnvelopeSchema = envelopeSchema(
+  z.object({
+    courseId: z.number().int(),
+    courseShortname: z.string().nullable(),
+    total: z.string().nullable(),
+    reachable: z.boolean(),
+    items: z.array(pvaGradeItemSchema),
+  })
+);
+export const pvaAnnouncementsEnvelopeSchema = envelopeSchema(
+  z.object({ items: z.array(pvaAnnouncementSchema), unreadInPortal: z.number().int().nullable() })
+);
+export const pvaSectionsEnvelopeSchema = envelopeSchema(
+  z.object({ courseId: z.number().int(), courseShortname: z.string().nullable(), sections: z.array(pvaSectionSchema) })
+);
