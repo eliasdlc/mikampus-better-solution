@@ -329,6 +329,41 @@ try {
     assert.match(vacio.summary, /de 1 con texto buscable|indexado/, 'el resumen dice contra cuántos se buscó');
   }
 
+  // ── Una sola semana: la entrega entra a la misma lista que las clases ──
+  {
+    const { READ_TOOLS: tools } = await import('../src/mcp/tools.js');
+    const upcoming = tools.find((entry) => entry.name === 'get_upcoming').run({ horizonDays: 30, now: NOW });
+    const items = upcoming.payload.data.items;
+    const entregas = items.filter((item) => item.source === 'pva');
+    assert.equal(entregas.length, 2, 'las entregas del aula viven en la misma agenda que las clases');
+    assert.deepEqual(
+      entregas.map((item) => item.kind).sort(),
+      ['assign_due', 'forum_due'],
+      'y un foro con fecha es una entrega más: mod_assign no lo reporta y vence igual'
+    );
+
+    const tarea = entregas.find((item) => item.kind === 'assign_due');
+    assert.equal(tarea.allDay, false, 'una entrega tiene hora publicada: no es un evento de día completo');
+    assert.equal(tarea.precision, 'datetime');
+    assert.match(tarea.title, /MAT-101-01/, 'con su materia adelante, como las clases');
+
+    // El id no lleva la fecha: si el profesor mueve la entrega, es la MISMA
+    // entrega y quien consuma esto tiene que actualizarla, no duplicarla.
+    assert.equal(/\d{4}-\d{2}-\d{2}/.test(tarea.id), false);
+    assert.match(tarea.id, /^pva:/);
+
+    // Lo ya entregado no es una tarea pendiente.
+    assert.equal(
+      entregas.some((item) => /Tarea de prueba$/.test(item.title)),
+      false,
+      'la que ya está entregada no aparece: quien consume esta lista crea tareas con ella'
+    );
+
+    // Y el orden es uno solo, por reloj, sin importar de qué plataforma salió.
+    const fechas = items.map((item) => item.startsAt);
+    assert.deepEqual(fechas, [...fechas].sort(), 'una sola línea de tiempo, ordenada');
+  }
+
   // ── Nada identificatorio sale por ninguna de las siete ──
   {
     const nombres = READ_TOOLS.map((entry) => entry.name).filter((name) => /pva/.test(name));

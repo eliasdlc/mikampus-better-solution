@@ -68,7 +68,10 @@ export function envelopeSchema<T extends z.ZodType>(data: T) {
 // publicó, 'local' lo que el usuario cargó a mano, 'derived' lo que mikampus
 // dedujo de un dato real. precision 'date' significa que no hay hora publicada:
 // quien consuma esto no puede poner un recordatorio a hora fija encima.
-export const sourceSchema = z.enum(['portal', 'local', 'derived']);
+// 'portal' es lo que publicó PeopleSoft y 'pva' lo que publicó el Moodle: son
+// dos plataformas distintas y quien lo consuma tiene derecho a saber de cuál
+// salió cada fecha.
+export const sourceSchema = z.enum(['portal', 'pva', 'local', 'derived']);
 export const precisionSchema = z.enum(['date', 'datetime']);
 export type FactSource = z.infer<typeof sourceSchema>;
 
@@ -99,6 +102,11 @@ export const UPCOMING_KINDS = [
   'enrollment_window_close',
   'scheduled_enroll',
   'watcher_appointment',
+  // Las entregas del aula entran a la MISMA lista que las clases: son la misma
+  // semana. Un gestor de tareas que reciba dos listas separadas tendría que
+  // decidir por su cuenta cómo ordenarlas entre sí.
+  'assign_due',
+  'forum_due',
 ] as const;
 export const upcomingKindSchema = z.enum(UPCOMING_KINDS);
 

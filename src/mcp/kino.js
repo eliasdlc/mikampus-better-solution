@@ -160,6 +160,40 @@ function classItems(now, until) {
   return items;
 }
 
+// Las entregas del aula, en la misma lista que las clases.
+//
+// Solo lo que todavía hay que hacer: una entrega ya hecha no es una tarea
+// pendiente, y quien consume esta lista crea tareas con ella. Lo entregado
+// sigue estando en get_pva_due, que contesta otra pregunta.
+//
+// El id NO lleva la fecha, al revés que el de una clase. Una clase del martes y
+// una del jueves son dos eventos distintos; una entrega cuya fecha el profesor
+// mueve sigue siendo la misma entrega, y con la fecha en el id se duplicaría en
+// vez de actualizarse.
+function pvaDueItems(now, horizonDays) {
+  return read
+    .pvaDue(read.LOCAL_USER_ID, { now: now.getTime(), days: horizonDays })
+    .filter((item) => item.submitted !== true && item.dueAt)
+    .map((item) => ({
+      id: `pva:${item.id}`,
+      kind: item.kind === 'forum_due' ? 'forum_due' : 'assign_due',
+      title: item.courseShortname ? `${item.courseShortname}: ${item.title}` : item.title,
+      startsAt: item.dueAt,
+      endsAt: null,
+      allDay: false,
+      precision: 'datetime',
+      source: 'pva',
+      certainty: 'published',
+      detail:
+        item.submitted === null
+          ? 'No se consultó el estado de esta entrega'
+          : item.overdue
+            ? 'Ya venció y no está entregada'
+            : 'Sin entregar',
+      blocking: false,
+    }));
+}
+
 function windowItems(now, until, closingIds) {
   const items = [];
   for (const window of read.readEnrollmentWindows()) {
@@ -284,6 +318,7 @@ export function getUpcoming({ horizonDays = 14, now = new Date() } = {}) {
     ...windowItems(now, until, closingIds),
     ...termBoundaryItems(now, until),
     ...localItems(now, until),
+    ...pvaDueItems(now, horizonDays),
   ].sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id));
 
   // La revisión es el hash del conjunto: un poll que devuelve la misma no tiene
