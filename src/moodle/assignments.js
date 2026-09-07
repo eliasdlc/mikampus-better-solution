@@ -3,6 +3,7 @@ import { callPva } from './session.js';
 import { bool01, epoch, int, nowSeconds, real, text, textOrNull } from './shape.js';
 import { submissionState } from '../shared/pva.ts';
 import { harvestAssignmentFiles } from './files.js';
+import { recordNewAssignments } from './alerts.js';
 
 // Tareas y estado de entrega.
 //
@@ -65,6 +66,14 @@ export function saveAssignments(userId, payload, { now = Date.now() } = {}) {
        warningcode = excluded.warningcode, message = excluded.message, fetched_at = excluded.fetched_at`
   );
 
+  // Qué tareas ya conocíamos: el diff es la ÚNICA forma de detectar una tarea
+  // nueva, porque Moodle no manda notificación de creación. Y si no conocíamos
+  // ninguna, esta corrida siembra y no puede avisar de todo el semestre.
+  const before = new Set(
+    db.prepare('SELECT assignment_id AS id FROM pva_assignment WHERE user_id = ?').all(userId).map((row) => row.id)
+  );
+  const created = [];
+
   let assignments = 0;
   const seen = [];
   db.exec('BEGIN');
@@ -107,6 +116,7 @@ export function saveAssignments(userId, payload, { now = Date.now() } = {}) {
         }
         assignments += 1;
         seen.push(id);
+        if (!before.has(id)) created.push(id);
       }
     }
     // Módulos que el servidor dice que existen y el estudiante no puede ver. Se
@@ -133,7 +143,21 @@ export function saveAssignments(userId, payload, { now = Date.now() } = {}) {
   // claves en vez de 13, sin type ni sortorder) y solo vienen acá.
   const { files } = harvestAssignmentFiles(userId, payload, { now });
 
-  return { assignments, courses: payload.courses?.length ?? 0, inaccessible: payload.warnings?.length ?? 0, seen, files };
+  // El diff se convierte en aviso donde aterriza el dato, no donde se hizo la
+  // llamada: así la base siempre refleja los avisos que su contenido implica,
+  // la haya llenado el sync o una restauración.
+  const seeded = before.size === 0;
+  recordNewAssignments(userId, { created, seeded, now });
+
+  return {
+    assignments,
+    courses: payload.courses?.length ?? 0,
+    inaccessible: payload.warnings?.length ?? 0,
+    seen,
+    files,
+    created,
+    seeded,
+  };
 }
 
 export async function syncAssignments(userId, { call = callPva, courseIds, now = Date.now() } = {}) {

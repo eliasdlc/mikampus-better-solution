@@ -2,6 +2,7 @@ import { db, logSync } from '../db.js';
 import { callPva } from './session.js';
 import { moodleUserId } from './identity.js';
 import { bool01, cmidFromUrl, int, nowSeconds, parseCustomData, text, textOrNull } from './shape.js';
+import { recordAnnouncements, recordDueSoon } from './alerts.js';
 
 // Foros y campanita. Dos fuentes que no se solapan: los mensajes directos
 // viven en un tercer endpoint que esta fase no consume, porque no hay pantalla
@@ -86,7 +87,12 @@ export function saveForums(userId, forums, { now = Date.now() } = {}) {
         stamp
       );
       if (text(forum.type) === 'news' && before.has(id) && discussions > before.get(id)) {
-        newAnnouncements.push({ forumId: id, courseId: int(forum.course), added: discussions - before.get(id) });
+        newAnnouncements.push({
+          forumId: id,
+          courseId: int(forum.course),
+          added: discussions - before.get(id),
+          total: discussions,
+        });
       }
     }
     db.exec('COMMIT');
@@ -94,6 +100,11 @@ export function saveForums(userId, forums, { now = Date.now() } = {}) {
     db.exec('ROLLBACK');
     throw err;
   }
+
+  // El respaldo obligatorio del anuncio: el contador es lo único que lo detecta
+  // cuando la notificación no llega, porque esa depende de las preferencias del
+  // usuario y de forcesubscribe.
+  recordAnnouncements(userId, { newAnnouncements, now });
 
   return {
     forums: forums.length,
@@ -211,6 +222,11 @@ export function saveNotifications(userId, payload, { now = Date.now() } = {}) {
     db.exec('ROLLBACK');
     throw err;
   }
+
+  // Los dos avisos que salen de la campanita: el de vencimiento, que es directo,
+  // y el anuncio, solo si su cmid resuelve a un foro de anuncios.
+  recordDueSoon(userId, { now });
+  recordAnnouncements(userId, { now });
 
   return {
     // `unreadcount` es el total de no leídas, NO el largo del arreglo.

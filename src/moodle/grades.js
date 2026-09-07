@@ -2,6 +2,7 @@ import { db, logSync } from '../db.js';
 import { callPva } from './session.js';
 import { moodleUserId } from './identity.js';
 import { bool01, int, nowSeconds, real, text, textOrNull, triState } from './shape.js';
+import { recordGradeAlerts } from './alerts.js';
 
 // Libro de calificaciones. Dos funciones con costes muy distintos:
 // `gradereport_overview_get_course_grades` es UNA llamada con el total de todos
@@ -244,6 +245,10 @@ export function saveGradeItems(userId, courseId, payload, { now = Date.now() } =
     throw err;
   }
 
+  // La bitácora recién escrita se convierte en aviso acá mismo, por la misma
+  // razón que en tareas: el dato y su consecuencia viajan juntos.
+  recordGradeAlerts(userId, { now });
+
   // Un item que desaparece del payload NO se borra: conserva su last_seen_at.
   // El profesor puede ocultarlo y reponerlo, y borrarlo haría que reaparezca
   // como nota nueva la próxima vez.
@@ -372,17 +377,25 @@ export function courseTotals(userId) {
     .all(userId);
 }
 
-/** Cambios detectados y todavía no avisados. La emisión es de otra fase. */
-export function pendingGradeChanges(userId) {
+/**
+ * La bitácora de cambios del libro: qué se movió y cuándo se detectó.
+ *
+ * `notified_at` ya no significa "pendiente de mostrar" sino "ya convertido en
+ * aviso": quién decide si se le mostró a alguien es `pva_alert.delivered_at`.
+ * Por eso este lector no filtra por esa columna: sirve para contestar "qué
+ * cambió en mis notas", que es una pregunta distinta.
+ */
+export function recentGradeChanges(userId, { limit = 50 } = {}) {
   return db
     .prepare(
       `SELECT c.change_id AS changeId, c.item_id AS itemId, c.kind, c.new_raw_src AS newRaw,
-              c.detected_at AS detectedAt, i.itemname AS name, i.course_id AS courseId
+              c.detected_at AS detectedAt, c.notified_at AS notifiedAt,
+              i.itemname AS name, i.course_id AS courseId
        FROM pva_grade_change c JOIN pva_grade_item i ON i.item_id = c.item_id
-       WHERE i.user_id = ? AND c.notified_at IS NULL
-       ORDER BY c.detected_at DESC`
+       WHERE i.user_id = ?
+       ORDER BY c.detected_at DESC LIMIT ?`
     )
-    .all(userId);
+    .all(userId, limit);
 }
 
 export function gradebookAccess(userId) {

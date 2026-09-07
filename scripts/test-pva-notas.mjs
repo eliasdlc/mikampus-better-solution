@@ -27,7 +27,7 @@ const {
   gradebookAccess,
   readGradeItems,
   courseTotals,
-  pendingGradeChanges,
+  recentGradeChanges,
 } = await import('../src/moodle/grades.js');
 const { MoodleError } = await import('../src/moodle/client.js');
 
@@ -89,14 +89,14 @@ try {
       ['published'],
       'de null a un número es una nota publicada'
     );
-    const pending = pendingGradeChanges(USER);
-    assert.equal(pending.length, 1);
-    assert.equal(pending[0].kind, 'published');
-    assert.equal(pending[0].newRaw, '85', 'se guarda el valor en texto, que es lo que se compara');
+    const bitacora = recentGradeChanges(USER);
+    assert.equal(bitacora.length, 1);
+    assert.equal(bitacora[0].kind, 'published');
+    assert.equal(bitacora[0].newRaw, '85', 'se guarda el valor en texto, que es lo que se compara');
 
     // La misma respuesta otra vez no vuelve a asentar el mismo hecho.
     saveGradeItems(USER, 800101, conNota({ graderaw: 85, gradedategraded: 1772100000, gradeformatted: '85,00' }), { now: AHORA + 120_000 });
-    assert.equal(pendingGradeChanges(USER).length, 1, 'el índice único hace idempotente la corrida');
+    assert.equal(recentGradeChanges(USER).length, 1, 'el índice único hace idempotente la corrida');
   }
 
   // ── Recalificada, y el valor provisional que no se avisa ──

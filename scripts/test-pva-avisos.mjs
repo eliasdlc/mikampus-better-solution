@@ -155,7 +155,7 @@ try {
     // El contador barato detecta anuncios nuevos.
     const conAnuncioNuevo = [{ ...forums[0], numdiscussions: 4 }, forums[1]];
     const delta = saveForums(USER, conAnuncioNuevo, { now: AHORA + 60_000 });
-    assert.deepEqual(delta.newAnnouncements, [{ forumId: 950001, courseId: 800101, added: 1 }]);
+    assert.deepEqual(delta.newAnnouncements, [{ forumId: 950001, courseId: 800101, added: 1, total: 4 }]);
     // Una edición del profesor no mueve numdiscussions: detecta nuevos, no cambios.
     const sinMovimiento = saveForums(USER, conAnuncioNuevo, { now: AHORA + 120_000 });
     assert.deepEqual(sinMovimiento.newAnnouncements, []);
