@@ -1,6 +1,7 @@
 import { db, logSync } from '../db.js';
 import { callPva } from './session.js';
 import { bool01, epoch, int, nowSeconds, real, text, textOrNull } from './shape.js';
+import { submissionState } from '../shared/pva.ts';
 
 // Tareas y estado de entrega.
 //
@@ -321,31 +322,22 @@ export async function syncSubmissions(userId, { call = callPva, now = Date.now()
 // ── Derivación ─────────────────────────────────────────────────────────────
 
 /**
- * El estado que ve el estudiante no es un campo: se deriva. La editabilidad
- * tampoco es un solo booleano, y la fecha efectiva de cierre depende de tres
- * campos con un centinela cada uno.
+ * El estado que ve el estudiante, a partir de las filas de la base. El cálculo
+ * vive en shared/pva.ts porque el servidor MCP lo necesita igual y no puede
+ * importar este archivo: acá adentro hay una conexión de escritura.
  */
 export function deriveSubmissionState({ assignment, submission = null, now = Date.now() } = {}) {
-  const seconds = nowSeconds(now);
-  // La prórroga manda sobre el corte, y el corte sobre la entrega.
-  const closesAt = submission?.extensionduedate ?? assignment.cutoffdate ?? assignment.duedate ?? null;
-  const acceptsLate = assignment.cutoffdate == null;
-  const submitted = submission?.status === 'submitted';
-  const deadline = submission?.extensionduedate ?? assignment.duedate ?? null;
-  return {
-    submitted,
-    graded: submission?.grading_status === 'graded',
-    // `canedit` lo dice el servidor y no se recalcula: sigue al cutoff, pero la
-    // fuente es la respuesta, no la fecha.
+  return submissionState({
+    duedate: assignment.duedate ?? null,
+    cutoffdate: assignment.cutoffdate ?? null,
+    extensionAt: submission?.extensionduedate ?? null,
+    submissionDrafts: assignment.submissiondrafts ?? 0,
+    status: submission?.status ?? null,
+    submittedAt: submission?.timemodified ?? null,
     canEdit: submission?.can_edit === 1,
-    // `cansubmit` no sirve de condición: con submissiondrafts = 0 nunca es true.
-    needsConfirmation: assignment.submissiondrafts === 1,
-    isLate: Boolean(submitted && deadline && submission?.timemodified && submission.timemodified > deadline),
-    isOverdue: Boolean(!submitted && deadline && deadline < seconds),
-    closesAt,
-    acceptsLate,
-    closedForever: Boolean(assignment.cutoffdate && assignment.cutoffdate < seconds),
-  };
+    gradingStatus: submission?.grading_status ?? null,
+    nowSeconds: nowSeconds(now),
+  });
 }
 
 export function readAssignments(userId, courseId) {
