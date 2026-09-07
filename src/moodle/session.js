@@ -6,7 +6,7 @@ import {
   forgetPvaToken,
   deletePvaCredential,
 } from '../credentialStore.js';
-import { createMoodleClient, requestToken, siteUrlFrom, MoodleError } from './client.js';
+import { createMoodleClient, requestToken, siteUrlFrom, uploadDraftFile, MoodleError } from './client.js';
 
 // La sesión de la PVA es un token, y nada más. Este archivo es el hermano de
 // `src/session.js`: allá la sesión es un context de Playwright que se relanza
@@ -122,6 +122,24 @@ export async function callPva(wsfunction, args = {}, { fetchImpl } = {}) {
     cached = null;
     const retryClient = await pvaClient({ fetchImpl });
     return retryClient.call(wsfunction, args);
+  }
+}
+
+/**
+ * Sube un archivo al área de borrador. Vive acá y no en el módulo de escritura
+ * por la misma razón que `callPva`: el token no sale de este archivo, ni
+ * siquiera hacia arriba.
+ */
+export async function uploadPva(file, { itemId = 0, fetchImpl } = {}) {
+  const token = await ensureToken({ fetchImpl });
+  try {
+    return await uploadDraftFile({ siteUrl: siteUrlFrom(), token, file, itemId, fetchImpl });
+  } catch (err) {
+    if (err?.kind !== 'token') throw err;
+    forgetPvaToken();
+    cached = null;
+    const fresh = await ensureToken({ fetchImpl });
+    return uploadDraftFile({ siteUrl: siteUrlFrom(), token: fresh, file, itemId, fetchImpl });
   }
 }
 

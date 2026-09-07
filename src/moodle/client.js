@@ -310,6 +310,80 @@ export function createMoodleClient({
 }
 
 /**
+ * Sube un archivo al área de borrador del usuario.
+ *
+ * No es una `wsfunction`: `upload.php` vive fuera del servicio REST y por eso
+ * no aparece en el catálogo de funciones del token (MAPA §"Archivos"). Buscarla
+ * ahí da un "no existe" que es mentira.
+ *
+ * Devuelve el descriptor del archivo tal como lo entrega el servidor. Su forma
+ * está documentada por Moodle pero NO se verificó contra esta instancia, así
+ * que cualquier cosa que no traiga `itemid` se trata como error de protocolo en
+ * vez de asumirse buena.
+ */
+export async function uploadDraftFile({
+  siteUrl = siteUrlFrom(),
+  token,
+  file,
+  itemId = 0,
+  filepath = '/',
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 120_000,
+} = {}) {
+  if (!token) throw new MoodleError('Subir un archivo a la PVA necesita un token', { kind: 'token' });
+  if (!file?.name || !file.bytes) throw new MoodleError('Falta el archivo a subir', { kind: 'protocol' });
+
+  const form = new FormData();
+  // El token va en el cuerpo, igual que en las wsfunctions: en la query
+  // quedaría en el log de cualquier proxy.
+  form.set('token', token);
+  form.set('filearea', 'draft');
+  form.set('itemid', String(itemId));
+  form.set('filepath', filepath);
+  form.set('file_1', new Blob([file.bytes], { type: file.mimetype || 'application/octet-stream' }), file.name);
+
+  const base = String(siteUrl).replace(/\/+$/, '');
+  let response;
+  try {
+    response = await fetchImpl(`${base}/webservice/upload.php`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw new MoodleError(`No hubo respuesta de la PVA al subir el archivo (${err.message})`, { kind: 'network', cause: err });
+  }
+  if (response.status === 429 || response.status >= 500) {
+    throw new MoodleError(`La PVA respondió ${response.status} al subir el archivo`, {
+      kind: response.status === 429 ? 'ratelimited' : 'server',
+      status: response.status,
+    });
+  }
+
+  const data = await response.json().catch(() => null);
+  // upload.php contesta con un array de descriptores, o con un objeto que trae
+  // `error`. Los dos con HTTP 200, como todo Moodle.
+  if (data && !Array.isArray(data) && data.error) {
+    const errorcode = data.errorcode ?? null;
+    throw new MoodleError(`La PVA rechazó el archivo: ${redactToken(String(data.error), token)}`, {
+      kind: errorcode ? classifyErrorCode(errorcode) : 'wsexception',
+      errorcode,
+      status: response.status,
+    });
+  }
+  const descriptor = Array.isArray(data) ? data[0] : null;
+  if (!descriptor || descriptor.itemid == null) {
+    throw new MoodleError('upload.php no devolvió el descriptor del borrador', { kind: 'protocol', status: response.status });
+  }
+  return {
+    itemId: Number(descriptor.itemid),
+    filename: String(descriptor.filename ?? file.name),
+    filepath: String(descriptor.filepath ?? filepath),
+    filesize: descriptor.filesize == null ? null : Number(descriptor.filesize),
+  };
+}
+
+/**
  * Cambia usuario y contraseña por un token del servicio móvil.
  *
  * El token no caduca solo: vale hasta que alguien lo revoque. Quien lo recibe
