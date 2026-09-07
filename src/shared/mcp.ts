@@ -30,6 +30,7 @@ export const DATASET_KINDS = [
   'pvaCalendar',
   'pvaForums',
   'pvaNotifications',
+  'pvaFiles',
 ] as const;
 export type DatasetKind = (typeof DATASET_KINDS)[number];
 export const datasetKindSchema = z.enum(DATASET_KINDS);
@@ -306,6 +307,20 @@ export const pvaAnnouncementSchema = z.object({
   readInPortal: z.boolean(),
 });
 
+export const pvaModuleFileSchema = z.object({
+  fileId: z.number().int(),
+  filename: z.string(),
+  mimetype: z.string().nullable(),
+  // El tamaño DECLARADO por la PVA: mod_page reporta 0 con cuerpo real, así
+  // que un 0 acá no significa vacío.
+  declaredBytes: z.number().int(),
+  downloaded: z.boolean(),
+  indexed: z.boolean(),
+  // Por qué no se indexó, cuando no se indexó. Es lo que evita que una
+  // búsqueda vacía parezca "no está en tus materiales".
+  notIndexedReason: z.string().nullable(),
+});
+
 export const pvaModuleSchema = z.object({
   cmid: z.number().int(),
   modname: z.string(),
@@ -317,6 +332,21 @@ export const pvaModuleSchema = z.object({
   description: z.string().nullable(),
   completion: z.enum(['sin_seguimiento', 'pendiente', 'hecho']),
   dates: z.array(z.object({ kind: z.string(), at: z.string(), label: z.string().nullable() })),
+  files: z.array(pvaModuleFileSchema),
+  links: z.array(z.object({ name: z.string(), url: z.string(), host: z.string() })),
+});
+
+export const pvaFileHitSchema = z.object({
+  fileId: z.number().int(),
+  filename: z.string(),
+  courseId: z.number().int(),
+  courseShortname: z.string().nullable(),
+  cmid: z.number().int(),
+  moduleName: z.string().nullable(),
+  extractor: z.string(),
+  pages: z.number().int().nullable(),
+  // El fragmento con el término marcado, tal como lo arma el índice.
+  snippet: z.string(),
 });
 
 export const pvaSectionSchema = z.object({
@@ -345,6 +375,15 @@ export const pvaGradesEnvelopeSchema = envelopeSchema(
 );
 export const pvaAnnouncementsEnvelopeSchema = envelopeSchema(
   z.object({ items: z.array(pvaAnnouncementSchema), unreadInPortal: z.number().int().nullable() })
+);
+export const pvaSearchEnvelopeSchema = envelopeSchema(
+  z.object({
+    query: z.string(),
+    hits: z.array(pvaFileHitSchema),
+    // Cuántos materiales hay y cuántos se pueden buscar de verdad: sin esto,
+    // cero resultados es indistinguible de cero archivos indexados.
+    corpus: z.object({ files: z.number().int(), downloaded: z.number().int(), indexed: z.number().int() }),
+  })
 );
 export const pvaSectionsEnvelopeSchema = envelopeSchema(
   z.object({ courseId: z.number().int(), courseShortname: z.string().nullable(), sections: z.array(pvaSectionSchema) })

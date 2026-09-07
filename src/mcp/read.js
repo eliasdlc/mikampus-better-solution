@@ -949,3 +949,97 @@ export function pvaMissingEvents(userId = LOCAL_USER_ID) {
 }
 
 export { iso as pvaIso };
+
+// ── Los materiales del aula ────────────────────────────────────────────────
+
+/**
+ * La consulta que entra al índice. No se le pasa el texto del usuario tal cual
+ * a MATCH: la sintaxis de FTS5 tiene operadores y comillas, y un guion suelto o
+ * unas comillas sin cerrar hacen que la búsqueda lance en vez de no encontrar.
+ * Cada palabra se cita y se piden todas: es lo que la gente espera al escribir
+ * dos palabras.
+ */
+export function ftsQuery(input) {
+  const terms = String(input ?? '')
+    .split(/\s+/)
+    .map((term) => term.replace(/["*]/g, '').trim())
+    .filter(Boolean);
+  if (!terms.length) return null;
+  return terms.map((term) => `"${term}"`).join(' AND ');
+}
+
+export function pvaSearchFiles(userId = LOCAL_USER_ID, input, { limit = 20 } = {}) {
+  if (!hasTable('pva_file_text_fts')) return [];
+  const query = ftsQuery(input);
+  if (!query) return [];
+  return readRows(
+    `SELECT t.file_id AS fileId, t.extractor, t.pages,
+            f.filename, f.course_id AS courseId, f.cmid,
+            c.shortname AS courseShortname,
+            m.name AS moduleName,
+            snippet(pva_file_text_fts, 1, '«', '»', '…', 14) AS snippet
+     FROM pva_file_text_fts
+     JOIN pva_file_text t ON t.file_id = pva_file_text_fts.rowid
+     JOIN pva_file f ON f.file_id = t.file_id
+     LEFT JOIN pva_course c ON c.user_id = f.user_id AND c.course_id = f.course_id
+     LEFT JOIN pva_module m ON m.cmid = f.cmid
+     WHERE pva_file_text_fts MATCH ? AND f.user_id = ? AND f.deleted_at IS NULL
+     ORDER BY bm25(pva_file_text_fts)
+     LIMIT ?`,
+    [query, userId, limit],
+    { t: 'pva_file_text', f: 'pva_file', c: 'pva_course', m: 'pva_module' }
+  );
+}
+
+/** Cuántos materiales hay y cuántos se pueden buscar de verdad. */
+export function pvaCorpus(userId = LOCAL_USER_ID) {
+  if (!hasTable('pva_file')) return { files: 0, downloaded: 0, indexed: 0 };
+  const row = readRow(
+    `SELECT COUNT(1) AS files,
+            SUM(CASE WHEN t.file_id IS NOT NULL THEN 1 ELSE 0 END) AS downloaded,
+            SUM(CASE WHEN t.content <> '' THEN 1 ELSE 0 END) AS indexed
+     FROM pva_file f
+     LEFT JOIN pva_file_text t ON t.file_id = f.file_id
+     WHERE f.user_id = ? AND f.deleted_at IS NULL`,
+    [userId],
+    { f: 'pva_file', t: 'pva_file_text' }
+  );
+  return { files: row?.files ?? 0, downloaded: row?.downloaded ?? 0, indexed: row?.indexed ?? 0 };
+}
+
+/** Los materiales de un curso, por módulo, para colgarlos del árbol. */
+export function pvaFilesByModule(userId = LOCAL_USER_ID, courseId) {
+  if (!hasTable('pva_file')) return new Map();
+  const rows = readRows(
+    `SELECT f.file_id AS fileId, f.cmid, f.filename, f.mimetype, f.filesize AS declaredBytes,
+            t.file_id AS textId, t.content, t.extractor
+     FROM pva_file f
+     LEFT JOIN pva_file_text t ON t.file_id = f.file_id
+     WHERE f.user_id = ? AND f.course_id = ? AND f.deleted_at IS NULL
+     ORDER BY f.filename`,
+    [userId, courseId],
+    { f: 'pva_file', t: 'pva_file_text' }
+  );
+  const byModule = new Map();
+  for (const row of rows) {
+    if (!byModule.has(row.cmid)) byModule.set(row.cmid, []);
+    byModule.get(row.cmid).push(row);
+  }
+  return byModule;
+}
+
+export function pvaLinksByModule(userId = LOCAL_USER_ID, courseId) {
+  if (!hasTable('pva_link')) return new Map();
+  const rows = readRows(
+    `SELECT l.cmid, l.name, l.url, l.host FROM pva_link l
+     WHERE l.user_id = ? AND l.course_id = ? ORDER BY l.name`,
+    [userId, courseId],
+    { l: 'pva_link' }
+  );
+  const byModule = new Map();
+  for (const row of rows) {
+    if (!byModule.has(row.cmid)) byModule.set(row.cmid, []);
+    byModule.get(row.cmid).push(row);
+  }
+  return byModule;
+}

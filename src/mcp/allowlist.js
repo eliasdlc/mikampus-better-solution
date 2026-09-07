@@ -141,6 +141,18 @@ export const READ_ALLOWLIST = {
     'forum_id', 'user_id', 'course_id', 'cmid', 'type', 'is_announcements', 'name', 'intro_html',
     'num_discussions', 'duedate', 'cutoffdate', 'fetched_at',
   ],
+  // Los materiales. El blob NO se expone: su local_path es una ruta del disco
+  // de la persona y ninguna herramienta necesita leerla para contestar dónde
+  // está algo. De pva_file_text sale el texto extraído, que es el punto de la
+  // fase: poder estudiar sin abrir la plataforma.
+  pva_file: [
+    'file_id', 'user_id', 'course_id', 'cmid', 'component', 'area', 'filepath', 'filename',
+    'filesize', 'mimetype', 'timemodified', 'source_fn', 'seen_at', 'deleted_at',
+  ],
+  pva_file_text: ['file_id', 'extractor', 'pages', 'filename', 'content', 'extracted_at'],
+  pva_file_text_fts: ['rowid', 'filename', 'content'],
+  pva_link: ['link_id', 'user_id', 'course_id', 'cmid', 'name', 'url', 'host', 'timemodified', 'seen_at'],
+  pva_module_contents_info: ['cmid', 'files_count', 'files_size', 'last_modified', 'mime_types_json'],
   pva_notification: [
     'notification_id', 'user_id', 'component', 'eventtype', 'subject', 'small_message',
     'contexturl', 'contexturl_name', 'cmid', 'course_id', 'instance_id', 'customdata_duedate',
@@ -158,6 +170,9 @@ export const FORBIDDEN_IDENTIFIERS = [
   'moodle_userid',
   'userprivateaccesskey',
   'full_message_html',
+  // La ruta del blob en el disco de la persona. Saber dónde vive un archivo no
+  // ayuda a contestar nada y expone la estructura de su equipo.
+  'local_path',
   'token_hash',
   'csrf_token',
   'p256dh',

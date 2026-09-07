@@ -43,6 +43,24 @@ for (const kind of ['pvaCourses', 'pvaAssignments', 'pvaCalendar', 'pvaGrades', 
   logSync({ userId: USER, kind, status: 'ok' });
 }
 
+// Un material bajado e indexado: sin esto, la búsqueda solo probaría el camino
+// vacío, que es justo el que no tiene gracia.
+const { indexFileText } = await import('../src/moodle/files.js');
+const material = db.prepare('SELECT file_id, filename, mimetype FROM pva_file WHERE user_id = ?').get(USER);
+await indexFileText({ ...material, sha256: 'sha-de-prueba' }, Buffer.from('<p>La integral definida de una función continua</p>'), {
+  contentType: 'text/html',
+});
+// Y uno que la PVA declara pero que todavía no se bajó: es el caso que hace
+// que cero resultados no signifique "no está en tus materiales".
+db.prepare(
+  `INSERT INTO pva_file (user_id, course_id, cmid, context_id, component, area, filepath, filename,
+     fileurl, filesize, mimetype, timemodified, source_fn, seen_at)
+   VALUES (?, 800101, 910001, 990001, 'mod_assign', 'introattachment', '/', 'enunciado.pdf',
+     'https://campusvirtual.pucmm.edu.do/moodle/webservice/pluginfile.php/990001/mod_assign/introattachment/0/enunciado.pdf',
+     51200, 'application/pdf', 1770000000, 'mod_assign_get_assignments', 1770000000)`
+).run(USER);
+logSync({ userId: USER, kind: 'pvaFiles', status: 'ok' });
+
 const { READ_TOOLS, ABOUT_RESOURCE } = await import('../src/mcp/tools.js');
 const { sanitize } = await import('../src/mcp/redact.js');
 const {
@@ -52,6 +70,7 @@ const {
   pvaGradesEnvelopeSchema,
   pvaAnnouncementsEnvelopeSchema,
   pvaSectionsEnvelopeSchema,
+  pvaSearchEnvelopeSchema,
 } = await import('../src/shared/mcp.ts');
 
 const tool = (name) => {
@@ -65,7 +84,7 @@ const unknownKinds = (result) => result.payload.unknown.map((entry) => entry.kin
 try {
   // ── Las seis existen y declaran su contrato ──
   {
-    const nombres = READ_TOOLS.map((entry) => entry.name).filter((name) => name.startsWith('get_pva_'));
+    const nombres = READ_TOOLS.map((entry) => entry.name).filter((name) => /pva/.test(name));
     assert.deepEqual(nombres.sort(), [
       'get_pva_announcements',
       'get_pva_assignment',
@@ -73,6 +92,7 @@ try {
       'get_pva_due',
       'get_pva_grades',
       'get_pva_section',
+      'search_pva_files',
     ]);
     for (const name of nombres) {
       assert.ok(tool(name).config.outputSchema, `${name} declara el sobre que devuelve`);
@@ -250,23 +270,76 @@ try {
       ['allowsubmissionsfromdate', 'duedate'],
       'las fechas van por su clave estable, no por la etiqueta traducida'
     );
-    assert.ok(unknownKinds(result).includes('pva_archivos'), 'se sabe que el archivo existe, no qué dice adentro');
+    assert.ok(
+      unknownKinds(result).includes('pva_archivos'),
+      'del material que todavía no se bajó se sabe que existe, no qué dice adentro, y eso se declara'
+    );
 
     // Una sección puntual.
     const una = call('get_pva_section', { course: 'MAT-101-01', section: 1 });
     assert.equal(una.payload.data.sections.length, 1);
     assert.equal(una.payload.data.sections[0].number, 1);
+
+    // Los materiales cuelgan de su módulo, y un enlace externo NO es un
+    // material: sale aparte para que nadie lo trate como descargable.
+    const recurso = modules.find((module) => module.cmid === 910003);
+    assert.equal(recurso.files.length, 1, 'el material cuelga de su módulo');
+    assert.equal(recurso.files[0].filename, 'lectura-01.pdf');
+    assert.equal(recurso.files[0].indexed, true, 'ese ya tiene texto buscable');
+    assert.equal(recurso.files[0].declaredBytes > 0, true);
+
+    const tarea = modules.find((module) => module.cmid === 910001);
+    assert.equal(tarea.files[0].downloaded, false, 'el adjunto del enunciado todavía no se bajó, y se dice');
+    assert.equal(tarea.files[0].indexed, false);
   }
 
-  // ── Nada identificatorio sale por ninguna de las seis ──
+  // ── Buscar dentro de los documentos ──
   {
-    const nombres = READ_TOOLS.map((entry) => entry.name).filter((name) => name.startsWith('get_pva_'));
+    const result = call('search_pva_files', { query: 'integral' });
+    pvaSearchEnvelopeSchema.parse(result.payload);
+    assert.equal(result.payload.data.hits.length, 1);
+    const hit = result.payload.data.hits[0];
+    assert.equal(hit.filename, 'lectura-01.pdf');
+    assert.equal(hit.courseShortname, 'MAT-101-01', 'con su materia, para no obligar a otra llamada');
+    assert.ok(hit.moduleName, 'y el módulo donde vive');
+    assert.match(hit.snippet, /«integral»/, 'con el fragmento donde aparece');
+
+    assert.equal(call('search_pva_files', { query: 'funcion' }).payload.data.hits.length, 1, 'la búsqueda ignora acentos');
+    assert.equal(
+      call('search_pva_files', { query: 'integral continua' }).payload.data.hits.length,
+      1,
+      'dos palabras se piden las dos'
+    );
+    assert.equal(call('search_pva_files', { query: 'termodinamica' }).payload.data.hits.length, 0);
+
+    // Sintaxis de FTS5 en la consulta del usuario: no puede reventar la
+    // herramienta ni ejecutar operadores por accidente.
+    for (const raro of ['"', 'a OR b', 'NEAR(', '- -', '*']) {
+      const seguro = call('search_pva_files', { query: raro });
+      pvaSearchEnvelopeSchema.parse(seguro.payload);
+    }
+
+    // Cero resultados no puede confundirse con cero materiales indexados.
+    const vacio = call('search_pva_files', { query: 'termodinamica' });
+    assert.equal(vacio.payload.data.corpus.indexed, 1);
+    assert.ok(
+      vacio.payload.unknown.some((entry) => entry.kind === 'pva_materiales_sin_bajar'),
+      'lo que todavía no se bajó se declara: no está en la búsqueda'
+    );
+    assert.match(vacio.summary, /de 1 con texto buscable|indexado/, 'el resumen dice contra cuántos se buscó');
+  }
+
+  // ── Nada identificatorio sale por ninguna de las siete ──
+  {
+    const nombres = READ_TOOLS.map((entry) => entry.name).filter((name) => /pva/.test(name));
     const args = {
       get_pva_grades: { course: 'MAT-101-01' },
       get_pva_section: { course: 'MAT-101-01' },
       get_pva_assignment: { assignmentId: 900001 },
+      search_pva_files: { query: 'integral' },
     };
     const schemas = {
+      search_pva_files: pvaSearchEnvelopeSchema,
       get_pva_courses: pvaCoursesEnvelopeSchema,
       get_pva_due: pvaDueEnvelopeSchema,
       get_pva_assignment: pvaAssignmentEnvelopeSchema,
@@ -301,4 +374,4 @@ function porIdIncluye(result, kind) {
   return result.payload.unknown.some((entry) => entry.kind === kind);
 }
 
-console.log('✓ MCP de la PVA: seis herramientas con su contrato, el libro oculto se declara en vez de contestar cero, y la identidad no sale');
+console.log('✓ MCP de la PVA: siete herramientas con su contrato, el libro oculto se declara en vez de contestar cero, y la identidad no sale');

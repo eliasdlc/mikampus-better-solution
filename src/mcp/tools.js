@@ -14,6 +14,7 @@ import {
   pvaGradesEnvelopeSchema,
   pvaAnnouncementsEnvelopeSchema,
   pvaSectionsEnvelopeSchema,
+  pvaSearchEnvelopeSchema,
 } from '../shared/mcp.ts';
 import { completionLabel, submissionState } from '../shared/pva.ts';
 import { agentState, expandBlocks, getBlockers, getUpcoming, localDate, resolveCycle } from './kino.js';
@@ -599,6 +600,72 @@ const PVA_FEED_ONLY_PENDING =
 const PVA_NO_ANNOUNCEMENT_BODY =
   'El contenido de un anuncio no se puede leer: la función de discusiones del foro no está integrada todavía. De un anuncio se sabe que existe y en qué materia, no qué dice.';
 
+// Por qué un material bajado no tiene texto buscable. Sale en la respuesta para
+// que cero resultados no se confunda con "no lo tenés".
+const EXTRACTOR_REASONS = {
+  imagen: 'Es una imagen: haría falta OCR.',
+  doc: 'Es un .doc binario viejo, que necesita otra herramienta para leerse.',
+  pdf: 'El PDF no trae capa de texto: es un escaneo.',
+  desconocido: 'No hay extractor para ese tipo de archivo.',
+};
+
+function extractorReason(extractor) {
+  return EXTRACTOR_REASONS[extractor] ?? 'Ese archivo no dejó texto que indexar.';
+}
+
+function pvaSearch({ query, limit, now }) {
+  const hits = read.pvaSearchFiles(read.LOCAL_USER_ID, query, { limit });
+  const corpus = read.pvaCorpus();
+  const warnings = [];
+  const unknown = [];
+
+  const sinBajar = corpus.files - corpus.downloaded;
+  if (sinBajar > 0) {
+    unknown.push({
+      kind: 'pva_materiales_sin_bajar',
+      reason: `${sinBajar} de ${corpus.files} material(es) no se han descargado: su contenido no entra en esta búsqueda.`,
+    });
+  }
+  const sinTexto = corpus.downloaded - corpus.indexed;
+  if (sinTexto > 0) {
+    warnings.push({
+      kind: 'pva_materiales_sin_texto',
+      detail: `${sinTexto} material(es) bajados no dejaron texto (imágenes, PDF escaneados o formatos sin extractor). Están, pero no se pueden buscar por dentro.`,
+    });
+  }
+  if (!corpus.indexed) {
+    unknown.push({
+      kind: 'pva_indice_vacio',
+      reason: 'No hay ningún material indexado todavía: una búsqueda sin resultados acá no significa que el tema no esté en tus materiales.',
+    });
+  }
+
+  return envelope({
+    data: {
+      query: String(query),
+      hits: hits.map((hit) => ({
+        fileId: hit.fileId,
+        filename: hit.filename,
+        courseId: hit.courseId,
+        courseShortname: hit.courseShortname ?? null,
+        cmid: hit.cmid,
+        moduleName: hit.moduleName ?? null,
+        extractor: hit.extractor,
+        pages: hit.pages ?? null,
+        snippet: hit.snippet ?? '',
+      })),
+      corpus,
+    },
+    summary: hits.length
+      ? `${hits.length} material(es) mencionan eso, de ${corpus.indexed} indexado(s).`
+      : `Ningún material indexado menciona eso (hay ${corpus.indexed} de ${corpus.files} con texto buscable).`,
+    freshness: read.freshnessFor(['pvaFiles', 'pvaContents'], { now: now.getTime() }),
+    warnings,
+    unknown,
+    now,
+  });
+}
+
 // Una materia se nombra como la nombra el estudiante (MAT-101-01) o por su id.
 function resolvePvaCourse(ref) {
   const course = read.pvaResolveCourse(read.LOCAL_USER_ID, ref);
@@ -892,12 +959,17 @@ function pvaSection({ course, section, now }) {
   const { sections, contentsAt } = read.pvaSections(read.LOCAL_USER_ID, target.courseId, {
     sectionNumber: section ?? null,
   });
-  const unknown = [
-    {
+  const filesByModule = read.pvaFilesByModule(read.LOCAL_USER_ID, target.courseId);
+  const linksByModule = read.pvaLinksByModule(read.LOCAL_USER_ID, target.courseId);
+  const corpus = read.pvaCorpus();
+  const unknown = [];
+  const pendientes = corpus.files - corpus.downloaded;
+  if (pendientes > 0) {
+    unknown.push({
       kind: 'pva_archivos',
-      reason: 'Los archivos del aula todavía no se descargan: de un material se sabe que existe y cómo se llama, no qué dice adentro.',
-    },
-  ];
+      reason: `${pendientes} material(es) todavía no se bajaron: de esos se sabe que existen y cómo se llaman, no qué dicen adentro.`,
+    });
+  }
   if (!contentsAt) {
     unknown.push({
       kind: 'pva_contenido',
@@ -929,6 +1001,22 @@ function pvaSection({ course, section, now }) {
             kind: date.dataId,
             at: read.pvaIso(date.ts),
             label: date.label ?? null,
+          })),
+          files: (filesByModule.get(module.cmid) ?? []).map((file) => ({
+            fileId: file.fileId,
+            filename: file.filename,
+            mimetype: file.mimetype ?? null,
+            declaredBytes: file.declaredBytes ?? 0,
+            downloaded: file.textId != null,
+            indexed: Boolean(file.content),
+            notIndexedReason: file.textId != null && !file.content ? extractorReason(file.extractor) : null,
+          })),
+          // Un enlace externo NO es un archivo y nunca lleva el token: sale
+          // aparte para que nadie lo trate como material descargable.
+          links: (linksByModule.get(module.cmid) ?? []).map((link) => ({
+            name: link.name,
+            url: link.url,
+            host: link.host,
           })),
         })),
       })),
@@ -1133,6 +1221,20 @@ export const READ_TOOLS = [
     run: pvaSection,
   },
   {
+    name: 'search_pva_files',
+    config: {
+      title: 'Buscar dentro de los materiales del aula',
+      description:
+        'Busca texto dentro de los PDF, documentos, presentaciones y páginas que el profesor subió a la PVA, sobre la copia local ya descargada. Devuelve el fragmento donde aparece, en qué archivo y de qué materia. Varias palabras se piden todas juntas. La respuesta dice cuántos materiales hay indexados: si son cero, no encontrar nada no significa que el tema no esté.',
+      inputSchema: {
+        query: z.string().min(2).describe('Palabras a buscar dentro de los documentos'),
+        limit: z.number().int().min(1).max(50).optional().describe('Por defecto 20'),
+      },
+      outputSchema: pvaSearchEnvelopeSchema,
+    },
+    run: ({ query, limit, now }) => pvaSearch({ query, limit: limit ?? 20, now }),
+  },
+  {
     name: 'get_activity',
     config: {
       title: 'Qué hizo mikampus',
@@ -1194,8 +1296,10 @@ asistencia: nada de eso existe en esa plataforma, así que no se busca ahí.
   ${PORTAL_SILENT_ON}
 - El contenido de un anuncio de la PVA: se sabe que existe y en qué materia, no
   qué dice.
-- Lo que hay adentro de un archivo del aula: se conocen nombre y tipo, no el
-  texto.
+- Lo que hay adentro de un archivo del aula que todavía no se descargó, o que
+  no dejó texto: una imagen o un PDF escaneado se guardan igual, pero no se
+  pueden buscar por dentro sin OCR. La herramienta search_pva_files dice
+  cuántos materiales quedaron así.
 - Si una tarea de la PVA está entregada, mientras no se haya consultado su
   estado. La respuesta lo dice en unknown en vez de asumir que no lo está.
 
