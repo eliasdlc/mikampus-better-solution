@@ -54,8 +54,25 @@ try {
   assert.equal(mySchedule.stale, false, 'una hora de antigüedad todavía no es viejo para el horario');
 
   // ── Ninguna herramienta filtra identidad ────────────────────────────────
+  // Las que piden un argumento obligatorio se llaman con uno: el servidor MCP
+  // valida el inputSchema antes de ejecutar, así que llamarlas vacías probaría
+  // un camino que ningún cliente puede tomar.
+  const REQUIRED_ARGS = {
+    get_pva_grades: { course: 'MAT-101-01' },
+    get_pva_section: { course: 'MAT-101-01' },
+  };
   for (const entry of READ_TOOLS) {
     const { sanitize } = await import('../src/mcp/redact.js');
+    // Esta base no tiene datos de la PVA: pedir una materia que no existe tiene
+    // que fallar con un mensaje claro y sin nada identificatorio adentro.
+    if (REQUIRED_ARGS[entry.name]) {
+      assert.throws(
+        () => entry.run({ ...REQUIRED_ARGS[entry.name], now }),
+        (error) => /No encontré esa materia/.test(error.message) && !/elias/i.test(error.message),
+        `${entry.name} falla limpio cuando la materia no está`
+      );
+      continue;
+    }
     const serialized = JSON.stringify(sanitize(entry.run({ now }).payload));
     assert.ok(!serialized.includes('elias.delacruz'), `${entry.name} no expone el username del portal`);
     assert.ok(!serialized.includes('portal_username'), `${entry.name} no expone la columna del username`);

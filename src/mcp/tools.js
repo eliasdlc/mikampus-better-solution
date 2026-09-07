@@ -5,7 +5,17 @@ import { meetingSetsOverlap } from '../shared/meetings.ts';
 import { recommendCourses } from '../shared/recommend.ts';
 import { resolveTermPhase, TERM_EVENT_LABELS } from '../shared/termPhase.ts';
 import { careerSummary } from '../shared/trajectory.ts';
-import { blockersEnvelopeSchema, upcomingEnvelopeSchema } from '../shared/mcp.ts';
+import {
+  blockersEnvelopeSchema,
+  upcomingEnvelopeSchema,
+  pvaCoursesEnvelopeSchema,
+  pvaDueEnvelopeSchema,
+  pvaAssignmentEnvelopeSchema,
+  pvaGradesEnvelopeSchema,
+  pvaAnnouncementsEnvelopeSchema,
+  pvaSectionsEnvelopeSchema,
+} from '../shared/mcp.ts';
+import { completionLabel, submissionState } from '../shared/pva.ts';
 import { agentState, expandBlocks, getBlockers, getUpcoming, localDate, resolveCycle } from './kino.js';
 import { connectionMode } from './db.js';
 import * as read from './read.js';
@@ -572,6 +582,367 @@ function activity({ limit, now }) {
 // el modelo lee para decidir cuándo llamarla; una descripción vaga produce seis
 // llamadas y una respuesta mala.
 
+// ── La PVA (Moodle): el aula ───────────────────────────────────────────────
+//
+// Contestan preguntas que MiCampus no puede contestar, y la confusión que hay
+// que evitar activamente es la de las notas: el libro de la PVA es lo que el
+// profesor puso en su aula, y el expediente de MiCampus es lo oficial. No son
+// la misma nota, así que cada herramienta de acá lo dice en su descripción y el
+// glosario lo repite.
+
+const PVA_NOT_A_TRANSCRIPT =
+  'La nota de la PVA es la del aula, la que el profesor puso en su libro. La oficial del expediente sale de MiCampus (get_academics) y no tiene por qué coincidir.';
+
+const PVA_FEED_ONLY_PENDING =
+  'El calendario de la PVA solo publica lo que tiene acción pendiente: una entrega ya hecha desaparece de ese feed. Lo que se sabe de una tarea entregada sale de la tarea, no del calendario.';
+
+const PVA_NO_ANNOUNCEMENT_BODY =
+  'El contenido de un anuncio no se puede leer: la función de discusiones del foro no está integrada todavía. De un anuncio se sabe que existe y en qué materia, no qué dice.';
+
+// Una materia se nombra como la nombra el estudiante (MAT-101-01) o por su id.
+function resolvePvaCourse(ref) {
+  const course = read.pvaResolveCourse(read.LOCAL_USER_ID, ref);
+  if (!course) throw new Error(`No encontré esa materia en la PVA: ${ref}`);
+  return course;
+}
+
+function pvaCourses({ now }) {
+  const courses = read.pvaCourses();
+  const warnings = [];
+  const unknown = [];
+
+  const sinLibro = courses.filter((course) => course.gradebook.reachable === false);
+  for (const course of sinLibro) {
+    unknown.push({
+      kind: `pva_gradebook:${course.shortname}`,
+      reason: `El profesor tiene el libro oculto en esa materia (${course.gradebook.errorcode ?? 'sin permiso'}). La nota puede existir igual: se ve tarea por tarea con get_pva_assignment.`,
+    });
+  }
+  const sinContenido = courses.filter((course) => course.contentsSyncedAt == null);
+  if (sinContenido.length) {
+    unknown.push({
+      kind: 'pva_contents',
+      reason: `Todavía no se bajó el contenido de ${sinContenido.length} materia(s): sus secciones y materiales no se pueden citar.`,
+    });
+  }
+  const inaccesibles = read.pvaInaccessible();
+  if (inaccesibles.length) {
+    warnings.push({
+      kind: 'pva_modulos_sin_acceso',
+      detail: `La PVA reporta ${inaccesibles.length} módulo(s) que existen y este usuario no puede ver. No aparecen en el contenido ni en las tareas.`,
+    });
+  }
+
+  return envelope({
+    data: { courses },
+    summary: courses.length
+      ? `${courses.length} materia(s) en el aula. ${courses.reduce((total, course) => total + course.assignments.openNow, 0)} tarea(s) abiertas ahora.`
+      : 'No hay materias del ciclo en la PVA (o todavía no se sincronizó el aula).',
+    freshness: read.freshnessFor(['pvaCourses', 'pvaAssignments', 'pvaGrades'], { now: now.getTime() }),
+    warnings,
+    unknown,
+    now,
+  });
+}
+
+function pvaDue({ days, now }) {
+  const items = read.pvaDue(read.LOCAL_USER_ID, { now: now.getTime(), days });
+  const warnings = [];
+  const unknown = [{ kind: 'pva_calendario', reason: PVA_FEED_ONLY_PENDING }];
+
+  const ausentes = read.pvaMissingEvents();
+  if (ausentes) {
+    warnings.push({
+      kind: 'pva_eventos_ausentes',
+      detail: `${ausentes} evento(s) dejaron de venir en el feed. Puede ser que se entregaron, que el profesor los borró o que quedaron fuera de la ventana: no se descartan solos.`,
+    });
+  }
+  const sinEstado = items.filter((item) => item.assignmentId != null && item.status == null);
+  if (sinEstado.length) {
+    unknown.push({
+      kind: 'pva_estado_de_entrega',
+      reason: `De ${sinEstado.length} tarea(s) no se consultó el estado de entrega todavía: no se sabe si están entregadas.`,
+    });
+  }
+
+  const pendientes = items.filter((item) => item.submitted !== true);
+  return envelope({
+    data: { horizonDays: days, items },
+    summary: items.length
+      ? `${items.length} fecha(s) en ${days} día(s), ${pendientes.length} sin entregar.`
+      : `Nada vence en los próximos ${days} día(s), según lo último que se leyó del aula.`,
+    freshness: read.freshnessFor(['pvaCalendar', 'pvaAssignments', 'pvaSubmissions'], { now: now.getTime() }),
+    warnings,
+    unknown,
+    now,
+  });
+}
+
+function pvaAssignment({ assignmentId, cmid, query, now }) {
+  const found = read.pvaAssignment(read.LOCAL_USER_ID, { assignmentId, cmid, query });
+  const unknown = [];
+  const warnings = [];
+
+  if (!found.assignment) {
+    return envelope({
+      data: { assignment: null, matches: found.matches },
+      summary: found.matches.length
+        ? `Hay ${found.matches.length} tareas que coinciden: hace falta elegir una.`
+        : 'No encontré esa tarea en lo que se leyó del aula.',
+      freshness: read.freshnessFor(['pvaAssignments', 'pvaSubmissions'], { now: now.getTime() }),
+      warnings,
+      unknown,
+      now,
+    });
+  }
+
+  const row = found.assignment;
+  const seconds = Math.floor(now.getTime() / 1000);
+  const state = row.status
+    ? submissionState({
+        duedate: row.duedate ?? null,
+        cutoffdate: row.cutoffdate ?? null,
+        extensionAt: row.extensionAt ?? null,
+        submissionDrafts: row.submissionDrafts ?? 0,
+        status: row.status,
+        submittedAt: row.submittedAt ?? null,
+        canEdit: row.canEdit === 1,
+        gradingStatus: row.gradingStatus ?? null,
+        nowSeconds: seconds,
+      })
+    : null;
+
+  if (!state) {
+    unknown.push({
+      kind: 'pva_estado_de_entrega',
+      reason: 'No se consultó el estado de esta tarea: no se sabe si está entregada ni si todavía se puede editar.',
+    });
+  }
+  if (row.cutoffdate == null && row.duedate != null) {
+    warnings.push({
+      kind: 'pva_sin_corte',
+      detail: 'Esta tarea no tiene fecha de corte: la PVA acepta entregas tarde indefinidamente, aunque la fecha de entrega ya pasó.',
+    });
+  }
+  if (row.gradingStatus === 'graded') unknown.push({ kind: 'pva_nota', reason: PVA_NOT_A_TRANSCRIPT });
+
+  const assignment = {
+    assignmentId: row.assignmentId,
+    cmid: row.cmid,
+    courseId: row.courseId,
+    courseShortname: row.courseShortname ?? null,
+    name: row.name,
+    intro: row.intro || null,
+    opensAt: read.pvaIso(row.opensAt),
+    dueAt: read.pvaIso(row.duedate),
+    cutoffAt: read.pvaIso(row.cutoffdate),
+    extensionAt: read.pvaIso(row.extensionAt),
+    gradeMax: row.gradeMax ?? 0,
+    submission: state
+      ? {
+          status: row.status,
+          attempt: row.attempt ?? 0,
+          submittedAt: read.pvaIso(row.submittedAt),
+          gradingStatus: row.gradingStatus ?? 'notgraded',
+          canEdit: state.canEdit,
+          isLate: state.isLate,
+          isOverdue: state.isOverdue,
+          acceptsLate: state.acceptsLate,
+          closedForever: state.closedForever,
+        }
+      : null,
+    grade:
+      row.gradeRaw == null && row.gradeDisplay == null
+        ? null
+        : {
+            value: row.gradeValue ?? null,
+            raw: row.gradeRaw ?? null,
+            display: row.gradeDisplay ?? null,
+            gradedAt: read.pvaIso(row.gradedAt),
+            comment: row.comment || null,
+          },
+  };
+
+  const estado = state?.submitted ? (state.graded ? 'entregada y calificada' : 'entregada, sin calificar') : 'sin entregar';
+  return envelope({
+    data: { assignment, matches: found.matches },
+    summary: `${assignment.name}: ${estado}${assignment.dueAt ? `, vence ${assignment.dueAt}` : ', sin fecha límite'}.`,
+    freshness: read.freshnessFor(['pvaAssignments', 'pvaSubmissions'], { now: now.getTime() }),
+    warnings,
+    unknown,
+    now,
+  });
+}
+
+function pvaGrades({ course, now }) {
+  const target = resolvePvaCourse(course);
+  const { items, total, access } = read.pvaGradeItems(read.LOCAL_USER_ID, target.courseId);
+  const unknown = [{ kind: 'pva_nota', reason: PVA_NOT_A_TRANSCRIPT }];
+  const warnings = [];
+
+  const reachable = access?.reachable !== 0;
+  if (!reachable) {
+    unknown.push({
+      kind: 'pva_libro_oculto',
+      reason: `El profesor tiene el libro oculto en esta materia (${access?.errorcode ?? 'sin permiso'}). Lo que hay guardado es de antes de que lo ocultara; una nota nueva puede existir y verse tarea por tarea.`,
+    });
+  }
+  if (access?.showGrades === 0) {
+    warnings.push({
+      kind: 'pva_sin_libro',
+      detail: 'Esta materia tiene el libro deshabilitado en la PVA: no hay total ni items que leer.',
+    });
+  }
+  const provisionales = items.filter((item) => item.isGradable === 1 && item.raw == null && /\d/.test(item.range ?? ''));
+  if (provisionales.length) {
+    warnings.push({
+      kind: 'pva_sin_calificar',
+      detail: `${provisionales.length} item(s) califican y todavía no tienen nota.`,
+    });
+  }
+
+  return envelope({
+    data: {
+      courseId: target.courseId,
+      courseShortname: target.shortname ?? null,
+      total,
+      reachable,
+      items: items.map((item) => ({
+        itemId: item.itemId,
+        name: item.name ?? null,
+        itemtype: item.itemtype,
+        cmid: item.cmid ?? null,
+        // Un item que no califica no está "pendiente": no va a tener nota nunca.
+        isGradable: item.isGradable === 1,
+        raw: item.raw ?? null,
+        display: item.display ?? '',
+        range: item.range ?? '',
+        percentage: item.percentage ?? '',
+        gradedAt: read.pvaIso(item.gradedAt),
+        hidden: item.isHidden === 1,
+        feedback: item.feedback || null,
+      })),
+    },
+    summary: reachable
+      ? `${target.shortname}: total ${total ?? 'sin publicar'}, ${items.length} item(s) en el libro del aula.`
+      : `${target.shortname}: el libro del aula no es legible ahora. Lo que se muestra es lo último que se pudo leer.`,
+    freshness: read.freshnessFor(['pvaGrades'], { now: now.getTime() }),
+    warnings,
+    unknown,
+    now,
+  });
+}
+
+function pvaAnnouncements({ limit, now }) {
+  const notifications = read.pvaNotifications(read.LOCAL_USER_ID, { limit });
+  const foros = read.pvaAnnouncementForums();
+  const unknown = [{ kind: 'pva_anuncios', reason: PVA_NO_ANNOUNCEMENT_BODY }];
+  const warnings = [];
+
+  const items = notifications.map((notification) => ({
+    // Un aviso de foro solo es anuncio del profesor si su cmid resuelve a un
+    // foro de tipo news: el resto de los foros llega por el mismo component y
+    // no debe presentarse como anuncio.
+    kind:
+      notification.component === 'mod_forum' && notification.forumType === 'news'
+        ? 'anuncio'
+        : notification.eventtype === 'assign_due_soon'
+          ? 'tarea_por_vencer'
+          : 'otro',
+    notificationId: notification.notificationId,
+    courseId: notification.courseId ?? null,
+    courseShortname: notification.courseShortname ?? null,
+    subject: notification.subject,
+    contextName: notification.contextName ?? null,
+    url: notification.url ?? null,
+    createdAt: read.pvaIso(notification.createdAt),
+    // Lo mueve el portal web también: sirve para mostrar, no para decidir si
+    // ya se le avisó a alguien.
+    readInPortal: notification.readRemote === 1,
+  }));
+
+  const sinCurso = items.filter((item) => item.courseId == null);
+  if (sinCurso.length) {
+    warnings.push({
+      kind: 'pva_aviso_sin_curso',
+      detail: `${sinCurso.length} aviso(s) apuntan a una actividad de una materia que no está sincronizada: se muestran igual, con su título.`,
+    });
+  }
+  if (!foros.length) {
+    unknown.push({
+      kind: 'pva_foro_de_anuncios',
+      reason: 'Ninguna materia sincronizada tiene foro de anuncios. El tablón del profesor es opcional y muchas materias no lo usan.',
+    });
+  }
+
+  return envelope({
+    data: { items, unreadInPortal: null },
+    summary: items.length
+      ? `${items.length} aviso(s) recientes del aula, ${items.filter((item) => item.kind === 'anuncio').length} del profesor.`
+      : 'No hay avisos recientes en el aula.',
+    freshness: read.freshnessFor(['pvaNotifications', 'pvaForums'], { now: now.getTime() }),
+    warnings,
+    unknown,
+    now,
+  });
+}
+
+function pvaSection({ course, section, now }) {
+  const target = resolvePvaCourse(course);
+  const { sections, contentsAt } = read.pvaSections(read.LOCAL_USER_ID, target.courseId, {
+    sectionNumber: section ?? null,
+  });
+  const unknown = [
+    {
+      kind: 'pva_archivos',
+      reason: 'Los archivos del aula todavía no se descargan: de un material se sabe que existe y cómo se llama, no qué dice adentro.',
+    },
+  ];
+  if (!contentsAt) {
+    unknown.push({
+      kind: 'pva_contenido',
+      reason: 'El contenido de esta materia no se ha bajado todavía: no hay secciones que citar.',
+    });
+  }
+
+  return envelope({
+    data: {
+      courseId: target.courseId,
+      courseShortname: target.shortname ?? null,
+      sections: sections.map((entry) => ({
+        sectionId: entry.sectionId,
+        number: entry.number,
+        name: entry.name,
+        summary: entry.summary || null,
+        modules: entry.modules.map((module) => ({
+          cmid: module.cmid,
+          modname: module.modname,
+          name: module.name,
+          url: module.url ?? null,
+          // Los label se pintan en la página y no se abren: presentarlos como
+          // enlace lleva a un 404.
+          inlineOnly: module.noViewLink === 1,
+          purpose: module.purpose ?? null,
+          description: module.description || null,
+          completion: completionLabel(module.completionRule, module.completionState),
+          dates: module.dates.map((date) => ({
+            kind: date.dataId,
+            at: read.pvaIso(date.ts),
+            label: date.label ?? null,
+          })),
+        })),
+      })),
+    },
+    summary: sections.length
+      ? `${target.shortname}: ${sections.length} sección(es), ${sections.reduce((total, entry) => total + entry.modules.length, 0)} elemento(s).`
+      : `${target.shortname}: no hay contenido sincronizado de esa materia.`,
+    freshness: read.freshnessFor(['pvaContents'], { now: now.getTime() }),
+    warnings: [],
+    unknown,
+    now,
+  });
+}
+
 export const READ_TOOLS = [
   {
     name: 'get_overview',
@@ -689,6 +1060,79 @@ export const READ_TOOLS = [
     run: ({ horizonDays, now }) => upcoming({ horizonDays: horizonDays ?? 14, now }),
   },
   {
+    name: 'get_pva_courses',
+    config: {
+      title: 'Mis materias en el aula (PVA)',
+      description:
+        'Las materias del ciclo en la PVA, el Moodle de PUCMM, con cuántas tareas hay, cuántas están entregadas y si el libro de calificaciones del profesor es legible. Es el aula: para el expediente oficial, la inscripción o el horario, usá las herramientas de MiCampus.',
+      inputSchema: {},
+      outputSchema: pvaCoursesEnvelopeSchema,
+    },
+    run: pvaCourses,
+  },
+  {
+    name: 'get_pva_due',
+    config: {
+      title: 'Qué vence en el aula',
+      description:
+        'Lo que vence en la PVA en los próximos días: tareas, foros con fecha y eventos del calendario, unidos por cmid y con el estado de entrega de cada uno. El feed de la PVA solo publica lo que tiene acción pendiente, así que lo ya entregado sale de la tarea y no del calendario.',
+      inputSchema: { days: z.number().int().min(1).max(60).optional().describe('Por defecto 7') },
+      outputSchema: pvaDueEnvelopeSchema,
+    },
+    run: ({ days, now }) => pvaDue({ days: days ?? 7, now }),
+  },
+  {
+    name: 'get_pva_assignment',
+    config: {
+      title: 'Estado de una tarea',
+      description:
+        'El estado real de una tarea de la PVA: si está entregada, si fue tarde, si todavía se puede editar, hasta cuándo se acepta y qué nota y comentario puso el profesor en su aula. Se busca por id, por cmid o por nombre; si el nombre coincide con varias, devuelve las opciones en vez de elegir.',
+      inputSchema: {
+        assignmentId: z.number().int().optional(),
+        cmid: z.number().int().optional(),
+        query: z.string().min(2).optional().describe('Parte del nombre de la tarea'),
+      },
+      outputSchema: pvaAssignmentEnvelopeSchema,
+    },
+    run: pvaAssignment,
+  },
+  {
+    name: 'get_pva_grades',
+    config: {
+      title: 'Notas del aula de una materia',
+      description:
+        'El libro de calificaciones que el profesor lleva en la PVA para una materia, item por item, con su total. NO es el expediente: la nota oficial sale de MiCampus con get_academics y no tiene por qué coincidir. Si el profesor ocultó su libro, la respuesta lo dice en unknown en vez de contestar que no hay notas.',
+      inputSchema: { course: z.string().min(2).describe('Nombre corto de la materia (por ejemplo MAT-101-01) o su id') },
+      outputSchema: pvaGradesEnvelopeSchema,
+    },
+    run: pvaGrades,
+  },
+  {
+    name: 'get_pva_announcements',
+    config: {
+      title: 'Avisos y anuncios del aula',
+      description:
+        'Los avisos recientes de la campanita de la PVA, clasificados: anuncio del profesor (solo si el aviso resuelve a un foro de anuncios), tarea por vencer, u otro. Del anuncio se sabe que existe y en qué materia; su contenido todavía no se puede leer.',
+      inputSchema: { limit: z.number().int().min(1).max(50).optional().describe('Por defecto 20') },
+      outputSchema: pvaAnnouncementsEnvelopeSchema,
+    },
+    run: ({ limit, now }) => pvaAnnouncements({ limit: limit ?? 20, now }),
+  },
+  {
+    name: 'get_pva_section',
+    config: {
+      title: 'Contenido de una materia',
+      description:
+        'Las secciones de una materia en la PVA con lo que hay dentro: tareas, archivos, enlaces, páginas y foros, en el orden en que el profesor los puso. Se sabe que un material existe y cómo se llama; lo que dice adentro todavía no se descarga.',
+      inputSchema: {
+        course: z.string().min(2).describe('Nombre corto de la materia o su id'),
+        section: z.number().int().min(0).optional().describe('Número de sección; sin él, todas'),
+      },
+      outputSchema: pvaSectionsEnvelopeSchema,
+    },
+    run: pvaSection,
+  },
+  {
     name: 'get_activity',
     config: {
       title: 'Qué hizo mikampus',
@@ -720,6 +1164,26 @@ que un scraper llenó; nada se consulta en vivo al portal desde este servidor.
   que no bloquee: significa que el portal no dijo si bloquea.
 - precision 'date': el portal publicó una fecha sin hora. No hay hora que citar.
 
+## Dos fuentes, dos cosas distintas
+
+mikampus lee dos plataformas y no significan lo mismo:
+
+- **MiCampus (PeopleSoft)**: el expediente. Horario, aula y profesor de la
+  sección, inscripción y carrito, pénsum y avance, deuda, índice académico,
+  asistencia y las notas OFICIALES. Herramientas sin prefijo: get_overview,
+  get_schedule, get_academics, get_degree_progress...
+- **La PVA (el Moodle, campusvirtual)**: el aula. Tareas y entregas, material
+  de clase, foros, avisos del profesor y su libro de calificaciones.
+  Herramientas con prefijo get_pva_.
+
+La confusión cara es la nota. La nota de la PVA es la que el profesor lleva en
+su aula; la de MiCampus es la del expediente. No tienen por qué coincidir, y una
+no reemplaza a la otra. Si alguien pregunta "cuánto saqué", hay que saber cuál
+de las dos está preguntando.
+
+La PVA **no** tiene horario, aula, matrícula, pénsum, deuda, índice ni
+asistencia: nada de eso existe en esa plataforma, así que no se busca ahí.
+
 ## Lo que mikampus NO sabe
 
 - El campus de una sección del catálogo, salvo que el portal lo haya escrito.
@@ -728,6 +1192,12 @@ que un scraper llenó; nada se consulta en vivo al portal desde este servidor.
 - Las fechas de modificación de inscripción, inscripción tardía, retiro parcial,
   retiro total y publicación de notas, salvo que el estudiante las haya cargado.
   ${PORTAL_SILENT_ON}
+- El contenido de un anuncio de la PVA: se sabe que existe y en qué materia, no
+  qué dice.
+- Lo que hay adentro de un archivo del aula: se conocen nombre y tipo, no el
+  texto.
+- Si una tarea de la PVA está entregada, mientras no se haya consultado su
+  estado. La respuesta lo dice en unknown en vez de asumir que no lo está.
 
 ## Cómo leer una respuesta
 

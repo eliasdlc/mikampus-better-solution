@@ -524,3 +524,428 @@ export function lastRuntimeEvent() {
     { re: 'runtime_events' }
   );
 }
+
+// ── La PVA (Moodle) ────────────────────────────────────────────────────────
+//
+// El aula es la otra fuente y contesta preguntas que MiCampus no puede: qué
+// tarea vence, qué dijo el profesor, qué material subió, qué nota puso en su
+// libro. Todo sale de las tablas pva_* que llenó el sync; acá no se consulta
+// nada en vivo, igual que en el resto de este carril.
+//
+// Dos reglas que se ven en el SQL de abajo:
+//   * Lo que dejó de venir se filtra, no se borra: `missing_since IS NULL` en
+//     materias y eventos, y en el árbol solo las filas cuyo `seen_at` coincide
+//     con la última corrida del curso.
+//   * Las fechas se devuelven en ISO. En la base son epoch en segundos, que es
+//     lo único que Moodle usa, y el 0 ya entró como NULL al escribir.
+
+const iso = (seconds) => (seconds == null ? null : new Date(seconds * 1000).toISOString());
+
+export function pvaCourses(userId = LOCAL_USER_ID) {
+  if (!hasTable('pva_course')) return [];
+  const courses = readRows(
+    `SELECT c.course_id AS courseId, c.shortname, c.fullname, c.progress, c.last_access AS lastAccess,
+            c.show_grades AS showGrades,
+            a.reachable, a.last_errorcode AS errorcode,
+            t.grade_display AS total,
+            s.contents_at AS contentsAt, s.sections, s.modules
+     FROM pva_course c
+     LEFT JOIN pva_gradebook_access a ON a.user_id = c.user_id AND a.course_id = c.course_id
+     LEFT JOIN pva_course_total t ON t.user_id = c.user_id AND t.course_id = c.course_id
+     LEFT JOIN pva_course_sync s ON s.user_id = c.user_id AND s.course_id = c.course_id
+     WHERE c.user_id = ? AND c.hidden = 0 AND c.missing_since IS NULL
+     ORDER BY c.shortname`,
+    [userId],
+    { c: 'pva_course', a: 'pva_gradebook_access', t: 'pva_course_total', s: 'pva_course_sync' }
+  );
+
+  const counts = readRows(
+    `SELECT a.course_id AS courseId,
+            COUNT(1) AS total,
+            SUM(CASE WHEN s.status = 'submitted' THEN 1 ELSE 0 END) AS submitted,
+            SUM(CASE WHEN s.grading_status = 'graded' THEN 1 ELSE 0 END) AS graded
+     FROM pva_assignment a
+     LEFT JOIN pva_submission s ON s.assignment_id = a.assignment_id AND s.is_latest = 1
+     WHERE a.user_id = ?
+     GROUP BY a.course_id`,
+    [userId],
+    { a: 'pva_assignment', s: 'pva_submission' }
+  );
+  const byCourse = new Map(counts.map((row) => [row.courseId, row]));
+
+  // "Abierta ahora" es lo que el estudiante puede entregar hoy: ya abrió y
+  // todavía no cerró. El cierre efectivo es el corte si existe, y si no la
+  // fecha de entrega, porque sin corte se acepta tarde indefinidamente.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const open = readRows(
+    `SELECT a.course_id AS courseId, COUNT(1) AS n
+     FROM pva_assignment a
+     LEFT JOIN pva_submission s ON s.assignment_id = a.assignment_id AND s.is_latest = 1
+     WHERE a.user_id = ?
+       AND (a.allowsubmissionsfromdate IS NULL OR a.allowsubmissionsfromdate <= ?)
+       AND (a.cutoffdate IS NULL OR a.cutoffdate >= ?)
+       AND (s.status IS NULL OR s.status <> 'submitted')
+     GROUP BY a.course_id`,
+    [userId, nowSeconds, nowSeconds],
+    { a: 'pva_assignment', s: 'pva_submission' }
+  );
+  const openByCourse = new Map(open.map((row) => [row.courseId, row.n]));
+
+  return courses.map((course) => ({
+    courseId: course.courseId,
+    shortname: course.shortname,
+    fullname: course.fullname,
+    progress: course.progress ?? null,
+    lastAccessAt: iso(course.lastAccess),
+    gradebook: {
+      showGrades: course.showGrades === 1,
+      // null es "todavía no se intentó": distinto de "se intentó y no se pudo".
+      reachable: course.reachable == null ? null : course.reachable === 1,
+      errorcode: course.errorcode ?? null,
+      total: course.total ?? null,
+    },
+    assignments: {
+      total: byCourse.get(course.courseId)?.total ?? 0,
+      submitted: byCourse.get(course.courseId)?.submitted ?? 0,
+      graded: byCourse.get(course.courseId)?.graded ?? 0,
+      openNow: openByCourse.get(course.courseId) ?? 0,
+    },
+    contentsSyncedAt: course.contentsAt ?? null,
+    sections: course.sections ?? null,
+    modules: course.modules ?? null,
+  }));
+}
+
+/** Resuelve una materia por id numérico o por su nombre corto, como la nombra el estudiante. */
+export function pvaResolveCourse(userId = LOCAL_USER_ID, ref) {
+  if (!hasTable('pva_course') || ref == null) return null;
+  const numeric = Number(ref);
+  const row = Number.isInteger(numeric)
+    ? readRow(
+        'SELECT c.course_id AS courseId, c.shortname, c.fullname FROM pva_course c WHERE c.user_id = ? AND c.course_id = ?',
+        [userId, numeric],
+        { c: 'pva_course' }
+      )
+    : null;
+  if (row) return row;
+  return readRow(
+    `SELECT c.course_id AS courseId, c.shortname, c.fullname FROM pva_course c
+     WHERE c.user_id = ? AND (c.shortname = ? COLLATE NOCASE OR c.fullname LIKE ? COLLATE NOCASE)
+     ORDER BY c.missing_since IS NOT NULL, c.shortname LIMIT 1`,
+    [userId, String(ref), `%${String(ref)}%`],
+    { c: 'pva_course' }
+  );
+}
+
+/**
+ * Lo que vence en una ventana. Tres orígenes que no se solapan del todo:
+ *
+ *   * el feed de acciones del calendario, que solo trae lo que TIENE acción
+ *     pendiente: lo ya entregado desaparece de ahí;
+ *   * las tareas con fecha, que sí siguen estando después de entregar;
+ *   * los foros con fecha de entrega, que mod_assign no reporta.
+ *
+ * Se unen por cmid, que es lo que comparten. Sin esa unión, una entrega hecha
+ * se vería como si ya no existiera.
+ */
+export function pvaDue(userId = LOCAL_USER_ID, { now = Date.now(), days = 7 } = {}) {
+  if (!hasTable('pva_assignment')) return [];
+  const from = Math.floor(now / 1000);
+  const to = from + days * 86400;
+  const items = new Map();
+
+  const events = hasTable('pva_calendar_event')
+    ? readRows(
+        `SELECT e.event_id AS eventId, e.course_id AS courseId, e.cmid, e.activityname AS activityName,
+                e.name, e.timesort, e.local_day AS localDay, e.overdue, e.module_url AS url,
+                c.shortname AS courseShortname
+         FROM pva_calendar_event e
+         LEFT JOIN pva_course c ON c.user_id = e.user_id AND c.course_id = e.course_id
+         WHERE e.user_id = ? AND e.missing_since IS NULL AND e.timesort BETWEEN ? AND ?
+         ORDER BY e.timesort`,
+        [userId, from, to],
+        { e: 'pva_calendar_event', c: 'pva_course' }
+      )
+    : [];
+  for (const event of events) {
+    const key = event.cmid == null ? `event:${event.eventId}` : `cmid:${event.cmid}`;
+    items.set(key, {
+      id: key,
+      kind: 'event',
+      courseId: event.courseId ?? null,
+      courseShortname: event.courseShortname ?? null,
+      title: event.activityName ?? event.name,
+      dueAt: iso(event.timesort),
+      localDay: event.localDay ?? null,
+      cmid: event.cmid ?? null,
+      assignmentId: null,
+      url: event.url ?? null,
+      overdue: event.overdue === 1,
+      submitted: null,
+      graded: null,
+      status: null,
+    });
+  }
+
+  const assignments = readRows(
+    `SELECT a.assignment_id AS assignmentId, a.cmid, a.course_id AS courseId, a.name, a.duedate,
+            s.status, s.grading_status AS gradingStatus, s.extensionduedate AS extensionAt,
+            c.shortname AS courseShortname
+     FROM pva_assignment a
+     LEFT JOIN pva_submission s ON s.assignment_id = a.assignment_id AND s.is_latest = 1
+     LEFT JOIN pva_course c ON c.user_id = a.user_id AND c.course_id = a.course_id
+     WHERE a.user_id = ? AND a.duedate IS NOT NULL
+     ORDER BY a.duedate`,
+    [userId],
+    { a: 'pva_assignment', s: 'pva_submission', c: 'pva_course' }
+  );
+  for (const assignment of assignments) {
+    // La prórroga corre la fecha efectiva de esa persona.
+    const dueAt = assignment.extensionAt ?? assignment.duedate;
+    const key = `cmid:${assignment.cmid}`;
+    const inWindow = dueAt >= from && dueAt <= to;
+    if (!inWindow && !items.has(key)) continue;
+    const previous = items.get(key);
+    items.set(key, {
+      id: key,
+      kind: 'assign_due',
+      courseId: assignment.courseId,
+      courseShortname: assignment.courseShortname ?? null,
+      title: assignment.name,
+      dueAt: iso(dueAt),
+      localDay: previous?.localDay ?? null,
+      cmid: assignment.cmid,
+      assignmentId: assignment.assignmentId,
+      url: previous?.url ?? null,
+      overdue: previous?.overdue ?? dueAt < from,
+      submitted: assignment.status == null ? null : assignment.status === 'submitted',
+      graded: assignment.gradingStatus == null ? null : assignment.gradingStatus === 'graded',
+      status: assignment.status ?? null,
+    });
+  }
+
+  if (hasTable('pva_forum')) {
+    const forums = readRows(
+      `SELECT f.forum_id AS forumId, f.course_id AS courseId, f.cmid, f.name, f.duedate,
+              c.shortname AS courseShortname
+       FROM pva_forum f
+       LEFT JOIN pva_course c ON c.user_id = f.user_id AND c.course_id = f.course_id
+       WHERE f.user_id = ? AND f.duedate BETWEEN ? AND ?
+       ORDER BY f.duedate`,
+      [userId, from, to],
+      { f: 'pva_forum', c: 'pva_course' }
+    );
+    for (const forum of forums) {
+      const key = `cmid:${forum.cmid}`;
+      if (items.has(key)) continue;
+      items.set(key, {
+        id: key,
+        kind: 'forum_due',
+        courseId: forum.courseId,
+        courseShortname: forum.courseShortname ?? null,
+        title: forum.name,
+        dueAt: iso(forum.duedate),
+        localDay: null,
+        cmid: forum.cmid,
+        assignmentId: null,
+        url: null,
+        overdue: forum.duedate < from,
+        submitted: null,
+        graded: null,
+        status: null,
+      });
+    }
+  }
+
+  return [...items.values()].sort((left, right) => left.dueAt.localeCompare(right.dueAt));
+}
+
+export function pvaAssignment(userId = LOCAL_USER_ID, { assignmentId = null, cmid = null, query = null } = {}) {
+  if (!hasTable('pva_assignment')) return { assignment: null, matches: [] };
+
+  let target = null;
+  if (assignmentId != null || cmid != null) {
+    target = readRow(
+      `SELECT a.assignment_id AS assignmentId FROM pva_assignment a
+       WHERE a.user_id = ? AND (a.assignment_id = ? OR a.cmid = ?)`,
+      [userId, assignmentId ?? -1, cmid ?? -1],
+      { a: 'pva_assignment' }
+    );
+  }
+  const matches = query
+    ? readRows(
+        `SELECT a.assignment_id AS assignmentId, a.name FROM pva_assignment a
+         WHERE a.user_id = ? AND a.name LIKE ? COLLATE NOCASE
+         ORDER BY a.duedate IS NULL, a.duedate DESC LIMIT 10`,
+        [userId, `%${query}%`],
+        { a: 'pva_assignment' }
+      )
+    : [];
+  // Una sola coincidencia se resuelve sola; varias se devuelven para que el
+  // agente pregunte cuál, en vez de elegir por él.
+  if (!target && matches.length === 1) target = { assignmentId: matches[0].assignmentId };
+  if (!target) return { assignment: null, matches };
+
+  const row = readRow(
+    `SELECT a.assignment_id AS assignmentId, a.cmid, a.course_id AS courseId, a.name,
+            a.intro_html AS intro, a.duedate, a.cutoffdate, a.allowsubmissionsfromdate AS opensAt,
+            a.grade_max AS gradeMax, a.submissiondrafts AS submissionDrafts,
+            s.status, s.attemptnumber AS attempt, s.timemodified AS submittedAt,
+            s.grading_status AS gradingStatus, s.can_edit AS canEdit, s.extensionduedate AS extensionAt,
+            f.grade_value AS gradeValue, f.grade_raw_text AS gradeRaw, f.grade_for_display AS gradeDisplay,
+            f.graded_date AS gradedAt, f.comment_html AS comment,
+            c.shortname AS courseShortname
+     FROM pva_assignment a
+     LEFT JOIN pva_submission s ON s.assignment_id = a.assignment_id AND s.is_latest = 1
+     LEFT JOIN pva_submission_feedback f ON f.assignment_id = a.assignment_id AND f.attemptnumber = s.attemptnumber
+     LEFT JOIN pva_course c ON c.user_id = a.user_id AND c.course_id = a.course_id
+     WHERE a.user_id = ? AND a.assignment_id = ?`,
+    [userId, target.assignmentId],
+    { a: 'pva_assignment', s: 'pva_submission', f: 'pva_submission_feedback', c: 'pva_course' }
+  );
+  if (!row) return { assignment: null, matches };
+  return { assignment: row, matches };
+}
+
+export function pvaGradeItems(userId = LOCAL_USER_ID, courseId) {
+  if (!hasTable('pva_grade_item')) return { items: [], total: null, access: null };
+  const items = readRows(
+    `SELECT i.item_id AS itemId, i.itemname AS name, i.itemtype, i.cmid, i.is_gradable AS isGradable,
+            i.grademax AS gradeMax, i.sort_index AS sortIndex,
+            v.graderaw_src AS raw, v.grade_display AS display, v.range_display AS range,
+            v.percentage_display AS percentage, v.gradedategraded AS gradedAt,
+            v.is_hidden AS isHidden, v.feedback_html AS feedback
+     FROM pva_grade_item i
+     LEFT JOIN pva_grade_value v ON v.item_id = i.item_id
+     WHERE i.user_id = ? AND i.course_id = ?
+     ORDER BY i.sort_index`,
+    [userId, courseId],
+    { i: 'pva_grade_item', v: 'pva_grade_value' }
+  );
+  const total = readRow(
+    'SELECT t.grade_display AS display FROM pva_course_total t WHERE t.user_id = ? AND t.course_id = ?',
+    [userId, courseId],
+    { t: 'pva_course_total' }
+  );
+  const access = hasTable('pva_gradebook_access')
+    ? readRow(
+        `SELECT a.show_grades AS showGrades, a.reachable, a.last_errorcode AS errorcode, a.last_ok_at AS lastOkAt
+         FROM pva_gradebook_access a WHERE a.user_id = ? AND a.course_id = ?`,
+        [userId, courseId],
+        { a: 'pva_gradebook_access' }
+      )
+    : null;
+  return { items, total: total?.display ?? null, access };
+}
+
+export function pvaNotifications(userId = LOCAL_USER_ID, { limit = 20 } = {}) {
+  if (!hasTable('pva_notification')) return [];
+  return readRows(
+    `SELECT n.notification_id AS notificationId, n.component, n.eventtype, n.subject,
+            n.contexturl_name AS contextName, n.contexturl AS url, n.cmid, n.course_id AS courseId,
+            n.created_at AS createdAt, n.read_remote AS readRemote,
+            c.shortname AS courseShortname,
+            f.type AS forumType
+     FROM pva_notification n
+     LEFT JOIN pva_course c ON c.user_id = n.user_id AND c.course_id = n.course_id
+     LEFT JOIN pva_forum f ON f.user_id = n.user_id AND f.cmid = n.cmid
+     WHERE n.user_id = ? AND n.deleted_remote = 0
+     ORDER BY n.created_at DESC LIMIT ?`,
+    [userId, limit],
+    { n: 'pva_notification', c: 'pva_course', f: 'pva_forum' }
+  );
+}
+
+export function pvaAnnouncementForums(userId = LOCAL_USER_ID) {
+  if (!hasTable('pva_forum')) return [];
+  return readRows(
+    `SELECT f.forum_id AS forumId, f.course_id AS courseId, f.name, f.num_discussions AS numDiscussions,
+            c.shortname AS courseShortname
+     FROM pva_forum f
+     LEFT JOIN pva_course c ON c.user_id = f.user_id AND c.course_id = f.course_id
+     WHERE f.user_id = ? AND f.type = 'news'
+     ORDER BY c.shortname`,
+    [userId],
+    { f: 'pva_forum', c: 'pva_course' }
+  );
+}
+
+/**
+ * El árbol de una materia. Solo lo de la última corrida: las filas con un
+ * `seen_at` viejo son lo que el profesor sacó de la página, y siguen en la base
+ * porque un cmid puede volver.
+ */
+export function pvaSections(userId = LOCAL_USER_ID, courseId, { sectionNumber = null } = {}) {
+  if (!hasTable('pva_course_section')) return { sections: [], contentsAt: null };
+  const sync = readRow(
+    'SELECT s.contents_at AS contentsAt FROM pva_course_sync s WHERE s.user_id = ? AND s.course_id = ?',
+    [userId, courseId],
+    { s: 'pva_course_sync' }
+  );
+  if (!sync?.contentsAt) return { sections: [], contentsAt: null };
+
+  const sections = readRows(
+    `SELECT s.section_id AS sectionId, s.section_number AS number, s.name, s.summary_html AS summary
+     FROM pva_course_section s
+     WHERE s.user_id = ? AND s.course_id = ? AND s.seen_at = ?
+       AND (? IS NULL OR s.section_number = ?)
+     ORDER BY s.sort_index`,
+    [userId, courseId, sync.contentsAt, sectionNumber, sectionNumber],
+    { s: 'pva_course_section' }
+  );
+
+  const modules = readRows(
+    `SELECT m.cmid, m.section_id AS sectionId, m.modname, m.name, m.url, m.no_view_link AS noViewLink,
+            m.purpose, m.description_html AS description, m.completion_rule AS completionRule,
+            m.completion_state AS completionState
+     FROM pva_module m
+     WHERE m.user_id = ? AND m.course_id = ? AND m.seen_at = ?
+     ORDER BY m.sort_index`,
+    [userId, courseId, sync.contentsAt],
+    { m: 'pva_module' }
+  );
+
+  const dates = readRows(
+    `SELECT d.cmid, d.data_id AS dataId, d.ts, d.label FROM pva_module_date d
+     WHERE d.cmid IN (SELECT m.cmid FROM pva_module m WHERE m.user_id = ? AND m.course_id = ?)
+     ORDER BY d.data_id`,
+    [userId, courseId],
+    { d: 'pva_module_date', m: 'pva_module' }
+  );
+  const datesByCmid = new Map();
+  for (const date of dates) {
+    if (!datesByCmid.has(date.cmid)) datesByCmid.set(date.cmid, []);
+    datesByCmid.get(date.cmid).push(date);
+  }
+
+  return {
+    contentsAt: sync.contentsAt,
+    sections: sections.map((section) => ({
+      ...section,
+      modules: modules
+        .filter((module) => module.sectionId === section.sectionId)
+        .map((module) => ({ ...module, dates: datesByCmid.get(module.cmid) ?? [] })),
+    })),
+  };
+}
+
+export function pvaInaccessible(userId = LOCAL_USER_ID) {
+  if (!hasTable('pva_assignment_inaccessible')) return [];
+  return readRows(
+    'SELECT i.course_id AS courseId, i.cmid FROM pva_assignment_inaccessible i WHERE i.user_id = ?',
+    [userId],
+    { i: 'pva_assignment_inaccessible' }
+  );
+}
+
+export function pvaMissingEvents(userId = LOCAL_USER_ID) {
+  if (!hasTable('pva_calendar_event')) return 0;
+  const row = readRow(
+    'SELECT COUNT(1) AS n FROM pva_calendar_event e WHERE e.user_id = ? AND e.missing_since IS NOT NULL',
+    [userId],
+    { e: 'pva_calendar_event' }
+  );
+  return row?.n ?? 0;
+}
+
+export { iso as pvaIso };
