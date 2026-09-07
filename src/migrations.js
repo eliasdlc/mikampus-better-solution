@@ -266,6 +266,12 @@ export const MIGRATIONS = [
     minCompatibleVersion: 1,
     up: createPvaAlertTable,
   },
+  {
+    version: 17,
+    name: 'pva-escrituras',
+    minCompatibleVersion: 1,
+    up: createPvaWriteTable,
+  },
 ];
 
 
@@ -1450,5 +1456,46 @@ export function createPvaAlertTable(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_pva_alert_pendientes
       ON pva_alert (occurred_at DESC) WHERE delivered_at IS NULL;
+  `);
+}
+
+
+/**
+ * El libro de escrituras de la PVA: toda intención de escribir en la
+ * plataforma, incluidas las que nunca salieron.
+ *
+ * Es la única fase del proyecto que no se puede deshacer, así que la tabla
+ * guarda lo que hace falta para reconstruir qué se mandó sin tener que
+ * creerle a nadie: el texto exacto que viajó, con qué archivos, desde dónde se
+ * pidió y qué contestó el servidor. Un ensayo (`dry_run = 1`) escribe una fila
+ * igual: la mitad del valor de un ensayo es poder mirarlo después.
+ *
+ * `preview` guarda el payload literal menos el token, que nunca entra acá ni
+ * en un backup.
+ */
+export function createPvaWriteTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pva_write (
+      write_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id       INTEGER NOT NULL,
+      kind          TEXT    NOT NULL CHECK (kind IN ('borrador','entrega','foro','archivo')),
+      wsfunction    TEXT    NOT NULL,
+      course_id     INTEGER,
+      assignment_id INTEGER,
+      discussion_id INTEGER,
+      -- El nombre tal como se le mostró a quien confirmó: si el servidor lo
+      -- cambia después, la fila sigue diciendo qué creía estar entregando.
+      target_name   TEXT    NOT NULL,
+      preview       TEXT    NOT NULL,           -- JSON del payload, sin token
+      dry_run       INTEGER NOT NULL DEFAULT 0,
+      origin        TEXT    NOT NULL CHECK (origin IN ('web','mcp','cli')),
+      status        TEXT    NOT NULL CHECK (status IN ('ensayo','ok','rechazada','error')),
+      errorcode     TEXT,
+      response      TEXT,                        -- la respuesta literal, para el día que algo no cuadre
+      created_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pva_write_reciente ON pva_write (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pva_write_tarea
+      ON pva_write (assignment_id) WHERE assignment_id IS NOT NULL;
   `);
 }

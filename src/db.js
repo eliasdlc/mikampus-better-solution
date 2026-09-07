@@ -835,7 +835,9 @@ export function deleteAllUserData(userId) {
     // portal: es el bookkeeping de cuándo se consultó. Dejarlo vivo después de
     // un borrado haría que el control de sincronización siguiera diciendo
     // "actualizado hace 2h" sobre tablas ya vacías.
-    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions', 'push_subscriptions', 'sync_sources']) {
+    // pva_write va con action_log y no con las tablas personales: es el recibo
+    // de lo que mikampus escribió, no un dato del aula.
+    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'pva_write', 'sessions', 'push_subscriptions', 'sync_sources']) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
     }
     db.prepare('DELETE FROM sync_log WHERE user_id = ?').run(userId);

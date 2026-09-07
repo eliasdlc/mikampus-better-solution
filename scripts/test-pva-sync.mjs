@@ -159,7 +159,7 @@ try {
       )
       .all()
       .map((row) => row.name);
-    assert.equal(tablas.length, 27, 'las 27 tablas del esquema de la PVA, sin contar las internas del índice');
+    assert.equal(tablas.length, 28, 'las 28 tablas del esquema de la PVA, sin contar las internas del índice');
     const conFilas = tablas.filter((tabla) => db.prepare(`SELECT count(*) AS n FROM ${tabla}`).get().n > 0);
     // pva_site_config es del sitio, no de la persona, y acá no se llenó.
     assert.equal(conFilas.length >= 12, true, `hay datos que borrar: ${conFilas.join(', ')}`);
@@ -168,7 +168,10 @@ try {
 
     const quedan = tablas
       .map((tabla) => [tabla, db.prepare(`SELECT count(*) AS n FROM ${tabla}`).get().n])
-      .filter(([tabla, n]) => n > 0 && tabla !== 'pva_site_config');
+      // pva_site_config es del sitio, no de la persona. pva_write es el recibo
+      // de lo que mikampus escribió, y se va con deleteAllUserData junto al
+      // resto del audit log, no al cambiar de cuenta.
+      .filter(([tabla, n]) => n > 0 && tabla !== 'pva_site_config' && tabla !== 'pva_write');
     assert.deepEqual(quedan, [], 'ni una fila de la PVA sobrevive, incluidas las hijas que caen por FK');
     assert.equal(
       db.prepare('SELECT count(*) AS n FROM pva_file_text_fts WHERE pva_file_text_fts MATCH ?').get('integral').n,
