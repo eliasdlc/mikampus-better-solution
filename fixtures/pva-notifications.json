@@ -1,0 +1,51 @@
+{
+  "notifications": [
+    {
+      "id": 980001,
+      "useridfrom": -10,
+      "useridto": 90001,
+      "subject": "La tarea Tarea de prueba vence pronto",
+      "shortenedsubject": "La tarea Tarea de prueba vence pronto",
+      "text": "<p>La tarea vence pronto.</p>",
+      "fullmessage": "Hola,\n\nLa tarea vence pronto.\n\nLinks:\n------\n[1] https://campusvirtual.pucmm.edu.do/moodle/mod/assign/view.php?id=910001&amp;forceview=1",
+      "fullmessageformat": 1,
+      "fullmessagehtml": "<p>La tarea <strong>Tarea de prueba</strong> vence pronto.</p>",
+      "smallmessage": "La tarea Tarea de prueba vence pronto",
+      "contexturl": "https://campusvirtual.pucmm.edu.do/moodle/mod/assign/view.php?id=910001&forceview=1",
+      "contexturlname": "Tarea de prueba",
+      "timecreated": 1771900000,
+      "timecreatedpretty": "hace 2 horas",
+      "timeread": null,
+      "read": false,
+      "deleted": false,
+      "iconurl": "https://campusvirtual.pucmm.edu.do/moodle/theme/image.php/remui/assign/1/monologo",
+      "component": "mod_assign",
+      "eventtype": "assign_due_soon",
+      "customdata": "{\"assignmentid\":900001,\"duedate\":1772000000}"
+    },
+    {
+      "id": 980002,
+      "useridfrom": 90002,
+      "useridto": 90001,
+      "subject": "Aviso de prueba",
+      "shortenedsubject": "Aviso de prueba",
+      "text": "<p>Aviso.</p>",
+      "fullmessage": "Aviso.",
+      "fullmessageformat": 1,
+      "fullmessagehtml": "<p>Aviso.</p>",
+      "smallmessage": "Aviso de prueba",
+      "contexturl": "https://campusvirtual.pucmm.edu.do/moodle/mod/forum/view.php?id=910004",
+      "contexturlname": "Avisos",
+      "timecreated": 1771800000,
+      "timecreatedpretty": "hace 4 horas",
+      "timeread": 1771850000,
+      "read": true,
+      "deleted": false,
+      "iconurl": "https://campusvirtual.pucmm.edu.do/moodle/theme/image.php/remui/forum/1/monologo",
+      "component": "mod_forum",
+      "eventtype": "posts",
+      "customdata": ""
+    }
+  ],
+  "unreadcount": 3
+}

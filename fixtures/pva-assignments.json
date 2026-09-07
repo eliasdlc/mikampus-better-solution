@@ -51,6 +51,52 @@
           "introattachments": [],
           "timelimit": 0,
           "submissionattachments": 0
+        },
+        {
+          "id": 900006,
+          "cmid": 910006,
+          "course": 800101,
+          "name": "Segunda tarea de prueba",
+          "nosubmissions": 0,
+          "submissiondrafts": 0,
+          "sendnotifications": 0,
+          "sendlatenotifications": 0,
+          "sendstudentnotifications": 1,
+          "duedate": 1773000000,
+          "allowsubmissionsfromdate": 0,
+          "grade": 20,
+          "gradepenalty": 0,
+          "timemodified": 1770000000,
+          "completionsubmit": 1,
+          "cutoffdate": 1773000000,
+          "gradingduedate": 0,
+          "teamsubmission": 0,
+          "requireallteammemberssubmit": 0,
+          "teamsubmissiongroupingid": 0,
+          "blindmarking": 0,
+          "hidegrader": 0,
+          "revealidentities": 0,
+          "attemptreopenmethod": "untilpass",
+          "maxattempts": 1,
+          "markingworkflow": 0,
+          "markingallocation": 0,
+          "markinganonymous": 0,
+          "requiresubmissionstatement": 0,
+          "preventsubmissionnotingroup": 0,
+          "configs": [
+            {
+              "plugin": "file",
+              "subtype": "assignsubmission",
+              "name": "enabled",
+              "value": "1"
+            }
+          ],
+          "intro": "",
+          "introformat": 1,
+          "introfiles": [],
+          "introattachments": [],
+          "timelimit": 0,
+          "submissionattachments": 0
         }
       ]
     }

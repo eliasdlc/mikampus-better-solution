@@ -1,0 +1,46 @@
+{
+  "lastattempt": {
+    "submission": {
+      "id": 940002,
+      "userid": 90001,
+      "attemptnumber": 0,
+      "timecreated": 1771000000,
+      "timemodified": 1771000000,
+      "timestarted": null,
+      "status": "submitted",
+      "groupid": 0,
+      "assignment": 900006,
+      "latest": 1,
+      "plugins": [
+        {
+          "type": "file",
+          "name": "File submissions",
+          "fileareas": [
+            {
+              "area": "submission_files",
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    "submissiongroupmemberswhoneedtosubmit": [],
+    "submissionsenabled": true,
+    "locked": false,
+    "graded": false,
+    "canedit": true,
+    "caneditowner": true,
+    "cansubmit": false,
+    "extensionduedate": null,
+    "timelimit": 0,
+    "blindmarking": false,
+    "gradingstatus": "notgraded",
+    "usergroups": []
+  },
+  "assignmentdata": {
+    "attachments": {
+      "intro": []
+    }
+  },
+  "warnings": []
+}

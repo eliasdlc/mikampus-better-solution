@@ -1,0 +1,134 @@
+{
+  "lastattempt": {
+    "submission": {
+      "id": 940001,
+      "userid": 90001,
+      "attemptnumber": 0,
+      "timecreated": 1771000000,
+      "timemodified": 1771000000,
+      "timestarted": null,
+      "status": "submitted",
+      "groupid": 0,
+      "assignment": 900001,
+      "latest": 1,
+      "plugins": [
+        {
+          "type": "file",
+          "name": "File submissions",
+          "fileareas": [
+            {
+              "area": "submission_files",
+              "files": []
+            }
+          ]
+        }
+      ]
+    },
+    "submissiongroupmemberswhoneedtosubmit": [],
+    "submissionsenabled": true,
+    "locked": false,
+    "graded": true,
+    "canedit": true,
+    "caneditowner": true,
+    "cansubmit": false,
+    "extensionduedate": 0,
+    "timelimit": 0,
+    "blindmarking": false,
+    "gradingstatus": "graded",
+    "usergroups": []
+  },
+  "feedback": {
+    "grade": {
+      "id": 930001,
+      "assignment": 900001,
+      "userid": 90001,
+      "attemptnumber": 0,
+      "timecreated": 1771500000,
+      "timemodified": 1771500000,
+      "grader": 90002,
+      "grade": "85.00000"
+    },
+    "gradefordisplay": "85,00&nbsp;/&nbsp;100,00",
+    "gradeddate": 1771500000,
+    "plugins": [
+      {
+        "type": "comments",
+        "name": "Feedback comments",
+        "fileareas": [
+          {
+            "area": "feedback",
+            "files": []
+          }
+        ],
+        "editorfields": [
+          {
+            "name": "comments",
+            "description": "Feedback comments",
+            "text": "<p>Buen trabajo.</p>",
+            "format": 1
+          }
+        ]
+      },
+      {
+        "type": "editpdf",
+        "name": "Annotate PDF",
+        "fileareas": [
+          {
+            "area": "download",
+            "files": []
+          },
+          {
+            "area": "combined",
+            "files": []
+          },
+          {
+            "area": "partial",
+            "files": []
+          },
+          {
+            "area": "importhtml",
+            "files": []
+          },
+          {
+            "area": "pages",
+            "files": []
+          },
+          {
+            "area": "readonlypages",
+            "files": []
+          },
+          {
+            "area": "stamps",
+            "files": []
+          },
+          {
+            "area": "tmp_jpg_to_pdf",
+            "files": []
+          },
+          {
+            "area": "tmp_rotated_jpg",
+            "files": []
+          }
+        ],
+        "editorfields": []
+      },
+      {
+        "type": "file",
+        "name": "Feedback files",
+        "fileareas": [
+          {
+            "area": "feedback_files",
+            "files": []
+          }
+        ],
+        "editorfields": []
+      }
+    ]
+  },
+  "assignmentdata": {
+    "attachments": {
+      "intro": []
+    }
+  },
+  "warnings": []
+}
