@@ -35,6 +35,14 @@ import { alertPrefs, readAlerts, setAlertPrefs } from './moodle/alerts.js';
 import { upcoming } from './moodle/calendar.js';
 import { aulaCourse, aulaOverview } from './moodle/aula.js';
 import { hasPvaCredential } from './moodle/session.js';
+import {
+  previewSubmission,
+  saveSubmission,
+  submitForGrading,
+  listDiscussions,
+  replyToDiscussion,
+  recentWrites,
+} from './moodle/writes.js';
 import * as plans from './plans.js';
 import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
@@ -255,6 +263,95 @@ app.get('/api/aula/materia/:courseId', (req, res) => {
   const data = aulaCourse(req.userId, Number(req.params.courseId));
   if (!data) return res.status(404).json({ error: 'Esa materia no está en el aula sincronizada' });
   res.json(data);
+});
+
+// ── Escribir en la PVA ─────────────────────────────────────────────────────
+// El único carril del proyecto que no se puede deshacer. Cada ruta nace de una
+// acción de la persona en la app: ni el scheduler ni el watcher las llaman, y
+// el módulo de escritura no es alcanzable desde el sync (verificado sobre el
+// grafo de imports en scripts/test-pva-escritura.mjs).
+//
+// Los archivos viajan en base64 dentro del JSON, con un tope propio: es una
+// entrega de estudiante, no una subida de video, y el límite real lo pone la
+// tarea (`maxsubmissionsizebytes`), que se chequea antes de tocar la red.
+const ENTREGA_JSON = express.json({ limit: '25mb' });
+
+const archivosDe = (payload) =>
+  (Array.isArray(payload) ? payload : []).map((file) => ({
+    name: String(file?.name ?? ''),
+    mimetype: file?.mimetype ?? null,
+    bytes: Buffer.from(String(file?.base64 ?? ''), 'base64'),
+  }));
+
+// Qué va a viajar, antes de que viaje.
+app.get('/api/pva/tarea/:assignmentId/entrega', (req, res) => {
+  const preview = previewSubmission(req.userId, Number(req.params.assignmentId));
+  if (!preview) return res.status(404).json({ error: 'Esa tarea no está en el aula sincronizada' });
+  res.json(preview);
+});
+
+app.post('/api/pva/tarea/:assignmentId/guardar', ENTREGA_JSON, async (req, res) => {
+  try {
+    const result = await saveSubmission(req.userId, Number(req.params.assignmentId), {
+      body: req.body?.body ?? '',
+      files: archivosDe(req.body?.files),
+      confirmName: req.body?.confirmName ?? null,
+      dryRun: req.body?.dryRun === true,
+      origin: 'web',
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message, blockers: err.blockers ?? null });
+  }
+});
+
+app.post('/api/pva/tarea/:assignmentId/entregar', async (req, res) => {
+  try {
+    const result = await submitForGrading(req.userId, Number(req.params.assignmentId), {
+      confirmName: req.body?.confirmName ?? null,
+      acceptStatement: req.body?.acceptStatement === true,
+      dryRun: req.body?.dryRun === true,
+      origin: 'web',
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Las discusiones se leen en el momento: mikampus solo guarda el contador de
+// anuncios, así que no hay lista local a la que responderle.
+app.get('/api/pva/foro/:forumId/discusiones', async (req, res) => {
+  try {
+    const data = await listDiscussions(req.userId, Number(req.params.forumId));
+    if (!data) return res.status(404).json({ error: 'Ese foro no está en el aula sincronizada' });
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post('/api/pva/foro/responder', async (req, res) => {
+  try {
+    const result = await replyToDiscussion(req.userId, {
+      postId: Number(req.body?.postId),
+      discussionId: req.body?.discussionId == null ? null : Number(req.body.discussionId),
+      subject: req.body?.subject ?? '',
+      message: req.body?.message ?? '',
+      forumName: req.body?.forumName ?? null,
+      dryRun: req.body?.dryRun === true,
+      origin: 'web',
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// El recibo: qué escribió mikampus en la PVA, incluidos los ensayos y lo que
+// se rechazó antes de salir.
+app.get('/api/pva/escrituras', (req, res) => {
+  res.json({ items: recentWrites(req.userId, { limit: Math.min(100, Number(req.query.limit) || 20) }) });
 });
 
 // Los avisos del aula nacen apagados: se detectan y se asientan igual, y esta
