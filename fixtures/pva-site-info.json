@@ -1,0 +1,104 @@
+{
+  "sitename": "Plataforma Virtual de Aprendizaje",
+  "username": "ab123456",
+  "firstname": "Estudiante",
+  "lastname": "De Prueba",
+  "fullname": "Estudiante De Prueba",
+  "lang": "es_mx",
+  "userid": 90001,
+  "siteurl": "https://campusvirtual.pucmm.edu.do/moodle",
+  "userpictureurl": "https://campusvirtual.pucmm.edu.do/moodle/theme/image.php/remui/core/1/u/f1",
+  "functions": [
+    {
+      "name": "core_enrol_get_users_courses",
+      "version": "2025100605"
+    },
+    {
+      "name": "core_course_get_contents",
+      "version": "2025100605"
+    },
+    {
+      "name": "core_webservice_get_site_info",
+      "version": "2025100605"
+    },
+    {
+      "name": "mod_assign_get_assignments",
+      "version": "2025100601"
+    },
+    {
+      "name": "mod_forum_get_forums_by_courses",
+      "version": "2025100602"
+    },
+    {
+      "name": "gradereport_user_get_grade_items",
+      "version": "2025100600"
+    }
+  ],
+  "downloadfiles": 1,
+  "uploadfiles": 1,
+  "release": "5.1.5 (Build: 20260608)",
+  "version": "2025100605",
+  "mobilecssurl": "",
+  "advancedfeatures": [
+    {
+      "name": "usecomments",
+      "value": 0
+    },
+    {
+      "name": "usetags",
+      "value": 1
+    },
+    {
+      "name": "enablenotes",
+      "value": 1
+    },
+    {
+      "name": "messaging",
+      "value": 1
+    },
+    {
+      "name": "enableblogs",
+      "value": 1
+    },
+    {
+      "name": "enablecompletion",
+      "value": 1
+    },
+    {
+      "name": "enablebadges",
+      "value": 1
+    },
+    {
+      "name": "messagingallusers",
+      "value": 0
+    },
+    {
+      "name": "enablecustomreports",
+      "value": 1
+    },
+    {
+      "name": "enableglobalsearch",
+      "value": 0
+    },
+    {
+      "name": "mnet_dispatcher_mode",
+      "value": 1
+    },
+    {
+      "name": "enablecompetencies",
+      "value": 1
+    }
+  ],
+  "usercanmanageownfiles": true,
+  "userquota": 104857600,
+  "usermaxuploadfilesize": 524288000,
+  "userhomepage": 1,
+  "siteid": 1,
+  "sitecalendartype": "gregorian",
+  "usercalendartype": "gregorian",
+  "userissiteadmin": false,
+  "theme": "remui",
+  "limitconcurrentlogins": 1,
+  "usersessionscount": 1,
+  "policyagreed": 0
+}

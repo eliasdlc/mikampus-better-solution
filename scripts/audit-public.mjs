@@ -9,7 +9,14 @@ const secretPatterns = [
   /(?:ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})/,
   /AKIA[0-9A-Z]{16}/
 ];
-const environmentSecret = /^(?:PUCMM_(?:USERNAME|PASSWORD)|MIKAMPUS_PORTAL_PASSWORD|LITESTREAM_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY))[ \t]*=[ \t]*(?!$|#|<)\S+/m;
+const environmentSecret = /^(?:PUCMM_(?:USERNAME|PASSWORD)|MIKAMPUS_PORTAL_PASSWORD|MIKAMPUS_PVA_(?:PASSWORD|TOKEN)|PVA_(?:PASSWORD|TOKEN)|LITESTREAM_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY))[ \t]*=[ \t]*(?!$|#|<)\S+/m;
+
+// Tres campos de la PVA son credenciales disfrazadas de dato: el token del
+// servicio, la llave de acceso privada que abre el calendario y los archivos
+// sin sesión, y el privatetoken del autologin. Serializar una respuesta de
+// core_webservice_get_site_info a un fixture los filtra, y es el error más
+// fácil de cometer de todo el dominio.
+const pvaCredentialKeys = /"(?:wstoken|userprivateaccesskey|privatetoken)"\s*:/;
 
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
@@ -62,6 +69,9 @@ function auditRevision(revision, files = filesAt(revision)) {
     }
     if (file.startsWith('fixtures/') && file.endsWith('.html')) {
       for (const detail of fixtureFindings(text)) findings.push(`${revision}:${file}: ${detail}`);
+    }
+    if (file.startsWith('fixtures/') && file.endsWith('.json') && pvaCredentialKeys.test(text)) {
+      findings.push(`${revision}:${file}: el fixture trae una credencial de la PVA`);
     }
   }
   return findings;
