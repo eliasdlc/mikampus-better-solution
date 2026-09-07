@@ -21,6 +21,11 @@ export const PASSWORD_KEY = 'MIKAMPUS_PORTAL_PASSWORD';
 // entra a los backups, que copian la base y nada más.
 export const PVA_PASSWORD_KEY = 'MIKAMPUS_PVA_PASSWORD';
 export const PVA_TOKEN_KEY = 'MIKAMPUS_PVA_TOKEN';
+// La tercera credencial del dominio, y la más fácil de confundir con un dato:
+// `userprivateaccesskey` viene dentro de la respuesta de site_info y abre el
+// calendario y los archivos SIN sesión. Vive acá y no en la base, y sirve para
+// bajar materiales por tokenpluginfile.php, que no deja el token en la query.
+export const PVA_ACCESS_KEY_KEY = 'MIKAMPUS_PVA_ACCESS_KEY';
 
 const HEADER = [
   '# Credenciales que usa mikampus para entrar por vos. Son dos fuentes.',
@@ -103,7 +108,13 @@ function upsert(file, values) {
 
 export function ensureCredentialFile(file = credentialFilePath()) {
   if (readText(file) != null) return file;
-  upsert(file, { [USER_KEY]: '', [PASSWORD_KEY]: '', [PVA_PASSWORD_KEY]: '', [PVA_TOKEN_KEY]: '' });
+  upsert(file, {
+    [USER_KEY]: '',
+    [PASSWORD_KEY]: '',
+    [PVA_PASSWORD_KEY]: '',
+    [PVA_TOKEN_KEY]: '',
+    [PVA_ACCESS_KEY_KEY]: '',
+  });
   return file;
 }
 
@@ -166,17 +177,31 @@ export function writePvaToken(token, file = credentialFilePath()) {
   upsert(file, { [PVA_TOKEN_KEY]: String(token) });
 }
 
+export function readPvaAccessKey(file = credentialFilePath()) {
+  const text = readText(file);
+  if (text == null) return null;
+  const key = parse(text)[PVA_ACCESS_KEY_KEY]?.trim() ?? '';
+  return key || null;
+}
+
+export function writePvaAccessKey(key, file = credentialFilePath()) {
+  if (!key) throw new Error('La llave de acceso de la PVA es obligatoria');
+  upsert(file, { [PVA_ACCESS_KEY_KEY]: String(key) });
+}
+
 // El token murió (revocado, o cambió la contraseña de la PVA) pero la
 // contraseña guardada puede seguir sirviendo: se tira solo el token y la
 // próxima llamada saca uno nuevo.
 export function forgetPvaToken(file = credentialFilePath()) {
-  upsert(file, { [PVA_TOKEN_KEY]: '' });
+  // La llave de acceso se va con el token: las dos salen de la misma sesión y
+  // una llave vieja contra un token nuevo solo produce 403 silenciosos.
+  upsert(file, { [PVA_TOKEN_KEY]: '', [PVA_ACCESS_KEY_KEY]: '' });
 }
 
 // La PVA rechazó la contraseña, o se cerró sesión: fuera las dos llaves. El
 // portal no se toca.
 export function deletePvaCredential(file = credentialFilePath()) {
-  upsert(file, { [PVA_PASSWORD_KEY]: '', [PVA_TOKEN_KEY]: '' });
+  upsert(file, { [PVA_PASSWORD_KEY]: '', [PVA_TOKEN_KEY]: '', [PVA_ACCESS_KEY_KEY]: '' });
 }
 
 // Lo que la UI puede mostrar: quién está guardado y en qué archivo. Nunca la

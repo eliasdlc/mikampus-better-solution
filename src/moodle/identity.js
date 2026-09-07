@@ -1,5 +1,6 @@
 import { db, logSync } from '../db.js';
 import { callPva } from './session.js';
+import { writePvaAccessKey } from '../credentialStore.js';
 import { bool01, hashOf, int, nowSeconds, text, textOrNull } from './shape.js';
 
 // Identidad y catálogo: la raíz de la que cuelga todo lo demás.
@@ -201,6 +202,10 @@ export function saveSiteConfig(settings = []) {
 export async function syncIdentity(userId, { call = callPva, now = Date.now() } = {}) {
   const site = await call('core_webservice_get_site_info');
   const result = saveIdentity(userId, site, { now });
+  // La llave privada no entra a la base: va al archivo de credencial, con la
+  // misma disciplina que el token, porque abre el calendario y los archivos sin
+  // sesión. Es lo único de site_info que no se guarda como dato.
+  if (site.userprivateaccesskey) writePvaAccessKey(String(site.userprivateaccesskey));
   logSync({
     userId,
     kind: 'pvaIdentity',
