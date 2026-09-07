@@ -254,6 +254,12 @@ export const MIGRATIONS = [
     minCompatibleVersion: 1,
     up: createPvaTables,
   },
+  {
+    version: 15,
+    name: 'pva-archivos',
+    minCompatibleVersion: 1,
+    up: createPvaFileTables,
+  },
 ];
 
 
@@ -1272,5 +1278,132 @@ export function createPvaTables(db) {
     CREATE INDEX IF NOT EXISTS idx_pva_notif_sinruta ON pva_notification (notification_id) WHERE course_id IS NULL;
 
 
+  `);
+}
+
+
+/**
+ * Los archivos del aula. Cinco tablas, migración 15, aditiva como la anterior.
+ *
+ * El SQL sale del mapa y lo que sostiene es una decisión que no es obvia: la
+ * identidad de un archivo NO es su URL. En mod_resource la ruta lleva un
+ * número de revisión que cambia cuando el profesor reemplaza el fichero, así
+ * que un UNIQUE sobre la URL crearía una fila nueva en cada reemplazo en vez de
+ * actualizar la que ya estaba. La clave es dónde vive el archivo:
+ * (curso, cmid, componente, área, ruta, nombre).
+ *
+ * Las otras tres que se ven en el esquema:
+ *   * La metadata y el blob viven separados porque caducan distinto: la
+ *     metadata por TTL, el blob solo cuando cambia el ETag, que es la única
+ *     señal fiable (timemodified es la fecha de la restauración del curso y 29
+ *     de 54 ficheros la comparten al minuto).
+ *   * Un contents[] con type='url' no es un archivo: no tiene tamaño, ni tipo,
+ *     ni ruta. Vive en pva_link para que ninguna consulta de bytes lo toque, y
+ *     sobre todo para que nadie le mande el token a un host de terceros.
+ *   * El texto extraído se indexa en FTS5 con el file_id como rowid, así una
+ *     búsqueda vuelve directo a su archivo sin una tabla puente.
+ */
+export function createPvaFileTables(db) {
+  db.exec(`
+    -- Un archivo tal como lo describe la PVA. La identidad NO es la URL: en
+    -- mod_resource la ruta lleva un número de revisión que cambia cuando el
+    -- profesor reemplaza el fichero, y un UNIQUE sobre la URL crearía una fila
+    -- nueva en cada reemplazo en vez de actualizar la existente.
+    CREATE TABLE IF NOT EXISTS pva_file (
+      file_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id        INTEGER NOT NULL,
+      course_id      INTEGER NOT NULL,
+      cmid           INTEGER NOT NULL DEFAULT 0,   -- 0 para overviewfiles del curso
+      context_id     INTEGER NOT NULL,
+      component      TEXT    NOT NULL,             -- mod_resource|mod_page|mod_folder|mod_assign|assignsubmission_file|assignfeedback_editpdf|course
+      area           TEXT    NOT NULL,             -- content|introattachment|submission_files|combined|overviewfiles|...
+      item_id        INTEGER,                      -- NULL en mod_page/content y course/overviewfiles: la URL corta no lo trae
+      revision       INTEGER,                      -- 4o segmento en mod_resource; cambia al reemplazar el fichero
+      filepath       TEXT    NOT NULL DEFAULT '/',
+      filename       TEXT    NOT NULL,             -- decodificado; el último segmento de fileurl viene percent-encoded
+      fileurl        TEXT    NOT NULL,             -- sin token y sin query
+      force_download INTEGER NOT NULL DEFAULT 0,   -- 1 si la fileurl original ya traía query
+      filesize       INTEGER NOT NULL DEFAULT 0,   -- DECLARADO. 0 no significa vacío: mod_page reporta 0 con cuerpo real
+      mimetype       TEXT,                         -- NULL en mod_page y en type='url'
+      isexternalfile INTEGER,                      -- NULL cuando la función de origen no trae la clave
+      timecreated    INTEGER,                      -- solo core_course_get_contents lo trae, y no siempre
+      timemodified   INTEGER NOT NULL,
+      sortorder      INTEGER,
+      license        TEXT,
+      source_fn      TEXT    NOT NULL,             -- wsfunction que lo trajo
+      seen_at        INTEGER NOT NULL,
+      deleted_at     INTEGER,                      -- soft delete; el profesor puede reponerlo
+      UNIQUE (course_id, cmid, component, area, filepath, filename)
+    );
+    -- contents[].author y contents[].userid NO se guardan: son nombres e ids de
+    -- profesores reales y ninguna pantalla los usa. Si algún día hace falta
+    -- mostrar autoría, se agrega la columna con la justificación en el mismo commit.
+    CREATE INDEX IF NOT EXISTS idx_pva_file_course ON pva_file (user_id, course_id, deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_pva_file_cmid   ON pva_file (cmid);
+    CREATE INDEX IF NOT EXISTS idx_pva_file_mime   ON pva_file (mimetype);
+
+    -- Estado del blob en disco, separado de la metadata porque caduca distinto: la
+    -- metadata por TTL, el blob solo cuando el ETag cambia.
+    CREATE TABLE IF NOT EXISTS pva_file_blob (
+      file_id       INTEGER PRIMARY KEY REFERENCES pva_file(file_id) ON DELETE CASCADE,
+      local_path    TEXT    NOT NULL,              -- <cache>/<course_id>/<cmid>/<sha256[:2]>/<sha256>
+      bytes         INTEGER NOT NULL,              -- reales, contados al escribir; no filesize
+      sha256        TEXT    NOT NULL,
+      etag          TEXT,                          -- tal cual, con comillas, para If-None-Match
+      last_modified TEXT,                          -- string HTTP tal cual, para If-Modified-Since
+      content_type  TEXT,                          -- el real; manda sobre pva_file.mimetype
+      downloaded_at INTEGER NOT NULL,
+      verified_at   INTEGER NOT NULL,              -- último 304 o 200
+      attempts      INTEGER NOT NULL DEFAULT 0,
+      last_error    TEXT
+    );
+
+    -- Texto extraído. Un archivo puede fallar la extracción sin invalidar el blob,
+    -- y reextraer se decide comparando sha256, no fechas.
+    CREATE TABLE IF NOT EXISTS pva_file_text (
+      file_id     INTEGER PRIMARY KEY REFERENCES pva_file(file_id) ON DELETE CASCADE,
+      sha256      TEXT    NOT NULL,                -- del blob del que salió
+      extractor   TEXT    NOT NULL,                -- pdf|docx|pptx|doc|html|ocr
+      pages       INTEGER,
+      -- El nombre se copia acá porque el índice FTS de abajo es de contenido
+      -- externo y lo declara como columna: sin esta, FTS5 no puede releer sus
+      -- propias filas y un rebuild o un delete quedan rotos. El mapa lo indexa
+      -- sin tenerlo en la tabla; esta columna es la corrección.
+      filename    TEXT    NOT NULL DEFAULT '',
+      content     TEXT    NOT NULL,
+      extracted_at INTEGER NOT NULL
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS pva_file_text_fts USING fts5(
+      filename, content,
+      content='pva_file_text', content_rowid='file_id',
+      tokenize="unicode61 remove_diacritics 2"
+    );
+
+    -- contents[] con type='url' no es un archivo: no tiene filesize útil, ni
+    -- mimetype, ni filepath, ni sortorder. Vive aparte para que ninguna consulta de
+    -- bytes o de descarga lo toque por accidente.
+    CREATE TABLE IF NOT EXISTS pva_link (
+      link_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id      INTEGER NOT NULL,
+      course_id    INTEGER NOT NULL,
+      cmid         INTEGER NOT NULL,
+      name         TEXT    NOT NULL,               -- contents[].filename
+      url          TEXT    NOT NULL,               -- host externo
+      host         TEXT    NOT NULL,
+      timemodified INTEGER NOT NULL,
+      seen_at      INTEGER NOT NULL,
+      UNIQUE (cmid, url)
+    );
+
+    -- Resumen por módulo: sirve para decidir si vale la pena abrirlo.
+    CREATE TABLE IF NOT EXISTS pva_module_contents_info (
+      cmid            INTEGER PRIMARY KEY REFERENCES pva_module(cmid) ON DELETE CASCADE,
+      files_count     INTEGER NOT NULL DEFAULT 0,
+      files_size      INTEGER NOT NULL DEFAULT 0,  -- 0 en page y url aunque haya archivo
+      last_modified   INTEGER NOT NULL DEFAULT 0,  -- el mejor watermark por módulo
+      mime_types_json TEXT    NOT NULL DEFAULT '[]',
+      repository_type TEXT,                        -- '' local; CLAVE AUSENTE cuando files_count = 0
+      updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }

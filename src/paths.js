@@ -25,6 +25,10 @@ export function dataPaths(env = process.env) {
     credentials: path.resolve(env.MIKAMPUS_CREDENTIALS_FILE || path.join(dataDir, 'credenciales.env')),
     backups: path.resolve(env.MIKAMPUS_BACKUP_DIR || path.join(dataDir, 'backups')),
     runtime: path.resolve(env.MIKAMPUS_RUNTIME_DIR || path.join(dataDir, 'runtime')),
+    // El espejo local de los materiales de la PVA. Fuera de la base a
+    // propósito: son binarios, se deduplican por sha256 y no tienen por qué
+    // engordar cada copia de seguridad de mikampus.db.
+    pvaFiles: path.resolve(env.MIKAMPUS_PVA_FILES_DIR || path.join(dataDir, 'pva')),
     browsers: path.resolve(env.PLAYWRIGHT_BROWSERS_PATH || path.join(dataDir, 'browsers')),
   };
 }
@@ -36,6 +40,7 @@ export function configureRuntimePaths(env = process.env) {
   env.MIKAMPUS_CREDENTIALS_FILE ??= paths.credentials;
   env.MIKAMPUS_BACKUP_DIR ??= paths.backups;
   env.MIKAMPUS_RUNTIME_DIR ??= paths.runtime;
+  env.MIKAMPUS_PVA_FILES_DIR ??= paths.pvaFiles;
   env.PLAYWRIGHT_BROWSERS_PATH ??= paths.browsers;
   return paths;
 }
