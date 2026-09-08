@@ -1240,6 +1240,7 @@ export type AulaOverviewResponse = z.infer<typeof aulaOverviewResponseSchema>;
 
 export const aulaModuleSchema = z.object({
   cmid: z.number().int(),
+  instance: z.number().int(),
   modname: z.string(),
   name: z.string(),
   url: z.string().nullable(),
@@ -1268,6 +1269,78 @@ export const aulaModuleSchema = z.object({
   ),
   links: z.array(z.object({ name: z.string(), url: z.string(), host: z.string() })),
 });
+
+// ── Escribir en la PVA ─────────────────────────────────────────────────────
+// Lo que la pantalla necesita para no mentir sobre lo que va a pasar: qué
+// viaja, qué lo impide, qué hay que saber igual, y si guardar ya es entregar.
+
+export const entregaPreviewSchema = z.object({
+  assignment: z.object({
+    assignmentId: z.number().int(),
+    courseId: z.number().int(),
+    cmid: z.number().int(),
+    name: z.string(),
+    dueAt: z.string().nullable(),
+    closesAt: z.string().nullable(),
+    opensAt: z.string().nullable(),
+  }),
+  sends: z.object({
+    onlineText: z.string().nullable(),
+    files: z.array(z.object({ name: z.string(), bytes: z.number(), mimetype: z.string().nullable() })),
+  }),
+  limits: z.object({
+    onlineText: z.object({ enabled: z.boolean(), wordLimit: z.number() }),
+    file: z.object({
+      enabled: z.boolean(),
+      maxFiles: z.number(),
+      maxBytes: z.number(),
+      types: z.array(z.string()),
+    }),
+  }),
+  // `drafts` en false es la trampa que la pantalla tiene que decir en voz alta:
+  // guardar ya es entregar.
+  drafts: z.boolean(),
+  requiresConfirmation: z.boolean(),
+  requiresStatement: z.boolean(),
+  statement: z.string().nullable(),
+  current: z
+    .object({ status: z.string().nullable(), canEdit: z.boolean(), submittedAt: z.string().nullable() })
+    .nullable(),
+  blockers: z.array(z.string()),
+  warnings: z.array(z.string()),
+});
+export type EntregaPreview = z.infer<typeof entregaPreviewSchema>;
+
+export const entregaResultSchema = entregaPreviewSchema.extend({
+  writeId: z.number().int(),
+  sent: z.boolean(),
+  dryRun: z.boolean(),
+  warnings: z.array(z.string()).default([]),
+});
+export type EntregaResult = z.infer<typeof entregaResultSchema>;
+
+export const discusionesResponseSchema = z.object({
+  forum: z.object({
+    forumId: z.number().int(),
+    courseId: z.number().int(),
+    cmid: z.number().int(),
+    name: z.string(),
+    type: z.string(),
+  }),
+  discussions: z.array(
+    z.object({
+      discussionId: z.number().int(),
+      postId: z.number().int(),
+      subject: z.string(),
+      author: z.string(),
+      locked: z.boolean(),
+      canReply: z.boolean(),
+      createdAt: z.string().nullable(),
+      lastPostAt: z.string().nullable(),
+    })
+  ),
+});
+export type DiscusionesResponse = z.infer<typeof discusionesResponseSchema>;
 
 export const aulaCourseResponseSchema = aulaCourseCardSchema
   .pick({ pending: true, grade: true, next: true })

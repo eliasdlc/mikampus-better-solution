@@ -285,7 +285,10 @@ const archivosDe = (payload) =>
 
 // Qué va a viajar, antes de que viaje.
 app.get('/api/pva/tarea/:assignmentId/entrega', (req, res) => {
-  const preview = previewSubmission(req.userId, Number(req.params.assignmentId));
+  // Sin cuerpo todavía: acá `blockers` son los de la ventana y el estado (no
+  // abrió, cerró, ya entregada), no los del payload. Los del payload salen del
+  // ensayo, que sí manda lo que la persona escribió.
+  const preview = previewSubmission(req.userId, Number(req.params.assignmentId), { purpose: 'entregar' });
   if (!preview) return res.status(404).json({ error: 'Esa tarea no está en el aula sincronizada' });
   res.json(preview);
 });

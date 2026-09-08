@@ -231,6 +231,9 @@ export function aulaCourse(userId, courseId, { now = Date.now() } = {}) {
         : null;
       return {
         cmid: module.cmid,
+        // La instancia no es el cmid: mod_forum pide forumid y mod_assign pide
+        // assignid, y confundirlos abre el módulo equivocado.
+        instance: module.instance,
         modname: module.modname,
         name: module.name,
         url: module.url ?? null,

@@ -332,15 +332,17 @@ export async function saveSubmission(
     error.blockers = preview.blockers;
     throw error;
   }
+  // El ensayo va ANTES de pedir el nombre: es lo que muestra qué viajaría, y
+  // exigir la confirmación para ver el payload sería pedir que confirme a
+  // ciegas justo lo que quiere mirar.
+  if (dryRun) {
+    const writeId = record({ ...base, status: 'ensayo', response: 'Ensayo: no se mandó nada.' });
+    return { ...preview, writeId, sent: false, dryRun: true };
+  }
   if (preview.requiresConfirmation && !sameName(confirmName, preview.assignment.name)) {
     const motivo = 'Esta tarea no tiene etapa de borrador: guardar es entregar. Escribí el nombre exacto de la tarea para confirmar.';
     record({ ...base, status: 'rechazada', response: motivo });
     throw new Error(motivo);
-  }
-
-  if (dryRun) {
-    const writeId = record({ ...base, status: 'ensayo', response: 'Ensayo: no se mandó nada.' });
-    return { ...preview, writeId, sent: false, dryRun: true };
   }
 
   // Los dos plugins usan áreas de borrador distintas, así que cada uno pide su

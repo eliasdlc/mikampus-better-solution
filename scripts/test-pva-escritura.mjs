@@ -93,14 +93,25 @@ try {
     assert.equal(preview.requiresConfirmation, true, 'sin etapa de borrador, guardar es entregar');
     assert.equal(preview.requiresStatement, false);
     assert.equal(writes.previewSubmission(USER, 404_404, { now: NOW }), null, 'una tarea que no existe es null');
+    // La pantalla pide la vista previa ANTES de que se escriba nada: ahí un
+    // payload vacío no puede ser un bloqueo, o el botón nace apagado para
+    // siempre.
+    const alAbrir = writes.previewSubmission(USER, ASSIGN, { now: NOW, purpose: 'entregar' });
+    assert.deepEqual(alAbrir.blockers, [], 'sin cuerpo todavía, lo único que bloquea es la ventana o el estado');
+    assert.deepEqual(
+      writes.previewSubmission(USER, ASSIGN, { now: NOW }).blockers,
+      ['No hay nada que mandar: ni texto ni archivos.'],
+      'y al guardar sí se mira qué se manda'
+    );
   }
 
   // ── Un ensayo no toca el servidor, y aun así queda asentado ──
   {
     const { calls, fetchImpl } = site();
+    // Sin confirmName a propósito: el ensayo es lo que MUESTRA qué viajaría, así
+    // que pedir la confirmación para verlo sería pedirla a ciegas.
     const result = await writes.saveSubmission(USER, ASSIGN, {
       body: 'Mi respuesta',
-      confirmName: NOMBRE,
       dryRun: true,
       origin: 'web',
       fetchImpl,
@@ -129,15 +140,14 @@ try {
       'y un nombre que no es el de la tarea no confirma nada'
     );
     // El acento y la caja no son la barrera; el nombre sí.
-    assert.ok(
-      (await writes.saveSubmission(USER, ASSIGN, {
-        body: 'x',
-        confirmName: NOMBRE.toUpperCase(),
-        dryRun: true,
-        fetchImpl,
-        now: NOW,
-      })).writeId
-    );
+    const conMayusculas = site((wsfunction) => (wsfunction === 'core_files_get_unused_draft_itemid' ? { itemid: 5 } : []));
+    const aceptada = await writes.saveSubmission(USER, ASSIGN, {
+      body: 'x',
+      confirmName: NOMBRE.toUpperCase(),
+      fetchImpl: conMayusculas.fetchImpl,
+      now: NOW,
+    });
+    assert.equal(aceptada.sent, true, 'escribir el nombre en mayúsculas confirma igual');
 
     await rechazo(
       writes.saveSubmission(USER, ASSIGN, { confirmName: NOMBRE, fetchImpl, now: NOW }),
