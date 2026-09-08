@@ -2,6 +2,7 @@
 // verifican sin montar React, que es donde estas frases se vuelven mentira.
 import assert from 'node:assert/strict';
 import { whenLabel, feedLabel, gradeLabel, decodeGrade, moduleMeta, moduleKind } from '../web/src/lib/aula.ts';
+import { splitCourseTitle } from '../src/shared/pva.ts';
 
 const ahora = new Date(2026, 8, 7, 9, 0); // lunes 7 de septiembre de 2026
 const en = (d, h, m = 0) => new Date(2026, 8, 7 + d, h, m).toISOString();
@@ -26,6 +27,21 @@ assert.equal(feedLabel(vence(null)).texto, 'Estado sin consultar');
 assert.equal(feedLabel(vence(null)).tono, 'pendiente', 'lo que no se sabe no se pinta como urgente');
 assert.equal(feedLabel({ ...vence(null), kind: 'nota_publicada' }).texto, 'Nota publicada');
 assert.equal(feedLabel({ ...vence(null), kind: 'anuncio' }).texto, 'Anuncio del profesor');
+
+// ── El nombre de una materia ──
+// La PVA repite el código adentro del nombre largo. Mostrar el shortname como
+// si fuera el nombre es esconder el único dato que la persona reconoce.
+assert.deepEqual(splitCourseTitle('CSTI-1930-5227 - Inteligencia de Negocios', 'CSTI-1930-5227'), {
+  code: 'CSTI-1930-5227',
+  name: 'Inteligencia de Negocios',
+});
+assert.equal(splitCourseTitle('CSTI-1900-4789 - Lab. ITT-102', 'CSTI-1900-4789').name, 'Lab. ITT-102', 'un guion en el nombre no se come');
+assert.equal(
+  splitCourseTitle('Materia sin código adelante', 'OTRO').name,
+  'Materia sin código adelante',
+  'sin el patrón se devuelve el nombre entero: recortar a ciegas es peor que mostrar de más'
+);
+assert.equal(splitCourseTitle('CSTI-1910-5488', 'CSTI-1910-5488').name, 'CSTI-1910-5488', 'y nunca queda vacío');
 
 // ── El libro de una materia ──
 // Las tres ausencias se dicen distinto, porque son distintas.

@@ -1192,6 +1192,9 @@ export const aulaCourseCardSchema = z.object({
   courseId: z.number().int(),
   shortname: z.string(),
   fullname: z.string(),
+  // El nombre sin el código adelante. `fullname` lo repite: "CSTI-1930-5227 -
+  // Inteligencia de Negocios", y nadie conoce su materia por ese código.
+  name: z.string(),
   pending: z.number().int(),
   grade: z.object({
     // `checked` distingue "el libro está vacío" de "nunca se leyó el libro".
@@ -1446,6 +1449,7 @@ export const aulaCourseResponseSchema = aulaCourseCardSchema
       courseId: z.number().int(),
       shortname: z.string(),
       fullname: z.string(),
+      name: z.string(),
       progress: z.number().nullable(),
     }),
     sections: z.array(

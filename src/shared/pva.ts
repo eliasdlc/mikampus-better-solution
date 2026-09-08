@@ -67,6 +67,24 @@ export function submissionState(facts: SubmissionFacts): SubmissionState {
  * módulo tiene seguimiento, y eso depende del módulo y no del curso: un curso
  * con `enablecompletion` puede traer cero módulos con seguimiento.
  */
+/**
+ * El código y el nombre de una materia, separados.
+ *
+ * La PVA repite el código adentro del nombre largo: `shortname` es
+ * "CSTI-1930-5227" y `fullname` es "CSTI-1930-5227 - Inteligencia de Negocios".
+ * Nadie se sabe sus materias por ese código, así que mostrar el `shortname`
+ * como si fuera el nombre es esconder el único dato que la persona reconoce.
+ *
+ * Cuando el patrón no aparece, se devuelve el nombre entero tal cual: inventar
+ * un recorte sobre un formato que no vimos es peor que mostrar de más.
+ */
+export function splitCourseTitle(fullname: string, shortname: string): { code: string; name: string } {
+  const full = String(fullname ?? '').trim();
+  const code = String(shortname ?? '').trim();
+  const conCodigo = code && full.startsWith(code) ? full.slice(code.length).replace(/^\s*[-–:]\s*/, '') : full;
+  return { code, name: conCodigo.trim() || full || code };
+}
+
 export function completionLabel(rule: number, state: number | null): 'sin_seguimiento' | 'pendiente' | 'hecho' {
   if (rule !== 1) return 'sin_seguimiento';
   return state === 1 ? 'hecho' : 'pendiente';

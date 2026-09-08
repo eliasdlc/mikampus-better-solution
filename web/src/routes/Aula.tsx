@@ -118,11 +118,12 @@ export function Aula() {
                 type="button"
                 onClick={() => setMateria(course.courseId)}
                 aria-pressed={materia === course.courseId}
-                className={`min-h-8 shrink-0 rounded-full border px-3 py-1 text-xs transition-colors duration-100 ${
+                className={`flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors duration-100 ${
                   materia === course.courseId ? 'border-fg bg-fg text-bg font-medium' : 'border-line text-muted hover:text-fg'
                 }`}
               >
-                {course.shortname}
+                {/* El nombre, no el código: nadie se sabe "CSTI-1930-5227". */}
+                <span className="max-w-[10rem] truncate">{course.name}</span>
                 {course.pending > 0 && (
                   <span className={`ml-1.5 ${materia === course.courseId ? 'opacity-80' : 'text-accent'}`}>{course.pending}</span>
                 )}
@@ -136,7 +137,7 @@ export function Aula() {
               className="border-line hover:bg-surface-2 focus-visible:outline-accent flex min-h-11 items-center gap-2 rounded-[var(--radius)] border px-3 py-2.5 transition-colors duration-100 focus-visible:outline-2"
             >
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{activa.fullname}</span>
+                <span className="block truncate text-sm font-medium">{activa.name}</span>
                 <span className="text-muted mt-0.5 block text-xs">{gradeLabel(activa.grade)}</span>
               </span>
               <ChevronRight className="text-muted size-4 shrink-0" aria-hidden />

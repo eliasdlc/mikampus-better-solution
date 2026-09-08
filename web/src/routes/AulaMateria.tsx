@@ -129,7 +129,9 @@ export function AulaMateria() {
           <ChevronLeft className="size-4" aria-hidden />
           Aula
         </Link>
-        <h1 className="font-display mt-1 text-2xl leading-tight font-semibold">{data.course.fullname}</h1>
+        {/* El nombre manda y el código queda abajo: es como se reconoce una
+            materia, y la PVA lo entrega escondido dentro del nombre largo. */}
+        <h1 className="font-display mt-1 text-2xl leading-tight font-semibold">{data.course.name}</h1>
         <p className="text-muted tabular font-mono text-xs">{data.course.shortname}</p>
       </header>
 

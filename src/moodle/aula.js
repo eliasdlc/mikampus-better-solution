@@ -2,7 +2,7 @@ import { db } from '../db.js';
 import { activeCourses, courseTree } from './courses.js';
 import { readAlerts } from './alerts.js';
 import { upcoming } from './calendar.js';
-import { completionLabel, submissionState } from '../shared/pva.ts';
+import { completionLabel, splitCourseTitle, submissionState } from '../shared/pva.ts';
 import { nowSeconds } from './shape.js';
 
 // Lo que la pantalla Aula necesita, compuesto de una vez.
@@ -127,6 +127,8 @@ export function aulaOverview(userId, { now = Date.now(), days = 7 } = {}) {
       courseId: course.courseId,
       shortname: course.shortname,
       fullname: course.fullname,
+      // El nombre sin el código adelante: es como la persona conoce su materia.
+      name: splitCourseTitle(course.fullname, course.shortname).name,
       lastAccessAt: iso(course.lastAccess),
       ...courseStatus(userId, course.courseId, { now }),
     }))
@@ -285,7 +287,13 @@ export function aulaCourse(userId, courseId, { now = Date.now() } = {}) {
   }));
 
   return {
-    course: { courseId: course.courseId, shortname: course.shortname, fullname: course.fullname, progress: course.progress ?? null },
+    course: {
+      courseId: course.courseId,
+      shortname: course.shortname,
+      fullname: course.fullname,
+      name: splitCourseTitle(course.fullname, course.shortname).name,
+      progress: course.progress ?? null,
+    },
     ...courseStatus(userId, courseId, { now }),
     sections,
     // Sin contenido bajado no hay unidades que pintar, y eso no es lo mismo
