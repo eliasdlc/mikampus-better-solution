@@ -26,6 +26,11 @@ export const PVA_TOKEN_KEY = 'MIKAMPUS_PVA_TOKEN';
 // calendario y los archivos SIN sesión. Vive acá y no en la base, y sirve para
 // bajar materiales por tokenpluginfile.php, que no deja el token en la query.
 export const PVA_ACCESS_KEY_KEY = 'MIKAMPUS_PVA_ACCESS_KEY';
+// La huella de la contraseña del portal que la PVA YA rechazó. No es una
+// credencial: es lo que evita gastar un intento por login contra una cuenta que
+// puede bloquearse. Vive acá y no en la base por la misma razón que el token,
+// que el archivo no entra a los backups.
+export const PVA_AUTOLINK_KEY = 'MIKAMPUS_PVA_AUTOLINK_RECHAZADA';
 
 const HEADER = [
   '# Credenciales que usa mikampus para entrar por vos. Son dos fuentes.',
@@ -202,6 +207,24 @@ export function forgetPvaToken(file = credentialFilePath()) {
 // portal no se toca.
 export function deletePvaCredential(file = credentialFilePath()) {
   upsert(file, { [PVA_PASSWORD_KEY]: '', [PVA_TOKEN_KEY]: '', [PVA_ACCESS_KEY_KEY]: '' });
+}
+
+// El intento automático con la contraseña del portal se hace UNA vez por
+// contraseña: si la PVA la rechazó, repetirlo en cada login solo acerca el
+// bloqueo por intentos. Cambiar la contraseña del portal cambia la huella y
+// habilita un intento nuevo, que es justo cuando vale la pena reintentar.
+export function pvaAutolinkRejected(file = credentialFilePath()) {
+  if (!fs.existsSync(file)) return null;
+  const mark = parse(fs.readFileSync(file, 'utf8'))[PVA_AUTOLINK_KEY]?.trim() ?? '';
+  return mark || null;
+}
+
+export function markPvaAutolinkRejected(fingerprint, file = credentialFilePath()) {
+  upsert(file, { [PVA_AUTOLINK_KEY]: String(fingerprint) });
+}
+
+export function clearPvaAutolinkRejected(file = credentialFilePath()) {
+  upsert(file, { [PVA_AUTOLINK_KEY]: '' });
 }
 
 // Lo que la UI puede mostrar: quién está guardado y en qué archivo. Nunca la

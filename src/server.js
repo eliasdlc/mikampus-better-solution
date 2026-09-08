@@ -34,7 +34,7 @@ import { credentialInfo, deleteCredential, ensureCredentialFile } from './creden
 import { alertPrefs, readAlerts, setAlertPrefs } from './moodle/alerts.js';
 import { upcoming } from './moodle/calendar.js';
 import { aulaCourse, aulaOverview } from './moodle/aula.js';
-import { hasPvaCredential } from './moodle/session.js';
+import { hasPvaCredential, pvaLinkState } from './moodle/session.js';
 import {
   previewSubmission,
   saveSubmission,
@@ -252,9 +252,13 @@ app.get('/api/aula/entregas', (req, res) => {
 // Sirven desde SQLite como todo lo demás: entrar no dispara una consulta.
 app.get('/api/aula', (req, res) => {
   const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+  const pva = pvaLinkState();
   res.json({
     ...aulaOverview(req.userId, { days }),
-    linked: hasPvaCredential(),
+    linked: pva.linked,
+    // Por qué no hay nada: sin el motivo, un aula vacía se lee como "no tenés
+    // materias" y la salida real queda invisible.
+    pvaReason: pva.reason,
     syncedAt: lastSync('pvaCourses', { userId: req.userId }),
   });
 });

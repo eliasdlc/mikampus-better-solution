@@ -2,7 +2,14 @@ import crypto from 'node:crypto';
 import { db, deleteAllUserData } from './db.js';
 import { LOCAL_USER_ID, adoptLocalUsername, getUser, touchLastLogin } from './users.js';
 import { verifyPortalCredentials, adoptSession, resetSession } from './session.js';
-import { readCredential, writeCredential, deleteCredential } from './credentialStore.js';
+import {
+  readCredential,
+  writeCredential,
+  deleteCredential,
+  pvaAutolinkRejected,
+  markPvaAutolinkRejected,
+  clearPvaAutolinkRejected,
+} from './credentialStore.js';
 import { linkPvaCredential, forgetPvaSession, hasPvaCredential } from './moodle/session.js';
 
 // El login de mikampus ES el login del portal: no hay cuenta paralela. El
@@ -148,7 +155,7 @@ export async function loginWithPortal({ username, password, pvaPassword }) {
   noteLoginSuccess(user);
   adoptIdentity(user);
   writeCredential({ username: user, password });
-  const pva = await linkPva(user, pvaPassword);
+  const pva = await linkPvaOnLogin({ username: user, portalPassword: password, pvaPassword });
   const account = getUser(LOCAL_USER_ID);
   touchLastLogin(account.id);
   await adoptSession(account.id, live);
@@ -156,21 +163,54 @@ export async function loginWithPortal({ username, password, pvaPassword }) {
   return { user: account, pva, ...session };
 }
 
-// La PVA es la segunda fuente, no un requisito para entrar. Sin contraseña
-// nueva se informa el estado que ya había; con una, se verifica contra
-// `login/token.php`, y si la rechaza o el sitio no responde el login sigue
-// siendo válido: micampus no depende de Moodle para nada.
-async function linkPva(username, pvaPassword) {
-  if (!pvaPassword) {
-    const linked = hasPvaCredential();
-    return { linked, reason: linked ? null : 'sin-contraseña' };
+// La PVA es la segunda fuente, no un requisito para entrar: si rechaza o no
+// responde, el login sigue siendo válido porque micampus no depende de Moodle.
+//
+// Entrar a mikampus vincula las dos fuentes con una sola contraseña. La guía de
+// la PVA dice que sus credenciales son las de Campus Solutions, así que lo
+// primero que se prueba es esa misma, sin pedir nada dos veces.
+//
+// Lo que el recon encontró el 7 de septiembre de 2026 es que para esta cuenta
+// la PVA responde `invalidlogin` a la contraseña que el portal sí acepta: su
+// copia se desincronizó en algún momento. Por eso el intento automático se hace
+// UNA vez por contraseña y queda anotada su huella: reintentar en cada login
+// contra un Moodle que puede tener bloqueo por intentos es cómo se traba una
+// cuenta sola. Cambiar la contraseña del portal borra la huella y vuelve a
+// intentar, que es justo cuando puede haberse resincronizado.
+export async function linkPvaOnLogin({ username, portalPassword, pvaPassword = null, fetchImpl } = {}) {
+  if (pvaPassword) {
+    try {
+      await linkPvaCredential({ username, password: pvaPassword }, { fetchImpl });
+      clearPvaAutolinkRejected();
+      return { linked: true, reason: null, mode: 'propia' };
+    } catch (err) {
+      return { linked: false, reason: err?.credentialRejected ? 'rechazada' : 'sin-respuesta', mode: 'propia' };
+    }
+  }
+
+  if (hasPvaCredential()) return { linked: true, reason: null, mode: 'guardada' };
+
+  const fingerprint = passwordFingerprint(username, portalPassword);
+  if (pvaAutolinkRejected() === fingerprint) {
+    return { linked: false, reason: 'misma-clave-rechazada', mode: 'misma' };
   }
   try {
-    await linkPvaCredential({ username, password: pvaPassword });
-    return { linked: true, reason: null };
+    await linkPvaCredential({ username, password: portalPassword }, { fetchImpl });
+    clearPvaAutolinkRejected();
+    return { linked: true, reason: null, mode: 'misma' };
   } catch (err) {
-    return { linked: false, reason: err?.credentialRejected ? 'rechazada' : 'sin-respuesta' };
+    if (err?.credentialRejected) {
+      markPvaAutolinkRejected(fingerprint);
+      return { linked: false, reason: 'misma-clave-rechazada', mode: 'misma' };
+    }
+    return { linked: false, reason: 'sin-respuesta', mode: 'misma' };
   }
+}
+
+// La huella no es reversible y va por cuenta: solo sirve para responder "¿es la
+// misma contraseña que la PVA ya rechazó?".
+function passwordFingerprint(username, password) {
+  return sha256(`${String(username).toLowerCase()}:${password}`);
 }
 
 // Una instalación representa a una sola persona. Cambiar de cuenta no crea un

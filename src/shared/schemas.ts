@@ -1234,6 +1234,7 @@ export const aulaOverviewResponseSchema = z.object({
   courses: z.array(aulaCourseCardSchema),
   items: z.array(aulaFeedItemSchema),
   linked: z.boolean(),
+  pvaReason: z.string().nullable().default(null),
   syncedAt: z.string().nullable(),
 });
 export type AulaOverviewResponse = z.infer<typeof aulaOverviewResponseSchema>;

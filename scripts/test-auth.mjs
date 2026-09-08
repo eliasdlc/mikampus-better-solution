@@ -13,6 +13,7 @@ process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
 process.env.MIKAMPUS_CREDENTIALS_FILE = path.join(dir, 'credenciales.env');
 
 const {
+  linkPvaOnLogin,
   createSession,
   sessionFor,
   revokeSession,
@@ -39,6 +40,8 @@ const {
   writePvaToken,
   readPvaToken,
   readPvaCredential,
+  pvaAutolinkRejected,
+  deletePvaCredential,
 } = await import('../src/credentialStore.js');
 
 // ── Sesión: ida y vuelta, y el token no se guarda en claro. ──
@@ -215,5 +218,77 @@ process.env.MIKAMPUS_TRUSTED_HOSTS = '';
   assert.equal(readPvaToken(), null, 'y su token, que es lo único que seguiría valiendo solo');
 }
 
+// ── Entrar vincula las dos fuentes con una sola contraseña ──
+// La guía de la PVA dice que sus credenciales son las de Campus Solutions, así
+// que se prueba esa primero. Lo que el recon encontró es que para esta cuenta
+// la PVA la rechaza, y ahí está el riesgo: reintentar en cada login contra un
+// Moodle con bloqueo por intentos traba la cuenta sola.
+{
+  // Un sitio de mentira: acepta una sola contraseña y cuenta los intentos.
+  const site = (aceptada) => {
+    const intentos = { token: 0 };
+    const fetchImpl = async (url, options) => {
+      const params = new URLSearchParams(String(options?.body ?? ''));
+      if (String(url).endsWith('/login/token.php')) {
+        intentos.token += 1;
+        const ok = params.get('password') === aceptada;
+        return new Response(JSON.stringify(ok ? { token: 'token-pva' } : { error: 'Datos erróneos', errorcode: 'invalidlogin' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    return { intentos, fetchImpl };
+  };
+
+  // 1. Misma contraseña en las dos fuentes: entrar alcanza, no se pide nada dos veces.
+  deleteCredential();
+  deletePvaCredential();
+  writeCredential({ username: 'ana', password: 'clave-unica' });
+  const iguales = site('clave-unica');
+  const primera = await linkPvaOnLogin({ username: 'ana', portalPassword: 'clave-unica', fetchImpl: iguales.fetchImpl });
+  assert.deepEqual(
+    { linked: primera.linked, mode: primera.mode },
+    { linked: true, mode: 'misma' },
+    'la contraseña del portal vinculó la PVA sin que nadie la escriba de nuevo'
+  );
+  assert.equal(readPvaCredential().password, 'clave-unica');
+  assert.equal(pvaAutolinkRejected(), null, 'y no queda huella de rechazo');
+
+  // 2. La PVA rechaza esa contraseña: se anota y NO se reintenta sola.
+  deletePvaCredential();
+  const distintas = site('otra-clave');
+  const rechazo = await linkPvaOnLogin({ username: 'ana', portalPassword: 'clave-unica', fetchImpl: distintas.fetchImpl });
+  assert.deepEqual(
+    { linked: rechazo.linked, reason: rechazo.reason },
+    { linked: false, reason: 'misma-clave-rechazada' },
+    'la PVA dijo que no y el login sigue siendo válido igual'
+  );
+  assert.equal(distintas.intentos.token, 1);
+  const segunda = await linkPvaOnLogin({ username: 'ana', portalPassword: 'clave-unica', fetchImpl: distintas.fetchImpl });
+  assert.equal(segunda.reason, 'misma-clave-rechazada');
+  assert.equal(distintas.intentos.token, 1, 'el segundo login NO gasta otro intento contra la cuenta');
+
+  // 3. Cambiar la contraseña del portal habilita un intento nuevo: puede ser
+  //    justo la resincronización que faltaba.
+  const nueva = site('otra-clave');
+  const tercera = await linkPvaOnLogin({ username: 'ana', portalPassword: 'otra-clave', fetchImpl: nueva.fetchImpl });
+  assert.equal(tercera.linked, true, 'contraseña distinta, huella distinta, intento nuevo');
+  assert.equal(nueva.intentos.token, 1);
+
+  // 4. Con una contraseña propia de la PVA, esa manda y la huella se limpia.
+  deletePvaCredential();
+  const propia = site('clave-solo-pva');
+  const cuarta = await linkPvaOnLogin({
+    username: 'ana',
+    portalPassword: 'clave-unica',
+    pvaPassword: 'clave-solo-pva',
+    fetchImpl: propia.fetchImpl,
+  });
+  assert.deepEqual({ linked: cuarta.linked, mode: cuarta.mode }, { linked: true, mode: 'propia' });
+  assert.equal(readPvaCredential().password, 'clave-solo-pva');
+}
+
 await rm(dir, { recursive: true, force: true });
-console.log('✓ auth: sesiones con hash + expiración, cookie SameSite, CSRF obligatorio en mutaciones, rate-limit de login');
+console.log('✓ auth: sesiones con hash + expiración, cookie SameSite, CSRF obligatorio en mutaciones, rate-limit de login, y una sola contraseña vincula las dos fuentes sin gastar intentos');

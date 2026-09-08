@@ -1,4 +1,5 @@
 import {
+  pvaAutolinkRejected,
   readPvaCredential,
   readPvaToken,
   writePvaPassword,
@@ -52,6 +53,20 @@ function noCredential() {
 
 export function hasPvaCredential() {
   return readPvaCredential() != null;
+}
+
+/**
+ * Por qué el aula está vacía, que no es lo mismo que "no tenés nada".
+ *
+ *   `sin-intento`            nadie probó todavía: el próximo login la vincula
+ *                            con la misma contraseña del portal.
+ *   `misma-clave-rechazada`  la PVA dijo que no a esa contraseña, así que la
+ *                            suya es otra. No se reintenta sola: repetir el
+ *                            intento en cada login acerca el bloqueo.
+ */
+export function pvaLinkState() {
+  if (hasPvaCredential()) return { linked: true, reason: null };
+  return { linked: false, reason: pvaAutolinkRejected() ? 'misma-clave-rechazada' : 'sin-intento' };
 }
 
 export function hasPvaToken() {
