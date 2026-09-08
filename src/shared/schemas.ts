@@ -1271,6 +1271,102 @@ export const aulaModuleSchema = z.object({
   links: z.array(z.object({ name: z.string(), url: z.string(), host: z.string() })),
 });
 
+// ── El material de una materia ─────────────────────────────────────────────
+// Tres estados, no dos: un archivo puede estar sin bajar, bajado, o bajado y
+// con su texto indexado. "Bajado" y "buscable" no son lo mismo y la pantalla
+// los dice distinto.
+
+export const documentoSchema = z.object({
+  fileId: z.number().int(),
+  courseId: z.number().int(),
+  filename: z.string(),
+  mimetype: z.string().nullable(),
+  bytes: z.number(),
+  // Cuando el archivo no está bajado, el peso es el que declaró la plataforma,
+  // y un mod_page declara 0 con cuerpo real.
+  bytesAreDeclared: z.boolean(),
+  downloaded: z.boolean(),
+  indexed: z.boolean(),
+  pages: z.number().nullable(),
+  extractor: z.string().nullable(),
+  lastError: z.string().nullable(),
+  cmid: z.number().int(),
+  moduleName: z.string().nullable(),
+  modname: z.string().nullable(),
+  moduleUrl: z.string().nullable(),
+  sectionName: z.string().nullable(),
+  origin: z.string(),
+});
+export type Documento = z.infer<typeof documentoSchema>;
+
+const pesoSchema = z.object({ files: z.number().int(), bytes: z.number() });
+
+export const materialResponseSchema = z.object({
+  documents: z.array(documentoSchema),
+  pending: z.object({ light: pesoSchema, heavy: pesoSchema, heavyBytes: z.number() }),
+  usage: z.object({
+    files: z.number().int(),
+    downloaded: z.number().int(),
+    bytes: z.number(),
+    indexed: z.number().int(),
+    budgetBytes: z.number(),
+    maxFileBytes: z.number(),
+    remainingBytes: z.number(),
+  }),
+});
+export type MaterialResponse = z.infer<typeof materialResponseSchema>;
+
+export const busquedaMaterialSchema = z.object({
+  results: z.array(
+    z.object({
+      fileId: z.number().int(),
+      filename: z.string(),
+      cmid: z.number().int(),
+      moduleName: z.string().nullable(),
+      sectionName: z.string().nullable(),
+      pages: z.number().nullable(),
+      extractor: z.string().nullable(),
+      snippet: z.string(),
+      score: z.number(),
+    })
+  ),
+});
+export type BusquedaMaterial = z.infer<typeof busquedaMaterialSchema>;
+
+export const descargaResultSchema = z.object({
+  downloaded: z.number().int(),
+  indexed: z.number().int(),
+  failed: z.number().int(),
+  skipped: z.number().int(),
+  bytes: z.number(),
+  budgetLeft: z.number(),
+});
+export type DescargaResult = z.infer<typeof descargaResultSchema>;
+
+export const notasAulaSchema = z.object({
+  items: z.array(
+    z.object({
+      itemId: z.number().int(),
+      itemtype: z.string(),
+      name: z.string().nullable(),
+      cmid: z.number().int().nullable(),
+      gradeMax: z.number().nullable(),
+      isGradable: z.number().int(),
+      rawText: z.string().nullable(),
+      display: z.string().nullable(),
+      range: z.string().nullable(),
+      gradedAt: z.number().nullable(),
+      isHidden: z.number().int().nullable(),
+    })
+  ),
+  total: z.object({ courseId: z.number().int(), display: z.string().nullable(), rawText: z.string().nullable() }).nullable(),
+  access: z
+    .object({ courseId: z.number().int(), showGrades: z.number().int(), reachable: z.number().int() })
+    .partial()
+    .nullable(),
+});
+export type NotasAula = z.infer<typeof notasAulaSchema>;
+
 // ── Escribir en la PVA ─────────────────────────────────────────────────────
 // Lo que la pantalla necesita para no mentir sobre lo que va a pasar: qué
 // viaja, qué lo impide, qué hay que saber igual, y si guardar ya es entregar.

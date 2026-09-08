@@ -7,6 +7,8 @@ import { fetchAulaCourse } from '../lib/api.ts';
 import { decodeGrade, moduleKind, moduleMeta, whenLabel } from '../lib/aula.ts';
 import { EntregaSheet } from '../components/EntregaSheet.tsx';
 import { ForoSheet } from '../components/ForoSheet.tsx';
+import { MaterialMateria } from '../components/MaterialMateria.tsx';
+import { NotasMateria } from '../components/NotasMateria.tsx';
 import type { AulaModule } from '../../../src/shared/schemas.ts';
 
 // Una materia del aula (fase 7, decisión 1A): el estado arriba y las unidades
@@ -111,6 +113,7 @@ export function AulaMateria() {
   const [abierta, setAbierta] = useState<number | null>(null);
   // La hoja abierta, si hay: una tarea para entregar o un foro para leer.
   const [hoja, setHoja] = useState<AulaModule | null>(null);
+  const [vista, setVista] = useState<'unidades' | 'material' | 'notas'>('unidades');
   const abiertaReal = abierta ?? inicial;
 
   if (isPending) {
@@ -181,7 +184,31 @@ export function AulaMateria() {
         </div>
       </div>
 
-      {!data.contentsSynced ? (
+      {/* Tres vistas de la MISMA materia (decisión 2A): la estructura del
+          profesor, el material junto, y su libro de notas. El material deja de
+          depender de acordarse en qué unidad quedó. */}
+      <div className="bg-surface-2 grid grid-cols-3 gap-1 rounded-full p-1" role="tablist" aria-label="Vistas de la materia">
+        {(['unidades', 'material', 'notas'] as const).map((valor) => (
+          <button
+            key={valor}
+            type="button"
+            role="tab"
+            aria-selected={vista === valor}
+            onClick={() => setVista(valor)}
+            className={`min-h-9 rounded-full text-sm font-medium capitalize transition-colors duration-100 ${
+              vista === valor ? 'bg-surface text-fg shadow-sm' : 'text-muted hover:text-fg'
+            }`}
+          >
+            {valor}
+          </button>
+        ))}
+      </div>
+
+      {vista === 'material' ? (
+        <MaterialMateria courseId={data.course.courseId} />
+      ) : vista === 'notas' ? (
+        <NotasMateria courseId={data.course.courseId} />
+      ) : !data.contentsSynced ? (
         <div className="border-line rounded-[var(--radius)] border border-dashed p-6 text-center">
           <p className="text-sm">Todavía no se bajó el contenido de esta materia.</p>
           <p className="text-muted mt-1 text-xs">

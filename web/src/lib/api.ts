@@ -62,6 +62,14 @@ import {
   entregaPreviewSchema,
   entregaResultSchema,
   discusionesResponseSchema,
+  materialResponseSchema,
+  busquedaMaterialSchema,
+  descargaResultSchema,
+  notasAulaSchema,
+  type MaterialResponse,
+  type BusquedaMaterial,
+  type DescargaResult,
+  type NotasAula,
   type EntregaPreview,
   type EntregaResult,
   type DiscusionesResponse,
@@ -252,6 +260,37 @@ export async function entregarTarea(
 // Las discusiones se leen en el momento: no hay copia local a la que responder.
 export async function fetchDiscusiones(forumId: number): Promise<DiscusionesResponse> {
   return discusionesResponseSchema.parse(await getJSON(`/api/pva/foro/${forumId}/discusiones`));
+}
+
+// ── El material de una materia ──
+// Todo esto sale del blob que el agente ya bajó: abrir un documento no vuelve a
+// tocar la PVA, y por eso funciona igual sin conexión.
+
+export async function fetchMaterial(courseId: number): Promise<MaterialResponse> {
+  return materialResponseSchema.parse(await getJSON(`/api/pva/materia/${courseId}/material`));
+}
+
+export async function buscarMaterial(courseId: number, query: string): Promise<BusquedaMaterial> {
+  return busquedaMaterialSchema.parse(
+    await getJSON(`/api/pva/materia/${courseId}/material/buscar?q=${encodeURIComponent(query)}`)
+  );
+}
+
+export async function bajarMaterial(courseId: number, includeHeavy = false): Promise<DescargaResult> {
+  return descargaResultSchema.parse(await send(`/api/pva/materia/${courseId}/material/bajar`, 'POST', { includeHeavy }));
+}
+
+export async function fetchNotasAula(courseId: number): Promise<NotasAula> {
+  return notasAulaSchema.parse(await getJSON(`/api/pva/materia/${courseId}/notas`));
+}
+
+export async function fetchTextoDocumento(fileId: number): Promise<{ content: string; pages: number | null; extractor: string }> {
+  return (await getJSON(`/api/pva/archivo/${fileId}/texto`)) as { content: string; pages: number | null; extractor: string };
+}
+
+/** La URL del archivo servido por el agente. Se usa tal cual en un embed o un enlace. */
+export function urlDocumento(fileId: number, { descargar = false } = {}): string {
+  return `/api/pva/archivo/${fileId}${descargar ? '?descargar=1' : ''}`;
 }
 
 // Refresh en vivo contra PeopleSoft: tarda segundos y publica su progreso en
