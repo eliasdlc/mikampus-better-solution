@@ -1,5 +1,6 @@
 import { db } from '../db.js';
-import { splitCourseTitle } from '../shared/pva.ts';
+import { pvaTermCode, splitCourseTitle } from '../shared/pva.ts';
+import { currentTermCode } from '../terms.js';
 import { nowSeconds } from './shape.js';
 
 // Las materias del ciclo, con lo que la PVA no sabe.
@@ -9,7 +10,7 @@ import { nowSeconds } from './shape.js';
 // duplicada. Acá el par se reconoce con dos señales que ya están en la base:
 // el mismo nombre y el número de clase pegado.
 //
-// Dos límites que este módulo respeta:
+// Tres límites que este módulo respeta:
 //
 //   1. Esconder es una preferencia LOCAL. Nunca toca la PVA, siempre se puede
 //      deshacer, y lo que la persona ya escondió en la plataforma se sigue
@@ -17,6 +18,10 @@ import { nowSeconds } from './shape.js';
 //   2. "Sin contenido" no prueba que sea la copia. Un profesor puede empezar a
 //      usar la otra clase en la semana cinco, así que mikampus propone con la
 //      evidencia a la vista y no decide solo.
+//   3. El ciclo de un aula lo dice su código (`CSTI-1930-5227`: 1930 es el
+//      STRM), nunca la fecha de inicio de Moodle. `core_enrol_get_users_courses`
+//      entrega la matrícula ENTERA, así que las aulas de ciclos pasados que
+//      nadie escondió allá se leen como materias en curso.
 
 /** El nombre sin código, en minúsculas y sin acentos: la llave de un par. */
 export function pairKey(fullname, shortname) {
@@ -44,6 +49,8 @@ function shape(row) {
     shortname: row.shortname,
     fullname: row.fullname,
     name,
+    // El STRM que viaja en el código, o null cuando no tiene esa forma.
+    term: pvaTermCode(row.shortname),
     progress: row.progress ?? null,
     lastAccess: row.lastAccess ?? null,
     startDate: row.startDate ?? null,
@@ -57,13 +64,13 @@ function shape(row) {
   };
 }
 
-/** Las materias del ciclo que se muestran: ni escondidas allá ni escondidas acá. */
-export function visibleCourses(userId) {
+/** Toda la matrícula que la PVA sigue reportando, escondida o no. */
+function enrolledCourses(userId) {
   return db
     .prepare(
       `SELECT ${COURSE_FIELDS}
        FROM pva_course c LEFT JOIN pva_course_pref p ON p.user_id = c.user_id AND p.course_id = c.course_id
-       WHERE c.user_id = ? AND c.hidden = 0 AND c.missing_since IS NULL AND p.hidden_at IS NULL
+       WHERE c.user_id = ? AND c.missing_since IS NULL
        ORDER BY c.shortname`
     )
     .all(userId)
@@ -71,28 +78,63 @@ export function visibleCourses(userId) {
 }
 
 /**
- * Las materias escondidas, agrupadas por de dónde vienen.
+ * El ciclo en curso, en el vocabulario de la PVA (el STRM del código).
+ *
+ * Manda el modelo de tiempo, que resuelve contra la fecha de hoy. Cuando el
+ * ciclo actual solo se conoce por su etiqueta (View My Classes no publica el
+ * STRM) o todavía no tiene aulas creadas, vale el código más alto de la
+ * matrícula, que es el último que abrió la universidad. Sin ningún código
+ * legible devuelve null y no se filtra nada: vaciar la pantalla por una
+ * suposición es peor que mostrar de más.
+ */
+function currentCycle(courses) {
+  const codes = courses.map((course) => course.term).filter(Boolean);
+  const known = currentTermCode();
+  if (known && codes.includes(known)) return known;
+  return codes.length ? codes.reduce((mayor, code) => (Number(code) > Number(mayor) ? code : mayor)) : null;
+}
+
+// Un aula sin ciclo legible cuenta como del ciclo en curso: su código puede
+// tener otra forma, y esconderla sería afirmar que esa materia ya la cursaste.
+const esDelCiclo = (course, cycle) => cycle == null || course.term == null || course.term === cycle;
+
+/** Las materias del ciclo en curso que se muestran: ni escondidas allá ni acá. */
+export function visibleCourses(userId) {
+  const matricula = enrolledCourses(userId);
+  const ciclo = currentCycle(matricula);
+  return matricula.filter((course) => !course.hiddenRemote && !course.hiddenLocal && esDelCiclo(course, ciclo));
+}
+
+/**
+ * Las materias que no se muestran, agrupadas por de dónde vienen.
  *
  * Dos grupos distintos que la pantalla no puede mezclar: la copia sin usar de
- * una materia que estás cursando, y las materias de un ciclo que terminó.
+ * una materia que estás cursando, y las materias de un ciclo que terminó, las
+ * haya escondido la plataforma o nadie.
  */
 export function archivedCourses(userId) {
-  const visibles = new Set(visibleCourses(userId).map((course) => pairKey(course.fullname, course.shortname)));
-  const rows = db
-    .prepare(
-      `SELECT ${COURSE_FIELDS}
-       FROM pva_course c LEFT JOIN pva_course_pref p ON p.user_id = c.user_id AND p.course_id = c.course_id
-       WHERE c.user_id = ? AND c.missing_since IS NULL AND (c.hidden = 1 OR p.hidden_at IS NOT NULL)
-       ORDER BY c.startdate DESC, c.shortname`
-    )
-    .all(userId)
-    .map(shape);
+  const matricula = enrolledCourses(userId);
+  const ciclo = currentCycle(matricula);
+  const escondida = (course) => course.hiddenRemote || course.hiddenLocal;
+  const visibles = new Set(
+    matricula
+      .filter((course) => !escondida(course) && esDelCiclo(course, ciclo))
+      .map((course) => pairKey(course.fullname, course.shortname))
+  );
 
   // Dos grupos y no uno por mes: las fechas de inicio de un mismo cuatrimestre
   // no coinciden entre cursos, así que agrupar por ellas parte el archivo en
   // cinco montoncitos que no significan nada. El mes viaja en cada materia.
-  const conCiclo = rows.map((course) => ({ ...course, cycle: cycleLabel(course.startDate) }));
-  const esCopia = (course) => visibles.has(pairKey(course.fullname, course.shortname));
+  const conCiclo = matricula
+    .filter((course) => escondida(course) || !esDelCiclo(course, ciclo))
+    .map((course) => ({ ...course, cycle: cycleLabel(course.startDate) }))
+    // El más reciente primero; la matrícula ya viene ordenada por código, que es
+    // el desempate estable cuando dos comparten fecha de inicio.
+    .sort((left, right) => (right.startDate ?? 0) - (left.startDate ?? 0));
+
+  // Una copia es de ESTE ciclo. La misma materia en un ciclo pasado es una que
+  // repetiste, y contarla como copia escondería que la cursaste dos veces.
+  const esCopia = (course) => esDelCiclo(course, ciclo) && visibles.has(pairKey(course.fullname, course.shortname));
   return {
     copies: conCiclo.filter(esCopia),
     previous: conCiclo.filter((course) => !esCopia(course)),

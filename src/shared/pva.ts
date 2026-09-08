@@ -85,6 +85,24 @@ export function splitCourseTitle(fullname: string, shortname: string): { code: s
   return { code, name: conCodigo.trim() || full || code };
 }
 
+/**
+ * El ciclo al que pertenece un aula de la PVA, o null si su código no lo dice.
+ *
+ * El `shortname` es "CSTI-1930-5227": la facultad, el STRM del ciclo y el
+ * número de clase con el que la materia está inscrita en el portal. Ese STRM es
+ * lo único que separa un cuatrimestre del anterior, porque la PVA entrega la
+ * matrícula entera y la fecha de inicio que publica no distingue los ciclos.
+ *
+ * Un código con otra forma devuelve null y la materia se sigue mostrando:
+ * suponer el ciclo esconde materias que sí se están cursando.
+ */
+export function pvaTermCode(shortname: string): string | null {
+  const match = String(shortname ?? '')
+    .trim()
+    .match(/^[A-Za-z]{2,}-(\d{3,6})-\d{3,6}$/);
+  return match ? match[1] : null;
+}
+
 export function completionLabel(rule: number, state: number | null): 'sin_seguimiento' | 'pendiente' | 'hecho' {
   if (rule !== 1) return 'sin_seguimiento';
   return state === 1 ? 'hecho' : 'pendiente';
