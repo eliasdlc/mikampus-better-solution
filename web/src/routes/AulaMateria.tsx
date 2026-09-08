@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronDown, ChevronLeft, ExternalLink, FileText, Link2, ListChecks, MessageSquare, Type } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Link2, ListChecks, MessageSquare, Type } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { fetchAulaCourse } from '../lib/api.ts';
 import { decodeGrade, moduleKind, moduleMeta, whenLabel } from '../lib/aula.ts';
+import { EntregaSheet } from '../components/EntregaSheet.tsx';
+import { ForoSheet } from '../components/ForoSheet.tsx';
 import type { AulaModule } from '../../../src/shared/schemas.ts';
 
 // Una materia del aula (fase 7, decisión 1A): el estado arriba y las unidades
@@ -26,7 +28,7 @@ const ICONO: Record<string, LucideIcon> = {
   label: Type,
 };
 
-function Modulo({ module }: { module: AulaModule }) {
+function Modulo({ module, onAbrir }: { module: AulaModule; onAbrir: (module: AulaModule) => void }) {
   const Icono = ICONO[module.modname] ?? FileText;
   const urgente = module.assignment && module.assignment.submitted !== true;
   const contenido = (
@@ -51,12 +53,24 @@ function Modulo({ module }: { module: AulaModule }) {
     </>
   );
 
+  // Una tarea y un foro abren su hoja acá adentro (decisión 1A): no se sale de
+  // la unidad para entregar. El resto sigue siendo un enlace a la PVA.
+  const enHoja = (module.modname === 'assign' && module.assignment) || module.modname === 'forum';
   // Un label se pinta y no se abre; un módulo sin url tampoco. Presentarlos como
   // enlace lleva a un 404 y enseña a desconfiar del resto.
   const abrible = module.url && !module.inlineOnly;
   return (
     <li>
-      {abrible ? (
+      {enHoja ? (
+        <button
+          type="button"
+          onClick={() => onAbrir(module)}
+          className="hover:bg-surface-2 focus-visible:outline-accent flex min-h-11 w-full items-start gap-3 px-3 py-2.5 text-left transition-colors duration-100 focus-visible:outline-2 focus-visible:-outline-offset-2"
+        >
+          {contenido}
+          <ChevronRight className="text-muted mt-0.5 size-3.5 shrink-0" aria-hidden />
+        </button>
+      ) : abrible ? (
         <a
           href={module.url!}
           target="_blank"
@@ -95,6 +109,8 @@ export function AulaMateria() {
     return (conProximo ?? ultima)?.sectionId ?? null;
   }, [data]);
   const [abierta, setAbierta] = useState<number | null>(null);
+  // La hoja abierta, si hay: una tarea para entregar o un foro para leer.
+  const [hoja, setHoja] = useState<AulaModule | null>(null);
   const abiertaReal = abierta ?? inicial;
 
   if (isPending) {
@@ -203,7 +219,7 @@ export function AulaMateria() {
                   (section.modules.length ? (
                     <ul className="border-line divide-line divide-y rounded-b-[var(--radius)] border border-t-0">
                       {section.modules.map((module) => (
-                        <Modulo key={module.cmid} module={module} />
+                        <Modulo key={module.cmid} module={module} onAbrir={setHoja} />
                       ))}
                     </ul>
                   ) : (
@@ -215,6 +231,18 @@ export function AulaMateria() {
             );
           })}
         </div>
+      )}
+
+      {hoja?.modname === 'assign' && hoja.assignment && (
+        <EntregaSheet
+          assignmentId={hoja.assignment.assignmentId}
+          courseId={data.course.courseId}
+          url={hoja.url}
+          onClose={() => setHoja(null)}
+        />
+      )}
+      {hoja?.modname === 'forum' && (
+        <ForoSheet forumId={hoja.instance} name={hoja.name} url={hoja.url} onClose={() => setHoja(null)} />
       )}
     </div>
   );

@@ -59,6 +59,12 @@ import {
   type PvaDeadlinesResponse,
   aulaOverviewResponseSchema,
   aulaCourseResponseSchema,
+  entregaPreviewSchema,
+  entregaResultSchema,
+  discusionesResponseSchema,
+  type EntregaPreview,
+  type EntregaResult,
+  type DiscusionesResponse,
   type AulaOverviewResponse,
   type AulaCourseResponse,
 } from '../../../src/shared/schemas.ts';
@@ -216,6 +222,36 @@ export async function fetchAula(days = 7): Promise<AulaOverviewResponse> {
 
 export async function fetchAulaCourse(courseId: number): Promise<AulaCourseResponse> {
   return aulaCourseResponseSchema.parse(await getJSON(`/api/aula/materia/${courseId}`));
+}
+
+// ── Escribir en la PVA ──
+// El único carril de la app que no se puede deshacer. El ensayo (`dryRun`) usa
+// la MISMA ruta que el envío: así lo que se muestra es lo que viajaría, y no
+// una simulación aparte que podría diverger.
+
+export type ArchivoParaEntregar = { name: string; mimetype: string | null; base64: string };
+
+export async function fetchEntregaPreview(assignmentId: number): Promise<EntregaPreview> {
+  return entregaPreviewSchema.parse(await getJSON(`/api/pva/tarea/${assignmentId}/entrega`));
+}
+
+export async function guardarEntrega(
+  assignmentId: number,
+  input: { body: string; files: ArchivoParaEntregar[]; confirmName?: string; dryRun?: boolean }
+): Promise<EntregaResult> {
+  return entregaResultSchema.parse(await send(`/api/pva/tarea/${assignmentId}/guardar`, 'POST', input));
+}
+
+export async function entregarTarea(
+  assignmentId: number,
+  input: { confirmName: string; acceptStatement?: boolean; dryRun?: boolean }
+): Promise<EntregaResult> {
+  return entregaResultSchema.parse(await send(`/api/pva/tarea/${assignmentId}/entregar`, 'POST', input));
+}
+
+// Las discusiones se leen en el momento: no hay copia local a la que responder.
+export async function fetchDiscusiones(forumId: number): Promise<DiscusionesResponse> {
+  return discusionesResponseSchema.parse(await getJSON(`/api/pva/foro/${forumId}/discusiones`));
 }
 
 // Refresh en vivo contra PeopleSoft: tarda segundos y publica su progreso en
