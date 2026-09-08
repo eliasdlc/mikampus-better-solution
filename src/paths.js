@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +31,12 @@ export function dataPaths(env = process.env) {
     // engordar cada copia de seguridad de mikampus.db.
     pvaFiles: path.resolve(env.MIKAMPUS_PVA_FILES_DIR || path.join(dataDir, 'pva')),
     browsers: path.resolve(env.PLAYWRIGHT_BROWSERS_PATH || path.join(dataDir, 'browsers')),
+    // El scratch del navegador. Chromium crea su perfil temporal en el /tmp del
+    // sistema, y en Linux ese /tmp suele ser un tmpfs, o sea RAM: cualquier otra
+    // cosa que lo llene deja al navegador sin poder arrancar y el login falla
+    // con un muro de log que no dice nada de la credencial. Acá vive en el
+    // mismo directorio 0700 de la app, que está en disco de verdad.
+    scratch: path.resolve(env.MIKAMPUS_SCRATCH_DIR || path.join(dataDir, 'scratch')),
   };
 }
 
@@ -42,6 +49,14 @@ export function configureRuntimePaths(env = process.env) {
   env.MIKAMPUS_RUNTIME_DIR ??= paths.runtime;
   env.MIKAMPUS_PVA_FILES_DIR ??= paths.pvaFiles;
   env.PLAYWRIGHT_BROWSERS_PATH ??= paths.browsers;
+  env.MIKAMPUS_SCRATCH_DIR ??= paths.scratch;
+  // TMPDIR gobierna dónde Playwright crea el perfil del navegador y dónde
+  // SQLite deja sus temporales. Solo se fija si nadie lo fijó antes: si la
+  // persona eligió un temporal, esa elección manda.
+  if (!env.TMPDIR) {
+    fs.mkdirSync(paths.scratch, { recursive: true, mode: 0o700 });
+    env.TMPDIR = paths.scratch;
+  }
   return paths;
 }
 
