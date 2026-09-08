@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { withPage, resetSession, shutdown } from './session.js';
@@ -35,6 +36,16 @@ import { alertPrefs, readAlerts, setAlertPrefs } from './moodle/alerts.js';
 import { upcoming } from './moodle/calendar.js';
 import { aulaCourse, aulaOverview } from './moodle/aula.js';
 import { hasPvaCredential, pvaLinkState } from './moodle/session.js';
+import {
+  courseDocuments,
+  documentText,
+  searchCourseDocuments,
+  pendingDownloads,
+  downloadCourseDocuments,
+  blobOf,
+} from './moodle/documents.js';
+import { filesUsage } from './moodle/files.js';
+import { readGradeItems, courseTotals, gradebookAccess } from './moodle/grades.js';
 import {
   previewSubmission,
   saveSubmission,
@@ -267,6 +278,76 @@ app.get('/api/aula/materia/:courseId', (req, res) => {
   const data = aulaCourse(req.userId, Number(req.params.courseId));
   if (!data) return res.status(404).json({ error: 'Esa materia no está en el aula sincronizada' });
   res.json(data);
+});
+
+// ── El material de una materia ─────────────────────────────────────────────
+// La PVA reparte los archivos entre las unidades del profesor. Acá se ven
+// juntos, se buscan por dentro y se abren, que es lo único que faltaba: el
+// agente ya los bajaba y les extraía el texto, pero ninguna ruta los entregaba.
+
+app.get('/api/pva/materia/:courseId/material', (req, res) => {
+  const courseId = Number(req.params.courseId);
+  res.json({
+    documents: courseDocuments(req.userId, courseId),
+    pending: pendingDownloads(req.userId, courseId),
+    usage: filesUsage(req.userId),
+  });
+});
+
+app.get('/api/pva/materia/:courseId/material/buscar', (req, res) => {
+  res.json({ results: searchCourseDocuments(req.userId, Number(req.params.courseId), req.query.q ?? '') });
+});
+
+// Bajar lo que falta nace de un toque, nunca del scheduler, y lo pesado solo
+// viaja si se pidió aparte.
+app.post('/api/pva/materia/:courseId/material/bajar', async (req, res) => {
+  try {
+    const summary = await downloadCourseDocuments(req.userId, Number(req.params.courseId), {
+      includeHeavy: req.body?.includeHeavy === true,
+    });
+    res.json(summary);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Las notas del aula item por item. No son las oficiales del expediente: son
+// las que el profesor puso en su libro, y por eso viven acá y no en Notas.
+app.get('/api/pva/materia/:courseId/notas', (req, res) => {
+  const courseId = Number(req.params.courseId);
+  const access = gradebookAccess(req.userId).find((row) => row.courseId === courseId) ?? null;
+  res.json({
+    items: readGradeItems(req.userId, courseId),
+    total: courseTotals(req.userId).find((row) => row.courseId === courseId) ?? null,
+    access,
+  });
+});
+
+// El archivo en sí. Sale del blob que el agente ya bajó, con el tipo real que
+// devolvió el servidor: nada acá vuelve a tocar la PVA.
+app.get('/api/pva/archivo/:fileId', (req, res) => {
+  const blob = blobOf(req.userId, Number(req.params.fileId));
+  if (!blob) return res.status(404).json({ error: 'Ese archivo todavía no está bajado' });
+  const disposition = req.query.descargar === '1' ? 'attachment' : 'inline';
+  // El nombre viaja en la forma que entienden los navegadores viejos y en
+  // UTF-8 para el resto: un acento en el nombre no puede romper la descarga.
+  const ascii = blob.filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '');
+  res.set({
+    'Content-Type': blob.contentType,
+    'Content-Length': String(blob.bytes),
+    'Content-Disposition': `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(blob.filename)}`,
+    // Es material de la persona servido desde su propia máquina: no se cachea
+    // en ningún intermediario, y el navegador lo revalida.
+    'Cache-Control': 'private, no-cache',
+  });
+  fs.createReadStream(blob.path).pipe(res);
+});
+
+// El texto extraído, para buscar dentro del documento sin volver a abrirlo.
+app.get('/api/pva/archivo/:fileId/texto', (req, res) => {
+  const text = documentText(req.userId, Number(req.params.fileId));
+  if (!text) return res.status(404).json({ error: 'De ese archivo no se pudo extraer texto' });
+  res.json(text);
 });
 
 // ── Escribir en la PVA ─────────────────────────────────────────────────────
