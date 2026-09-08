@@ -205,8 +205,13 @@ export function forgetPvaToken(file = credentialFilePath()) {
 
 // La PVA rechazó la contraseña, o se cerró sesión: fuera las dos llaves. El
 // portal no se toca.
+//
+// La huella del rechazo también se va, y eso es a propósito: cerrar sesión y
+// volver a entrar es el modo de pedir un intento nuevo. Si la contraseña de la
+// PVA se cambió allá para que coincida con la del portal, esa es la única forma
+// de decírselo a mikampus sin abrir una pantalla nueva.
 export function deletePvaCredential(file = credentialFilePath()) {
-  upsert(file, { [PVA_PASSWORD_KEY]: '', [PVA_TOKEN_KEY]: '', [PVA_ACCESS_KEY_KEY]: '' });
+  upsert(file, { [PVA_PASSWORD_KEY]: '', [PVA_TOKEN_KEY]: '', [PVA_ACCESS_KEY_KEY]: '', [PVA_AUTOLINK_KEY]: '' });
 }
 
 // El intento automático con la contraseña del portal se hace UNA vez por

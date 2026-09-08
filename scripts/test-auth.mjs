@@ -270,14 +270,23 @@ process.env.MIKAMPUS_TRUSTED_HOSTS = '';
   assert.equal(segunda.reason, 'misma-clave-rechazada');
   assert.equal(distintas.intentos.token, 1, 'el segundo login NO gasta otro intento contra la cuenta');
 
-  // 3. Cambiar la contraseña del portal habilita un intento nuevo: puede ser
-  //    justo la resincronización que faltaba.
+  // 3. Cerrar sesión pide un intento nuevo: es la salida cuando la contraseña
+  //    que se cambió fue la de la PVA y no la del portal.
+  deletePvaCredential();
+  assert.equal(pvaAutolinkRejected(), null, 'cerrar sesión borra la huella del rechazo');
+  const reintento = site('clave-unica');
+  assert.equal((await linkPvaOnLogin({ username: 'ana', portalPassword: 'clave-unica', fetchImpl: reintento.fetchImpl })).linked, true);
+
+  // 4. Cambiar la contraseña del portal también habilita un intento nuevo:
+  //    puede ser justo la resincronización que faltaba.
+  deletePvaCredential();
+  await linkPvaOnLogin({ username: 'ana', portalPassword: 'clave-unica', fetchImpl: site('otra-clave').fetchImpl });
   const nueva = site('otra-clave');
   const tercera = await linkPvaOnLogin({ username: 'ana', portalPassword: 'otra-clave', fetchImpl: nueva.fetchImpl });
   assert.equal(tercera.linked, true, 'contraseña distinta, huella distinta, intento nuevo');
   assert.equal(nueva.intentos.token, 1);
 
-  // 4. Con una contraseña propia de la PVA, esa manda y la huella se limpia.
+  // 5. Con una contraseña propia de la PVA, esa manda y la huella se limpia.
   deletePvaCredential();
   const propia = site('clave-solo-pva');
   const cuarta = await linkPvaOnLogin({

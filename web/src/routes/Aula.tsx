@@ -93,7 +93,7 @@ export function Aula() {
           <p className="mt-2 text-sm">La PVA no está vinculada todavía.</p>
           <p className="text-muted mx-auto mt-1 max-w-md text-sm">
             {data.pvaReason === 'misma-clave-rechazada'
-              ? 'La PVA rechazó la contraseña con la que entrás al portal, así que la suya es distinta. No se reintenta sola para no acercar un bloqueo por intentos: poné la de la PVA en el archivo de credencial y volvé a entrar.'
+              ? 'La PVA rechazó la contraseña con la que entrás al portal, así que la suya es distinta. No se reintenta sola para no acercar un bloqueo por intentos: poné la de la PVA en el archivo de credencial, o cambiala allá para que sean la misma y cerrá sesión para que mikampus vuelva a probar.'
               : 'La próxima vez que inicies sesión, mikampus la vincula con la misma contraseña del portal. Si la PVA la rechaza, te lo dice acá.'}
           </p>
         </div>
