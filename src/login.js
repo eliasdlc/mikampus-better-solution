@@ -5,14 +5,39 @@ import { browserLaunchOptions } from './browser.js';
 
 const SIGNON_URL = 'https://micampus.pucmm.edu.do/psp/cs92pro/?cmd=login&languageCd=ENG';
 
+// Playwright escribe el VALOR dentro del mensaje de error de `fill()`:
+// `fill("...")`. Ese mensaje sube hasta la pantalla de login y se pinta en
+// rojo, así que sin esto la contraseña del portal se muestra en claro en la
+// interfaz y queda en cualquier log que la copie. Es la misma regla que el
+// token de la PVA: una credencial nunca sale en un mensaje de error.
+export function scrubSecret(text, secret) {
+  const message = String(text ?? '');
+  if (!secret) return message;
+  return message.split(String(secret)).join('[contraseña oculta]');
+}
+
+function rethrowWithoutSecret(err, secret) {
+  const clean = new Error(scrubSecret(err?.message, secret));
+  // Las banderas que el resto de mikampus mira para decidir si reintentar o
+  // pedir credencial de nuevo tienen que sobrevivir al saneo.
+  clean.credentialRejected = err?.credentialRejected;
+  clean.beforeSubmit = err?.beforeSubmit;
+  clean.name = err?.name ?? 'Error';
+  return clean;
+}
+
 // Llena un campo y confirma que el valor quedó, reintentando si el JS del
 // portal lo pisó. Limpia antes de escribir para no concatenar sobre lo que el
 // signon haya dejado en el campo durante su inicialización.
 async function fillVerified(page, selector, value, attempts = 3) {
   for (let i = 0; i < attempts; i++) {
-    await page.locator(selector).click();
-    await page.fill(selector, '');
-    await page.fill(selector, value);
+    try {
+      await page.locator(selector).click();
+      await page.fill(selector, '');
+      await page.fill(selector, value);
+    } catch (err) {
+      throw rethrowWithoutSecret(err, value);
+    }
     if ((await page.inputValue(selector)) === value) return;
     await page.waitForTimeout(400);
   }
@@ -27,15 +52,25 @@ export async function loginContext(browser, { username, password }) {
     throw new Error('No hay cuenta configurada: seteala en Ajustes o en el .env');
   }
 
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  try {
-    await doSignon(page, { username, password });
-    return { context, page };
-  } catch (err) {
-    await context.close().catch(() => {});
-    throw err;
+  // Un reintento, y solo si el fallo pasó ANTES de mandar el formulario: en esa
+  // fase no hubo intento contra PeopleSoft, así que repetir no acerca el
+  // bloqueo por intentos fallidos. Existe porque en una máquina cargada el
+  // renderer se queda sin recursos y el campo de contraseña nunca llega a estar
+  // editable, que no es un problema de la credencial.
+  let last;
+  for (let intento = 0; intento < 2; intento += 1) {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    try {
+      await doSignon(page, { username, password });
+      return { context, page };
+    } catch (err) {
+      await context.close().catch(() => {});
+      last = err;
+      if (!err.beforeSubmit) throw err;
+    }
   }
+  throw last;
 }
 
 // Flujo para recon local: la credencial se entrega explícitamente desde un
@@ -51,7 +86,17 @@ export async function loginToPeopleSoft({ headless = true, username, password } 
   }
 }
 
-async function doSignon(page, { username, password }) {
+async function doSignon(page, credentials) {
+  try {
+    await signon(page, credentials);
+  } catch (err) {
+    // Última red: cualquier error de esta rama pasa por el saneo antes de
+    // existir aguas arriba, venga de Playwright o de donde venga.
+    throw rethrowWithoutSecret(err, credentials?.password);
+  }
+}
+
+async function signon(page, { username, password }) {
   await page.goto(SIGNON_URL, { waitUntil: 'domcontentloaded' });
 
   // El signon corre JS de inicialización al cargar que pisa los campos si se
@@ -59,10 +104,16 @@ async function doSignon(page, { username, password }) {
   // vacío, y el portal rechaza el submit con "User ID and Password are
   // required". Esperamos a que los campos estén visibles y verificamos el
   // valor tras llenar, reintentando si el portal lo alteró.
-  await page.waitForSelector('#userid', { state: 'visible' });
-  await page.waitForSelector('#pwd', { state: 'visible' });
-  await fillVerified(page, '#userid', username);
-  await fillVerified(page, '#pwd', password);
+  try {
+    await page.waitForSelector('#userid', { state: 'visible' });
+    await page.waitForSelector('#pwd', { state: 'visible' });
+    await fillVerified(page, '#userid', username);
+    await fillVerified(page, '#pwd', password);
+  } catch (err) {
+    // Todavía no se mandó nada al portal: el reintento es gratis.
+    err.beforeSubmit = true;
+    throw err;
+  }
   await page.click('input[name="Submit"]');
 
   // PeopleSoft no dispara una sola navegación limpia tras el submit: hace
