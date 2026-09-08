@@ -40,6 +40,14 @@ try {
     assert.equal(data.courses.length, 1, 'solo las del ciclo: la oculta no es del ciclo');
     const materia = data.courses[0];
     assert.equal(materia.shortname, 'MAT-101-01');
+    // El orden de la raíz: primero lo que vence. Alfabético no es un orden, y
+    // una materia sin nada pendiente no puede encabezar la lista.
+    db.prepare('UPDATE pva_course SET hidden = 0, missing_since = NULL, last_access = ? WHERE course_id = 800202').run(
+      Math.floor(NOW / 1000)
+    );
+    const orden = aulaOverview(USER, { now: NOW, days: 30 }).courses.map((course) => course.shortname);
+    assert.deepEqual(orden, ['MAT-101-01', 'MAT-202-01'], 'la que tiene entrega va antes que la que no debe nada');
+    db.prepare('UPDATE pva_course SET hidden = 1 WHERE course_id = 800202').run();
     assert.equal(materia.grade.total, '85.50');
     assert.equal(materia.grade.hidden, false);
     assert.equal(materia.grade.checked, true, 'esta materia sí se consultó');

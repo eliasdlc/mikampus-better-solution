@@ -100,14 +100,37 @@ function courseStatus(userId, courseId, { now = Date.now() } = {}) {
   };
 }
 
+/**
+ * Las materias del ciclo en el orden en que le sirven al estudiante.
+ *
+ * Alfabético no es un orden: ICC antes que MAT no significa nada un martes con
+ * dos entregas. Moodle no puede hacer mejor porque no sabe nada de tu semana;
+ * mikampus tiene las fechas en la misma base, así que ordena por obligación:
+ * primero lo que vence, y entre las que no deben nada, la más reciente.
+ */
+function byUrgency(left, right) {
+  const due = (course) => course.next?.dueAt ?? null;
+  if (due(left) && due(right)) return due(left).localeCompare(due(right));
+  if (due(left)) return -1;
+  if (due(right)) return 1;
+  // Sin nada que entregar, la que se tocó más cerca en el tiempo va primero, y
+  // una materia sin actividad conocida cae al fondo en vez de encabezar.
+  const seen = (course) => course.lastAccessAt ?? '';
+  if (seen(left) !== seen(right)) return seen(right).localeCompare(seen(left));
+  return left.shortname.localeCompare(right.shortname);
+}
+
 /** La raíz del Aula: las materias del ciclo y lo que pasa esta semana. */
 export function aulaOverview(userId, { now = Date.now(), days = 7 } = {}) {
-  const courses = activeCourses(userId).map((course) => ({
-    courseId: course.courseId,
-    shortname: course.shortname,
-    fullname: course.fullname,
-    ...courseStatus(userId, course.courseId, { now }),
-  }));
+  const courses = activeCourses(userId)
+    .map((course) => ({
+      courseId: course.courseId,
+      shortname: course.shortname,
+      fullname: course.fullname,
+      lastAccessAt: iso(course.lastAccess),
+      ...courseStatus(userId, course.courseId, { now }),
+    }))
+    .sort(byUrgency);
 
   // El feed mezcla lo que vence con lo que ya pasó (una nota publicada, un
   // anuncio): son la misma pregunta, "qué está pasando en mis materias".

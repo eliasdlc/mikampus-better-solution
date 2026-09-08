@@ -122,7 +122,8 @@ export async function syncCourses(userId, { call = callPva, now = Date.now() } =
 export function activeCourses(userId) {
   return db
     .prepare(
-      `SELECT course_id AS courseId, shortname, fullname, show_grades AS showGrades, format, lang
+      `SELECT course_id AS courseId, shortname, fullname, show_grades AS showGrades, format, lang,
+              last_access AS lastAccess
        FROM pva_course
        WHERE user_id = ? AND hidden = 0 AND missing_since IS NULL
        ORDER BY shortname`
