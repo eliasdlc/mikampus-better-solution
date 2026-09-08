@@ -45,6 +45,7 @@ import {
   blobOf,
 } from './moodle/documents.js';
 import { filesUsage } from './moodle/files.js';
+import { coursePairs, archivedCourses, hideCourse, showCourse, keepPair } from './moodle/materias.js';
 import { readGradeItems, courseTotals, gradebookAccess } from './moodle/grades.js';
 import {
   previewSubmission,
@@ -264,8 +265,12 @@ app.get('/api/aula/entregas', (req, res) => {
 app.get('/api/aula', (req, res) => {
   const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
   const pva = pvaLinkState();
+  const escondidas = archivedCourses(req.userId);
   res.json({
     ...aulaOverview(req.userId, { days }),
+    // Los pares vivos, con su evidencia, y cuántas hay guardadas en el cajón.
+    pairs: coursePairs(req.userId),
+    archived: { copies: escondidas.copies.length, previous: escondidas.previous.length },
     linked: pva.linked,
     // Por qué no hay nada: sin el motivo, un aula vacía se lee como "no tenés
     // materias" y la salida real queda invisible.
@@ -278,6 +283,33 @@ app.get('/api/aula/materia/:courseId', (req, res) => {
   const data = aulaCourse(req.userId, Number(req.params.courseId));
   if (!data) return res.status(404).json({ error: 'Esa materia no está en el aula sincronizada' });
   res.json(data);
+});
+
+// ── Las dos clases por materia ─────────────────────────────────────────────
+// La universidad crea dos y el profesor usa una. Esconder la copia es una
+// preferencia de la persona: vive en la base local y NUNCA toca la PVA.
+
+app.post('/api/aula/materia/:courseId/esconder', (req, res) => {
+  hideCourse(req.userId, Number(req.params.courseId), { key: req.body?.pairKey ?? null });
+  res.json({ ok: true });
+});
+
+app.post('/api/aula/materia/:courseId/mostrar', (req, res) => {
+  showCourse(req.userId, Number(req.params.courseId));
+  res.json({ ok: true });
+});
+
+// "Dejar las dos": el par no se vuelve a proponer.
+app.post('/api/aula/par/conservar', (req, res) => {
+  const ids = Array.isArray(req.body?.courseIds) ? req.body.courseIds.map(Number) : [];
+  if (!req.body?.pairKey || ids.length === 0) return res.status(400).json({ error: 'Falta el par a conservar' });
+  keepPair(req.userId, String(req.body.pairKey), ids);
+  res.json({ ok: true });
+});
+
+// Las escondidas: las copias de este ciclo y las materias de ciclos pasados.
+app.get('/api/aula/escondidas', (req, res) => {
+  res.json(archivedCourses(req.userId));
 });
 
 // ── El material de una materia ─────────────────────────────────────────────

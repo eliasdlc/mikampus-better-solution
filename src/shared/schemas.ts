@@ -1195,6 +1195,7 @@ export const aulaCourseCardSchema = z.object({
   // El nombre sin el código adelante. `fullname` lo repite: "CSTI-1930-5227 -
   // Inteligencia de Negocios", y nadie conoce su materia por ese código.
   name: z.string(),
+  progress: z.number().nullable().default(null),
   pending: z.number().int(),
   grade: z.object({
     // `checked` distingue "el libro está vacío" de "nunca se leyó el libro".
@@ -1236,6 +1237,28 @@ export type AulaModule = z.infer<typeof aulaModuleSchema>;
 export const aulaOverviewResponseSchema = z.object({
   courses: z.array(aulaCourseCardSchema),
   items: z.array(aulaFeedItemSchema),
+  // Un par es la misma materia en dos clases. Viaja con su evidencia para que
+  // la pantalla proponga en vez de decidir.
+  pairs: z
+    .array(
+      z.object({
+        key: z.string(),
+        name: z.string(),
+        courses: z.array(
+          z.object({
+            courseId: z.number().int(),
+            shortname: z.string(),
+            name: z.string(),
+            modules: z.number().int(),
+            assignments: z.number().int(),
+            files: z.number().int(),
+          })
+        ),
+        suggested: z.array(z.number().int()),
+      })
+    )
+    .default([]),
+  archived: z.object({ copies: z.number().int(), previous: z.number().int() }).default({ copies: 0, previous: 0 }),
   linked: z.boolean(),
   pvaReason: z.string().nullable().default(null),
   syncedAt: z.string().nullable(),
@@ -1273,6 +1296,28 @@ export const aulaModuleSchema = z.object({
   ),
   links: z.array(z.object({ name: z.string(), url: z.string(), host: z.string() })),
 });
+
+// ── Las escondidas ─────────────────────────────────────────────────────────
+// Dos grupos que no se pueden mezclar: la copia sin usar de una materia que
+// estás cursando, y las materias de un ciclo que ya terminó.
+
+const escondidaSchema = z.object({
+  courseId: z.number().int(),
+  shortname: z.string(),
+  name: z.string(),
+  cycle: z.string(),
+  hiddenRemote: z.boolean(),
+  hiddenLocal: z.boolean(),
+  modules: z.number().int(),
+  assignments: z.number().int(),
+  files: z.number().int(),
+});
+
+export const escondidasResponseSchema = z.object({
+  copies: z.array(escondidaSchema),
+  previous: z.array(escondidaSchema),
+});
+export type EscondidasResponse = z.infer<typeof escondidasResponseSchema>;
 
 // ── El material de una materia ─────────────────────────────────────────────
 // Tres estados, no dos: un archivo puede estar sin bajar, bajado, o bajado y

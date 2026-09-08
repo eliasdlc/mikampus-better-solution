@@ -4,6 +4,7 @@ import { Layout } from './components/Layout.tsx';
 import { Dashboard } from './routes/Dashboard.tsx';
 import { Horario } from './routes/Horario.tsx';
 import { Aula } from './routes/Aula.tsx';
+import { AulaEscondidas } from './routes/AulaEscondidas.tsx';
 import { AulaMateria } from './routes/AulaMateria.tsx';
 import { Inscripcion } from './routes/Inscripcion.tsx';
 import { Ciclo } from './routes/Ciclo.tsx';
@@ -84,6 +85,8 @@ export function App() {
               <Route path="/buscar" element={<Navigate to="/" replace />} />
               <Route path="/horario" element={<Horario />} />
               <Route path="/aula" element={<Aula />} />
+              {/* Antes que la de :courseId, o "escondidas" se lee como un id. */}
+              <Route path="/aula/escondidas" element={<AulaEscondidas />} />
               <Route path="/aula/:courseId" element={<AulaMateria />} />
               <Route path="/inscripcion" element={<Inscripcion />} />
               <Route path="/ciclo" element={<Ciclo />} />

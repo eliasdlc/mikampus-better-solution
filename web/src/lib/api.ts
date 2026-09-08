@@ -62,6 +62,8 @@ import {
   entregaPreviewSchema,
   entregaResultSchema,
   discusionesResponseSchema,
+  escondidasResponseSchema,
+  type EscondidasResponse,
   materialResponseSchema,
   busquedaMaterialSchema,
   descargaResultSchema,
@@ -260,6 +262,25 @@ export async function entregarTarea(
 // Las discusiones se leen en el momento: no hay copia local a la que responder.
 export async function fetchDiscusiones(forumId: number): Promise<DiscusionesResponse> {
   return discusionesResponseSchema.parse(await getJSON(`/api/pva/foro/${forumId}/discusiones`));
+}
+
+// ── Las dos clases por materia ──
+// Esconder es una preferencia local: no toca la PVA y se deshace.
+
+export async function esconderMateria(courseId: number, pairKey?: string): Promise<void> {
+  await send(`/api/aula/materia/${courseId}/esconder`, 'POST', { pairKey: pairKey ?? null });
+}
+
+export async function mostrarMateria(courseId: number): Promise<void> {
+  await send(`/api/aula/materia/${courseId}/mostrar`, 'POST', {});
+}
+
+export async function conservarPar(pairKey: string, courseIds: number[]): Promise<void> {
+  await send('/api/aula/par/conservar', 'POST', { pairKey, courseIds });
+}
+
+export async function fetchEscondidas(): Promise<EscondidasResponse> {
+  return escondidasResponseSchema.parse(await getJSON('/api/aula/escondidas'));
 }
 
 // ── El material de una materia ──

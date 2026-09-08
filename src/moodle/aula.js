@@ -1,5 +1,6 @@
 import { db } from '../db.js';
-import { activeCourses, courseTree } from './courses.js';
+import { courseTree } from './courses.js';
+import { visibleCourses } from './materias.js';
 import { readAlerts } from './alerts.js';
 import { upcoming } from './calendar.js';
 import { completionLabel, splitCourseTitle, submissionState } from '../shared/pva.ts';
@@ -122,13 +123,16 @@ function byUrgency(left, right) {
 
 /** La raíz del Aula: las materias del ciclo y lo que pasa esta semana. */
 export function aulaOverview(userId, { now = Date.now(), days = 7 } = {}) {
-  const courses = activeCourses(userId)
+  // `visibleCourses` saca además las que la persona escondió acá: la PVA no
+  // sabe que dos clases son la misma materia, y esa decisión es suya.
+  const courses = visibleCourses(userId)
     .map((course) => ({
       courseId: course.courseId,
       shortname: course.shortname,
       fullname: course.fullname,
       // El nombre sin el código adelante: es como la persona conoce su materia.
-      name: splitCourseTitle(course.fullname, course.shortname).name,
+      name: course.name,
+      progress: course.progress,
       lastAccessAt: iso(course.lastAccess),
       ...courseStatus(userId, course.courseId, { now }),
     }))

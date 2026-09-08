@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { BookOpen, ChevronRight, ExternalLink } from 'lucide-react';
+import { BookOpen, ChevronRight, ExternalLink, EyeOff } from 'lucide-react';
 import { fetchAula } from '../lib/api.ts';
 import { StalenessTag } from '../components/StalenessTag.tsx';
+import { MateriaCard } from '../components/MateriaCard.tsx';
+import { ParDeMaterias } from '../components/ParDeMaterias.tsx';
 import type { AulaFeedItem } from '../lib/aula.ts';
 import { feedLabel, gradeLabel, whenLabel } from '../lib/aula.ts';
 
@@ -99,8 +101,42 @@ export function Aula() {
         </div>
       ) : (
         <>
-          {/* La materia filtra esta misma pantalla. El chip activo es el filtro;
-              su nombre completo, abajo, es el que abre la materia. */}
+          {/* Un par es la misma materia en dos clases: se propone arriba, una
+              sola vez, con la evidencia a la vista. */}
+          {data.pairs.map((par) => (
+            <ParDeMaterias key={par.key} par={par} />
+          ))}
+
+          {/* Las materias como tarjetas (decisión 1A): el nombre manda, la
+              fecha de lo próximo es lo primero que se lee, y el orden ya viene
+              por lo que vence. */}
+          <div className="grid gap-2 sm:grid-cols-2">
+            {data.courses.map((course) => (
+              <MateriaCard key={course.courseId} course={course} />
+            ))}
+          </div>
+
+          {(data.archived.copies > 0 || data.archived.previous > 0) && (
+            <Link
+              to="/aula/escondidas"
+              className="border-line hover:bg-surface-2 flex min-h-11 items-center gap-2 rounded-[var(--radius)] border border-dashed px-3 py-2.5"
+            >
+              <EyeOff className="text-muted size-4 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">Escondidas</span>
+                <span className="text-muted mt-0.5 block text-xs">
+                  {data.archived.copies > 0 ? `${data.archived.copies} copias de este ciclo · ` : ''}
+                  {data.archived.previous} de ciclos pasados
+                </span>
+              </span>
+              <ChevronRight className="text-muted size-4 shrink-0" aria-hidden />
+            </Link>
+          )}
+
+          <h2 className="text-muted mt-2 text-[10px] font-semibold tracking-wide uppercase">Esta semana</h2>
+
+          {/* La materia filtra el feed de abajo. El chip activo es el filtro;
+              la tarjeta de arriba es la que abre la materia. */}
           <div className="flex gap-1.5 overflow-x-auto pb-1" role="group" aria-label="Filtrar por materia">
             <button
               type="button"
