@@ -786,6 +786,9 @@ const PERSONAL_TABLES = [
   'pva_assignment_inaccessible', 'pva_assignment', 'pva_module',
   'pva_course_section', 'pva_course_sync', 'pva_course', 'pva_functions', 'pva_identity',
   'pva_file', 'pva_link', 'pva_alert',
+  // Lo que la persona escondió es una preferencia SOBRE SUS materias: cambiar
+  // de cuenta no puede dejar la lista de otro decidiendo qué se ve.
+  'pva_course_pref',
 ];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.

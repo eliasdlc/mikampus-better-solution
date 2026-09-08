@@ -272,6 +272,12 @@ export const MIGRATIONS = [
     minCompatibleVersion: 1,
     up: createPvaWriteTable,
   },
+  {
+    version: 18,
+    name: 'pva-preferencias-de-materia',
+    minCompatibleVersion: 1,
+    up: createPvaCoursePrefTable,
+  },
 ];
 
 
@@ -1459,6 +1465,34 @@ export function createPvaAlertTable(db) {
   `);
 }
 
+
+/**
+ * Lo que la persona decidió sobre sus materias, que la PVA no sabe.
+ *
+ * La universidad crea DOS clases por materia y el profesor usa una. Esconder la
+ * copia es una preferencia del estudiante: en la plataforma se hace a mano, y
+ * mikampus tiene que poder hacerlo también sin tocar la PVA. Vive en su propia
+ * tabla y no como columna de `pva_course` porque esa la reescribe cada sync: un
+ * dato que la persona eligió no puede depender de que el servidor lo repita.
+ *
+ * `pair_key` guarda a qué par pertenece la decisión, para no volver a proponer
+ * lo mismo cuando ya se dijo que no.
+ */
+export function createPvaCoursePrefTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pva_course_pref (
+      user_id    INTEGER NOT NULL,
+      course_id  INTEGER NOT NULL,
+      hidden_at  INTEGER,                 -- NULL = visible. No se borra la fila: queda el rastro
+      pair_key   TEXT,                    -- nombre normalizado del par, cuando la decisión vino de uno
+      decision   TEXT CHECK (decision IN ('escondida','conservada')),
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, course_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pva_course_pref_ocultas
+      ON pva_course_pref (user_id) WHERE hidden_at IS NOT NULL;
+  `);
+}
 
 /**
  * El libro de escrituras de la PVA: toda intención de escribir en la

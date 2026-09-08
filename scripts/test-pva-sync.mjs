@@ -159,7 +159,7 @@ try {
       )
       .all()
       .map((row) => row.name);
-    assert.equal(tablas.length, 28, 'las 28 tablas del esquema de la PVA, sin contar las internas del índice');
+    assert.equal(tablas.length, 29, 'las 29 tablas del esquema de la PVA, sin contar las internas del índice');
     const conFilas = tablas.filter((tabla) => db.prepare(`SELECT count(*) AS n FROM ${tabla}`).get().n > 0);
     // pva_site_config es del sitio, no de la persona, y acá no se llenó.
     assert.equal(conFilas.length >= 12, true, `hay datos que borrar: ${conFilas.join(', ')}`);
