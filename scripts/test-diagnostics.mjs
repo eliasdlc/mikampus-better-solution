@@ -27,6 +27,12 @@ try {
     assert.ok(!limpio.includes(secreto), `redacta ${secreto}`);
   }
 
+  // El código de una materia en la PVA tiene la forma de una matrícula pegada a
+  // un prefijo, y es el nombre con el que se identifica cada aula: si la
+  // redacción se lo come, las doce materias de un ciclo se llaman igual.
+  assert.equal(diagnostics.redact('CSTI-1930-5236'), 'CSTI-1930-5236', 'un código de aula no es una matrícula');
+  assert.equal(diagnostics.redact('la sección 1930-5236 de hoy'), 'la sección [matrícula-redactada] de hoy');
+
   const file = diagnostics.writeDiagnostic('timeout', crudo, { now: new Date('2026-07-20T10:00:00Z') });
   assert.ok(fs.existsSync(file));
   assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'el archivo no es legible por otros usuarios');
