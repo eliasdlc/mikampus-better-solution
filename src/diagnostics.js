@@ -18,6 +18,17 @@ export const diagnosticsDir = path.join(dataPaths().dataDir, 'diagnostics');
 
 const KEEP = Math.max(1, Number(process.env.MIKAMPUS_DIAGNOSTICS_KEEP || 20));
 
+// La forma de una matrícula: ####-#### suelto. Los límites no son decorativos.
+// El código de una materia en la PVA tiene la misma forma pero pegada a un
+// prefijo (CSTI-1930-5236) y es el nombre con el que se identifica cada aula:
+// sin ellos, las doce materias de un ciclo salían todas llamadas
+// CSTI-[matrícula-redactada].
+//
+// Se exporta porque quien devuelva texto libre necesita poder avisar que la
+// redacción se lo va a tocar, y una segunda copia del patrón se desincroniza el
+// día que este cambie.
+export const MATRICULA = /(?<![\w-])\d{4}-\d{4}(?![\w-])/;
+
 // Lo que jamás debe quedar escrito en un archivo que el usuario podría adjuntar
 // a un issue. Cubre lo mismo que la política de fixtures: tokens de estado de
 // PeopleSoft, identificadores de estudiante y cualquier credencial en tránsito.
@@ -26,7 +37,7 @@ const REDACTIONS = [
   [/(EMPLID|ENRL_REQUEST_ID|STUDENT_ID)["'\s:=]+([A-Za-z0-9-]+)/gi, '$1=[redactado]'],
   [/(password|passwd|pwd|contraseña)["'\s:=]+\S+/gi, '$1=[redactado]'],
   [/(Cookie|Set-Cookie|Authorization)\s*:\s*[^\n]+/gi, '$1: [redactado]'],
-  [/\b\d{4}-\d{4}\b/g, '[matrícula-redactada]'],
+  [new RegExp(MATRICULA.source, 'g'), '[matrícula-redactada]'],
 ];
 
 export function redact(text) {

@@ -11,13 +11,42 @@ export function browserInstallCommand() {
   return [process.execPath, [path.join(playwrightDir, 'cli.js'), 'install', 'chromium']];
 }
 
+/**
+ * Un Chromium empaquetado como snap NO se puede automatizar.
+ *
+ * Su confinamiento le prohíbe leer el perfil que Playwright crea en /tmp, así
+ * que arranca y se muere en el acto: `ptrace: Input/output error` de crashpad y
+ * salida con SIGTRAP. En Ubuntu `/usr/bin/chromium-browser` es exactamente eso,
+ * un script de dos kilobytes que reenvía al snap, y es el navegador que la
+ * máquina trae de fábrica. Hay que descartarlo acá y no dejar que falle en la
+ * cara de la persona en medio de un login.
+ */
+export function isSnapLauncher(executable) {
+  try {
+    if (fs.realpathSync(executable).startsWith('/snap/')) return true;
+    // El shim es un script de texto: alcanza con leerle la cabeza.
+    const handle = fs.openSync(executable, 'r');
+    try {
+      const head = Buffer.alloc(512);
+      const read = fs.readSync(handle, head, 0, head.length, 0);
+      const text = head.subarray(0, read).toString('latin1');
+      return text.startsWith('#!') && /snap/i.test(text);
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch {
+    return false;
+  }
+}
+
 // Playwright puede automatizar un Chrome/Chromium ya instalado. No obligamos a
 // nadie a bajar otro navegador: la descarga administrada queda como respaldo
 // cuando el equipo no tiene uno compatible. `CHROME_PATH` permite cubrir
-// instalaciones portables o ubicaciones no estándar sin adivinar rutas.
+// instalaciones portables o ubicaciones no estándar sin adivinar rutas, y como
+// es una elección explícita de la persona, se respeta aunque sea un snap.
 export function systemBrowserExecutable() {
+  if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH;
   const candidates = [
-    process.env.CHROME_PATH,
     ...(process.platform === 'win32'
       ? [
           path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
@@ -29,7 +58,21 @@ export function systemBrowserExecutable() {
         ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium']
         : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser']),
   ].filter(Boolean);
-  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+  return candidates.find((candidate) => fs.existsSync(candidate) && !isSnapLauncher(candidate)) ?? null;
+}
+
+/**
+ * Cuál de los dos se usa.
+ *
+ * El administrado va primero cuando ya está bajado: es el build contra el que
+ * esta versión de Playwright se probó, y elegirlo no le cuesta nada a nadie
+ * porque ya está en disco. El del sistema queda para el equipo que no tiene
+ * ninguno, que es el caso para el que existía la preferencia original.
+ */
+export function preferredBrowser({ managed = null, system = null } = {}) {
+  if (managed) return { executable: managed, source: 'managed' };
+  if (system) return { executable: system, source: 'system' };
+  return { executable: null, source: null };
 }
 
 // ¿Ya hay un browser usable? Playwright es el dueño de la respuesta: sabe qué
@@ -40,12 +83,12 @@ export async function browserStatus() {
   try {
     const { chromium } = await import('playwright');
     const managedExecutable = chromium.executablePath();
-    const systemExecutable = systemBrowserExecutable();
-    // Preferimos el navegador que la persona ya tiene. Playwright conserva la
-    // misma API y sigue ejecutándolo en background; no abre ni modifica Chrome.
-    if (systemExecutable) return { installed: true, executable: systemExecutable, root: browsers, source: 'system' };
-    if (fs.existsSync(managedExecutable)) return { installed: true, executable: managedExecutable, root: browsers, source: 'managed' };
-    return { installed: false, executable: null, root: browsers, source: null };
+    const pick = preferredBrowser({
+      managed: fs.existsSync(managedExecutable) ? managedExecutable : null,
+      system: systemBrowserExecutable(),
+    });
+    if (!pick.executable) return { installed: false, executable: null, root: browsers, source: null };
+    return { installed: true, executable: pick.executable, root: browsers, source: pick.source };
   } catch (error) {
     return { installed: false, executable: null, root: browsers, source: null, error: error.message };
   }

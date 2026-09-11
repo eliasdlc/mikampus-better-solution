@@ -2,7 +2,7 @@
 // clase. Es lo primero que ve el usuario al abrir la app, así que equivocarse
 // acá se nota antes que en ningún otro lado.
 import assert from 'node:assert/strict';
-import { agendaFor, dayCodeOf, nextClass } from '../src/shared/agenda.ts';
+import { agendaFor, dayCodeOf, nextClass, dayTimeline, weekTimeline, nextThing } from '../src/shared/agenda.ts';
 
 const B = (day, start, end, id) => ({ day, start, end, id });
 
@@ -62,5 +62,67 @@ assert.equal(nextClass(soloLunes, jueves(9)).block.id, 'lunes');
 
 // Sin horario no hay próxima clase, y buscarla no cuelga.
 assert.equal(nextClass([], jueves(9)), null);
+
+// ── Una sola semana: clases y entregas ────────────────────────────────────
+//
+// Una clase es un bloque con principio y fin; una entrega es un instante. Lo
+// que se prueba acá es que convivan ordenadas y que el día de una entrega se
+// resuelva en hora local: en Santo Domingo, una entrega de las 11:59 pm es del
+// día siguiente en UTC, y ese es justo el día en que ya no se puede entregar.
+
+// Jueves 16 de julio de 2026, 11:59 pm hora local.
+const entregaTarde = { at: Math.floor(new Date(2026, 6, 16, 23, 59).getTime() / 1000), id: 'assign:1', title: 'Informe final' };
+const entregaManana = { at: Math.floor(new Date(2026, 6, 16, 10, 0).getTime() / 1000), id: 'assign:2', title: 'Quiz' };
+
+const dia = dayTimeline(blocks, [entregaTarde, entregaManana], jueves(9));
+assert.deepEqual(
+  dia.map((entry) => (entry.kind === 'class' ? `clase:${entry.block.id}` : `entrega:${entry.deadline.id}`)),
+  ['clase:manana', 'entrega:assign:2', 'clase:tarde', 'entrega:assign:1'],
+  'clases y entregas conviven en orden de reloj, y a la misma hora la clase va primero'
+);
+assert.equal(dia[1].endsAt, null, 'una entrega no ocupa espacio: no tiene fin');
+
+// La entrega de las 11:59 pm es de ESE jueves, no del viernes.
+assert.equal(dayTimeline(blocks, [entregaTarde], new Date(2026, 6, 17)).length, 0, 'el viernes no hereda la entrega del jueves');
+assert.equal(
+  dayTimeline([], [entregaTarde], jueves(9)).length,
+  1,
+  'la entrega de las 11:59 pm cae en su propio día, no en el siguiente por UTC'
+);
+
+// La semana: siete días, cada uno con lo suyo.
+const semana = weekTimeline(blocks, [entregaTarde], new Date(2026, 6, 13), 7);
+assert.equal(semana.length, 7);
+assert.deepEqual(
+  semana.filter((day) => day.entries.length).map((day) => day.date.getDate()),
+  [13, 16, 18],
+  'lunes con clase, jueves con dos clases y una entrega, sábado con clase'
+);
+
+// ── Qué sigue: puede ser una entrega ──
+// Decir "tu próxima clase es el lunes" cuando hay una entrega esta noche es
+// contestar otra pregunta.
+// A las 21:30 ya terminó la clase de la tarde: lo próximo es la entrega de las
+// 11:59 pm, no la clase del sábado.
+const conEntrega = nextThing(blocks, [entregaTarde], jueves(21, 30));
+assert.equal(conEntrega.kind, 'deadline');
+assert.equal(conEntrega.deadline.id, 'assign:1');
+
+const conClase = nextThing(blocks, [entregaTarde], jueves(9));
+assert.equal(conClase.kind, 'class', 'la clase de las 10 llega antes que la entrega de las 11:59 pm');
+
+// Una clase en curso gana: es lo que estás teniendo.
+const enClase = nextThing(blocks, [entregaTarde], jueves(11));
+assert.equal(enClase.kind, 'class');
+assert.equal(enClase.ongoing, true);
+
+// Lo ya entregado no vuelve a pedir atención.
+const entregada = { ...entregaTarde, submitted: true };
+assert.equal(nextThing([], [entregada], jueves(21, 30)), null, 'una entrega hecha no es lo próximo que hay que hacer');
+assert.equal(
+  nextThing([], [{ ...entregaTarde, submitted: null }], jueves(21, 30)).kind,
+  'deadline',
+  'y "no se sabe" no es "ya está"'
+);
 
 console.log('✓ agenda del día y próxima clase (bordes de hora, vuelta de semana, horario vacío)');

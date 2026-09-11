@@ -64,6 +64,9 @@ try {
 
   // ── Sin sesión: pausa, no error, y el dato cacheado se conserva ───────────
   restores.push(orchestrator.setSessionProbe(() => false));
+  // La PVA es la otra fuente, con su propia credencial: acá se la deja
+  // vinculada a propósito, para comprobar que un portal caído no la arrastra.
+  restores.push(orchestrator.setPvaProbe(() => true));
   stubAll();
   const sinSesion = await orchestrator.runSync(USER, { force: true, emit: () => {} });
   const horarioPausado = statusOf(sinSesion, 'mySchedule');
@@ -75,6 +78,11 @@ try {
   assert.ok(
     calls.includes('academicCalendar'),
     'el calendario es público: sin sesión de PeopleSoft sigue actualizándose'
+  );
+  assert.equal(
+    statusOf(sinSesion, 'pvaCourses').status,
+    'updated',
+    'la PVA tiene su propia credencial: que micampus esté caído no la puede tumbar'
   );
 
   // Repetir no genera un loop de reintentos contra el portal.
@@ -88,6 +96,7 @@ try {
 
   // ── Con sesión: se ejecuta y explica qué omitió y por qué ─────────────────
   restores.push(orchestrator.setSessionProbe(() => true));
+  restores.push(orchestrator.setPvaProbe(() => true));
   calls.length = 0;
   const conSesion = await orchestrator.runSync(USER, { force: true, emit: () => {} });
 
@@ -126,6 +135,7 @@ try {
   while (restores.length) restores.pop()();
   calls.length = 0;
   restores.push(orchestrator.setSessionProbe(() => true));
+  restores.push(orchestrator.setPvaProbe(() => true));
   stubAll({ failing: new Set(['grades']) });
   const conFallo = await orchestrator.runSync(USER, { force: true, emit: () => {} });
   assert.equal(statusOf(conFallo, 'grades').status, 'error');
@@ -160,6 +170,7 @@ try {
   db.prepare('DELETE FROM sync_sources').run();
   db.prepare('DELETE FROM sync_log').run();
   restores.push(orchestrator.setSessionProbe(() => true));
+  restores.push(orchestrator.setPvaProbe(() => true));
   stubAll({ failing: new Set(['terms']) });
   await orchestrator.runSync(USER, { force: true, emit: () => {} });
   const ciclosRotos = orchestrator.syncState(USER).sources.find((source) => source.key === 'terms');
@@ -175,6 +186,7 @@ try {
   while (restores.length) restores.pop()();
   calls.length = 0;
   restores.push(orchestrator.setSessionProbe(() => true));
+  restores.push(orchestrator.setPvaProbe(() => true));
   stubAll();
   db.prepare("INSERT INTO schedules (user_id, at_iso, state) VALUES (?, ?, 'submitting')").run(
     USER,
@@ -241,6 +253,7 @@ try {
   db.prepare('DELETE FROM sync_sources').run();
   db.prepare('DELETE FROM sync_log').run();
   restores.push(orchestrator.setSessionProbe(() => true));
+  restores.push(orchestrator.setPvaProbe(() => true));
   stubAll({ failing: new Set(['mySchedule']) });
   await orchestrator.runSync(USER, { force: true, emit: () => {} });
 

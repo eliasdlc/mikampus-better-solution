@@ -14,11 +14,32 @@ import { dataPaths } from './paths.js';
 export const USER_KEY = 'MIKAMPUS_PORTAL_USER';
 export const PASSWORD_KEY = 'MIKAMPUS_PORTAL_PASSWORD';
 
+// La PVA (el Moodle de PUCMM) es la segunda fuente y pide su propia
+// contraseña: el usuario es el mismo del portal, la contraseña no. Su token de
+// Web Service vive acá y no en la base, porque no caduca solo: vale hasta que
+// alguien lo revoque, así que es una credencial y no un dato. Por eso tampoco
+// entra a los backups, que copian la base y nada más.
+export const PVA_PASSWORD_KEY = 'MIKAMPUS_PVA_PASSWORD';
+export const PVA_TOKEN_KEY = 'MIKAMPUS_PVA_TOKEN';
+// La tercera credencial del dominio, y la más fácil de confundir con un dato:
+// `userprivateaccesskey` viene dentro de la respuesta de site_info y abre el
+// calendario y los archivos SIN sesión. Vive acá y no en la base, y sirve para
+// bajar materiales por tokenpluginfile.php, que no deja el token en la query.
+export const PVA_ACCESS_KEY_KEY = 'MIKAMPUS_PVA_ACCESS_KEY';
+// La huella de la contraseña del portal que la PVA YA rechazó. No es una
+// credencial: es lo que evita gastar un intento por login contra una cuenta que
+// puede bloquearse. Vive acá y no en la base por la misma razón que el token,
+// que el archivo no entra a los backups.
+export const PVA_AUTOLINK_KEY = 'MIKAMPUS_PVA_AUTOLINK_RECHAZADA';
+
 const HEADER = [
-  '# Credencial de micampus que usa mikampus para entrar al portal por vos.',
-  '# Iniciar sesión en la app escribe estas dos líneas; cerrar sesión las vacía.',
+  '# Credenciales que usa mikampus para entrar por vos. Son dos fuentes.',
+  '# micampus (PeopleSoft): usuario y contraseña del portal.',
+  '# PVA (Moodle): el MISMO usuario, con SU propia contraseña, y el token que',
+  '# mikampus saca con ella. El token no caduca: vale hasta que se revoque.',
+  '# Iniciar sesión en la app las escribe; cerrar sesión las vacía todas.',
   '# Podés editarlas a mano: el cambio aplica en la próxima operación.',
-  '# Si el portal rechaza la credencial, mikampus la borra y te saca de la sesión.',
+  '# Si una fuente rechaza su contraseña, mikampus borra la suya y deja la otra.',
 ].join('\n');
 
 export function credentialFilePath(env = process.env) {
@@ -92,7 +113,13 @@ function upsert(file, values) {
 
 export function ensureCredentialFile(file = credentialFilePath()) {
   if (readText(file) != null) return file;
-  upsert(file, { [USER_KEY]: '', [PASSWORD_KEY]: '' });
+  upsert(file, {
+    [USER_KEY]: '',
+    [PASSWORD_KEY]: '',
+    [PVA_PASSWORD_KEY]: '',
+    [PVA_TOKEN_KEY]: '',
+    [PVA_ACCESS_KEY_KEY]: '',
+  });
   return file;
 }
 
@@ -113,8 +140,96 @@ export function writeCredential({ username, password }, file = credentialFilePat
 }
 
 // Vaciar en vez de borrar el archivo: la persona sigue viendo dónde iría.
+// Solo las llaves del portal: que PeopleSoft rechace su contraseña no dice nada
+// de la de la PVA, y tumbar las dos fuentes por un rechazo de una sola es
+// exactamente lo que no puede pasar. Cerrar sesión sí vacía todo, llamando
+// también a deletePvaCredential.
 export function deleteCredential(file = credentialFilePath()) {
   upsert(file, { [USER_KEY]: '', [PASSWORD_KEY]: '' });
+}
+
+// ── PVA (Moodle) ───────────────────────────────────────────────────────────
+
+// El usuario sale de la llave del portal: es la misma persona, y así no hay dos
+// copias del nombre de usuario que puedan discrepar. La consecuencia, y es
+// deliberada: vaciar la credencial del portal deja a la PVA sin con qué sacar
+// un token nuevo, aunque el que ya tenga siga sirviendo. Volver a entrar al
+// portal la devuelve a como estaba, porque su contraseña nunca se tocó.
+export function readPvaCredential(file = credentialFilePath()) {
+  const text = readText(file);
+  if (text == null) return null;
+  const values = parse(text);
+  const username = values[USER_KEY]?.trim() ?? '';
+  const password = values[PVA_PASSWORD_KEY] ?? '';
+  if (!username || !password) return null;
+  return { username, password };
+}
+
+export function writePvaPassword(password, file = credentialFilePath()) {
+  if (!password) throw new Error('La contraseña de la PVA es obligatoria');
+  upsert(file, { [PVA_PASSWORD_KEY]: String(password) });
+}
+
+export function readPvaToken(file = credentialFilePath()) {
+  const text = readText(file);
+  if (text == null) return null;
+  const token = parse(text)[PVA_TOKEN_KEY]?.trim() ?? '';
+  return token || null;
+}
+
+export function writePvaToken(token, file = credentialFilePath()) {
+  if (!token) throw new Error('El token de la PVA es obligatorio');
+  upsert(file, { [PVA_TOKEN_KEY]: String(token) });
+}
+
+export function readPvaAccessKey(file = credentialFilePath()) {
+  const text = readText(file);
+  if (text == null) return null;
+  const key = parse(text)[PVA_ACCESS_KEY_KEY]?.trim() ?? '';
+  return key || null;
+}
+
+export function writePvaAccessKey(key, file = credentialFilePath()) {
+  if (!key) throw new Error('La llave de acceso de la PVA es obligatoria');
+  upsert(file, { [PVA_ACCESS_KEY_KEY]: String(key) });
+}
+
+// El token murió (revocado, o cambió la contraseña de la PVA) pero la
+// contraseña guardada puede seguir sirviendo: se tira solo el token y la
+// próxima llamada saca uno nuevo.
+export function forgetPvaToken(file = credentialFilePath()) {
+  // La llave de acceso se va con el token: las dos salen de la misma sesión y
+  // una llave vieja contra un token nuevo solo produce 403 silenciosos.
+  upsert(file, { [PVA_TOKEN_KEY]: '', [PVA_ACCESS_KEY_KEY]: '' });
+}
+
+// La PVA rechazó la contraseña, o se cerró sesión: fuera las dos llaves. El
+// portal no se toca.
+//
+// La huella del rechazo también se va, y eso es a propósito: cerrar sesión y
+// volver a entrar es el modo de pedir un intento nuevo. Si la contraseña de la
+// PVA se cambió allá para que coincida con la del portal, esa es la única forma
+// de decírselo a mikampus sin abrir una pantalla nueva.
+export function deletePvaCredential(file = credentialFilePath()) {
+  upsert(file, { [PVA_PASSWORD_KEY]: '', [PVA_TOKEN_KEY]: '', [PVA_ACCESS_KEY_KEY]: '', [PVA_AUTOLINK_KEY]: '' });
+}
+
+// El intento automático con la contraseña del portal se hace UNA vez por
+// contraseña: si la PVA la rechazó, repetirlo en cada login solo acerca el
+// bloqueo por intentos. Cambiar la contraseña del portal cambia la huella y
+// habilita un intento nuevo, que es justo cuando vale la pena reintentar.
+export function pvaAutolinkRejected(file = credentialFilePath()) {
+  if (!fs.existsSync(file)) return null;
+  const mark = parse(fs.readFileSync(file, 'utf8'))[PVA_AUTOLINK_KEY]?.trim() ?? '';
+  return mark || null;
+}
+
+export function markPvaAutolinkRejected(fingerprint, file = credentialFilePath()) {
+  upsert(file, { [PVA_AUTOLINK_KEY]: String(fingerprint) });
+}
+
+export function clearPvaAutolinkRejected(file = credentialFilePath()) {
+  upsert(file, { [PVA_AUTOLINK_KEY]: '' });
 }
 
 // Lo que la UI puede mostrar: quién está guardado y en qué archivo. Nunca la

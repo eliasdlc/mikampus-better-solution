@@ -86,7 +86,11 @@ export function notify(title, body, { urgency = 'normal', link = null } = {}) {
 // notificación que importaba.
 export function noticeFor(event) {
   if (event.type === 'notice') {
-    const urgency = event.level === 'error' ? 'critical' : 'normal';
+    // Un error siempre interrumpe; además, quien emite puede pedir urgencia por
+    // su cuenta. Lo usa el aviso de "esto vence pronto", que es el único del
+    // aula con una fecha detrás y no puede auto-cerrarse mientras mirás otra
+    // ventana.
+    const urgency = event.urgency ?? (event.level === 'error' ? 'critical' : 'normal');
     // key agrupa lo repetible para el dedupe: sin ella, un watcher que falla
     // cada 45s son 80 popups por hora del mismo error.
     return {

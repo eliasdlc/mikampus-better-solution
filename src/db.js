@@ -777,10 +777,26 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_sync_log_kind ON sync_log(kind, user_id,
 const PERSONAL_TABLES = [
   'grades', 'enrollments', 'progress_items', 'holds', 'cart_rows',
   'profile', 'enrollment_windows', 'term_events', 'pensum', 'requirement_progress',
+  // Lo de la PVA es tan personal como lo de micampus: cambiar de cuenta o
+  // borrar los datos se lo lleva igual. Solo van las tablas con user_id; sus
+  // hijas (fechas de módulo, config de tarea, valor de nota, retroalimentación,
+  // bitácora de cambios) caen por FK con ON DELETE CASCADE.
+  'pva_calendar_event', 'pva_notification', 'pva_forum', 'pva_grade_item',
+  'pva_course_total', 'pva_gradebook_access', 'pva_submission',
+  'pva_assignment_inaccessible', 'pva_assignment', 'pva_module',
+  'pva_course_section', 'pva_course_sync', 'pva_course', 'pva_functions', 'pva_identity',
+  'pva_file', 'pva_link', 'pva_alert',
+  // Lo que la persona escondió es una preferencia SOBRE SUS materias: cambiar
+  // de cuenta no puede dejar la lista de otro decidiendo qué se ve.
+  'pva_course_pref',
 ];
 // Los `kind` de sync_log de esos mismos datos: hay que borrarlos también, o el
 // StalenessTag seguiría diciendo "actualizado hace 2h" sobre tablas ya vacías.
-const PERSONAL_SYNC_KINDS = ['grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows'];
+const PERSONAL_SYNC_KINDS = [
+  'grades', 'mySchedule', 'advisement', 'holds', 'cart', 'enrollmentWindows',
+  'pvaIdentity', 'pvaCourses', 'pvaContents', 'pvaAssignments', 'pvaSubmissions',
+  'pvaGrades', 'pvaCalendar', 'pvaForums', 'pvaNotifications', 'pvaFiles', 'pvaAlerts',
+];
 
 // Borra todo lo que es de UNA persona: sus filas, nunca las de otro usuario ni
 // lo compartido. Lo usa el cambio de cuenta local y el "Borrar mis datos" (§8).
@@ -796,11 +812,19 @@ export function clearPersonalData(userId) {
       userId,
       ...PERSONAL_SYNC_KINDS
     );
+    // El índice de texto de los materiales es una tabla FTS5 de contenido
+    // externo: borrar pva_file_text por cascada NO lo vacía, y sus términos
+    // seguirían apareciendo en una búsqueda de la cuenta siguiente.
+    db.exec("INSERT INTO pva_file_text_fts (pva_file_text_fts) VALUES ('delete-all')");
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
   }
+
+  // Los materiales del aula viven en disco, fuera de la base. Cambiar de cuenta
+  // sin borrarlos dejaría los PDF de la persona anterior en el equipo.
+  fs.rmSync(dataPaths().pvaFiles, { recursive: true, force: true });
 }
 
 // El "Borrar todos mis datos" del §8: lo de clearPersonalData MÁS el trabajo
@@ -814,7 +838,9 @@ export function deleteAllUserData(userId) {
     // portal: es el bookkeeping de cuándo se consultó. Dejarlo vivo después de
     // un borrado haría que el control de sincronización siguiera diciendo
     // "actualizado hace 2h" sobre tablas ya vacías.
-    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'sessions', 'push_subscriptions', 'sync_sources']) {
+    // pva_write va con action_log y no con las tablas personales: es el recibo
+    // de lo que mikampus escribió, no un dato del aula.
+    for (const table of ['plans', 'goals', 'schedules', 'watchers', 'action_log', 'pva_write', 'sessions', 'push_subscriptions', 'sync_sources']) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
     }
     db.prepare('DELETE FROM sync_log WHERE user_id = ?').run(userId);

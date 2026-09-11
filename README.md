@@ -40,6 +40,9 @@ Hoy funciona:
 5. **Buscar materias** — ⌘K, resultados instantáneos del catálogo cacheado
    (índice MiniSearch en el cliente, insensible a acentos).
 6. **Actividad en vivo** — cada operación Playwright reporta su progreso por SSE.
+7. **Tu agente de IA** — un servidor MCP de solo lectura sobre la base local, con
+   dieciocho herramientas mapeadas a preguntas y no a tablas. Ver
+   [Tu agente de IA (MCP)](#tu-agente-de-ia-mcp).
 
 Dos cosas que el portal no puede hacer, porque no corre en tu máquina y no
 recuerda:
@@ -178,6 +181,141 @@ flujo de update detiene el agente y respalda la base antes de tocar nada. El
 instalador por plataforma llega con la fase de distribución (ver
 [`docs/adr/0002-data-lifecycle.md`](./docs/adr/0002-data-lifecycle.md)).
 
+## Tu agente de IA (MCP)
+
+mikampus expone sus datos por [Model Context Protocol](https://modelcontextprotocol.io),
+así que Claude Code —o cualquier cliente MCP— puede contestar "¿qué entrego esta
+semana?" o "resumime la lectura de cálculo" leyendo tu base local. El servidor es
+un **proceso aparte**: habla por stdio con el cliente que lo lanza y no necesita
+que el agente de mikampus esté corriendo ni que haya un puerto abierto.
+
+Es, de fábrica, **solo lectura**. La conexión a SQLite se abre sin permiso de
+escritura y con `PRAGMA query_only`, cada consulta se valida contra una
+allowlist de tabla y columna, y toda respuesta pasa por una redacción final. Ni
+la contraseña del portal, ni la llave de la PVA, ni tu matrícula salen por acá.
+
+### Instalar
+
+El servidor lee la base que llenó **tu** mikampus, así que el orden importa:
+primero instalá mikampus en esa máquina, entrá con tu cuenta y dejá que
+sincronice al menos una vez. Sin base, el servidor arranca y avisa que no la
+encuentra.
+
+Desde un checkout del repo:
+
+```bash
+npm ci
+claude mcp add -s user mikampus -- node /ruta/al/repo/src/mcp/stdio.js
+```
+
+`-s user` lo deja disponible en cualquier proyecto; sin esa bandera queda solo
+en el directorio desde el que lo agregaste.
+
+El paquete `mikampus` todavía no está publicado en npm: mientras tanto, una
+instalación global se arma desde el checkout (`npm run prepack && npm i -g .`) y
+deja el binario `mikampus-mcp`, que hace lo mismo sin depender de la ruta del
+repo:
+
+```bash
+claude mcp add mikampus -- mikampus-mcp
+```
+
+Cualquier otro cliente MCP usa la misma forma. La configuración equivalente:
+
+```json
+{
+  "mcpServers": {
+    "mikampus": {
+      "command": "node",
+      "args": ["/ruta/al/repo/src/mcp/stdio.js"]
+    }
+  }
+}
+```
+
+Si tus datos no están en la ubicación por defecto, pasale `MIKAMPUS_DATA_DIR` en
+el entorno del servidor: resuelve rutas igual que el agente y nunca usa el CWD.
+
+Para comprobar que quedó vivo, `claude mcp list` tiene que mostrarlo conectado;
+el propio proceso escribe a stderr si arrancó en solo lectura o con acciones.
+
+### Cuando mikampus corre en otra máquina
+
+El servidor habla por stdio, y stdio no exige que el proceso sea local: exige
+que haya una tubería. SSH es una tubería. Así que si mikampus vive en un equipo
+que siempre está encendido y vos trabajás en otro, el cliente lanza el servidor
+**allá** y lee la base de allá, sin copiar datos ni abrir un puerto:
+
+```bash
+claude mcp add -s user mikampus -- ssh -T <equipo> /ruta/al/node /ruta/al/repo/src/mcp/stdio.js
+```
+
+Tres detalles que deciden si funciona a la primera:
+
+- **La ruta absoluta del `node`.** Una sesión SSH no interactiva no carga tu
+  shell de login, así que un gestor de versiones (mise, nvm, asdf) no está
+  activo y `node` puede resolver a otra versión, o a ninguna. Comprobalo con
+  `ssh <equipo> /ruta/al/node --version` antes de agregarlo.
+- **`-T` y stdout limpio.** El canal del protocolo es stdout: un banner o un MOTD
+  lo corrompen. `ssh <equipo> true | cat -A` tiene que no imprimir nada.
+- **Llave sin passphrase.** El cliente lanza el proceso solo; si SSH pide algo,
+  la conexión no llega a levantar. `ControlMaster` en tu `~/.ssh/config` hace que
+  la segunda conexión entre al instante.
+
+Lo que ganás es que los datos no se duplican y el equipo que scrapea es el mismo
+que contesta. Lo que pagás es que si ese equipo está apagado o fuera de alcance,
+el MCP no responde: es un cambio de "la base vive conmigo" a "la base vive allá".
+
+### Qué contesta
+
+Dieciocho herramientas mapeadas a preguntas, no a tablas. Todas devuelven el
+mismo sobre: `data`, `freshness` (qué tan viejo es lo que estás leyendo),
+`warnings` y `unknown` (lo que **no** se sabe y por qué). Ese último campo es lo
+que hace estructuralmente imposible que el agente rellene un hueco con un
+invento.
+
+| Plataforma | Herramientas |
+| --- | --- |
+| MiCampus (expediente) | `get_overview`, `get_cycle`, `get_schedule`, `get_academics`, `get_degree_progress`, `find_courses`, `suggest_load`, `get_blockers`, `get_upcoming`, `get_activity` |
+| PVA (el aula, Moodle) | `get_pva_courses`, `get_pva_due`, `get_pva_assignment`, `get_pva_grades`, `get_pva_announcements`, `get_pva_section`, `search_pva_files`, `get_pva_file` |
+
+El recurso `mikampus://about` trae el glosario y la lista de lo que mikampus no
+sabe; conviene que el cliente lo cargue antes de la primera pregunta.
+
+La nota del aula y la del expediente **no** son la misma, y el servidor lo repite
+en cada respuesta que las toca: `get_pva_grades` es el libro que el profesor
+lleva en su Moodle, `get_academics` es el expediente oficial.
+
+**Leer un material.** `search_pva_files` busca por dentro de los PDF,
+presentaciones y documentos ya descargados y devuelve el fragmento con su
+`fileId`; `get_pva_file` toma ese id y devuelve el texto completo en partes de
+20 000 caracteres (mientras el sobre traiga `nextOffset`, el documento sigue).
+Sale **texto extraído**, nunca el fichero ni su ruta en tu disco. Un material que
+la PVA declara pero que todavía no se bajó lo dice en `unknown` en vez de
+contestar vacío.
+
+### El carril de acción
+
+Apagado salvo que lo enciendas con `--allow-actions`. Sin la bandera, el proceso
+ni siquiera importa el módulo de acciones ni abre una conexión de escritura:
+
+```bash
+claude mcp add mikampus -- node /ruta/al/repo/src/mcp/stdio.js --allow-actions
+```
+
+Encendido, agrega `propose_action`, `confirm_action`, `cancel_action` y
+`list_pending_actions`. **`propose_action` nunca ejecuta**: deja una propuesta
+esperando, y `confirm_action` exige un código de seis dígitos de un solo uso que
+mikampus te manda por push al teléfono, fuera de la conversación. Si no hay un
+dispositivo suscrito, el proceso lo dice al arrancar en vez de descubrirlo
+cuando ya haya una baja esperando confirmación. Todo queda en `action_log`.
+
+Ese push necesita las llaves VAPID (`MIKAMPUS_VAPID_PUBLIC` y
+`MIKAMPUS_VAPID_PRIVATE`) en el entorno del servidor. `dotenv` las lee del `.env`
+del directorio desde el que arranque el proceso, que no tiene por qué ser el
+repo: si tu cliente no las hereda, pasáselas con `-e` al agregarlo. El carril de
+lectura no las necesita para nada.
+
 ## Garantías y límites operativos
 
 | Tema | Lo que mikampus hace | Límite que no oculta |
@@ -234,6 +372,7 @@ node scripts/make-fixture.mjs screenshots/recon-schedule-list.html  # revisar y 
 
 - `src/login.js` — login contra el signon real de PUCMM.
 - `src/session.js` — la única sesión del operador, en fila (nunca dos acciones de Playwright en paralelo), con re-login solo si la credencial autorizada sigue vigente.
+- `src/moodle/`: la PVA por sus Web Services oficiales, sin navegador. `client.js` (parámetros aplanados, excepciones que llegan con HTTP 200, reintentos ante 429 y 5xx, tope de dos llamadas en vuelo) y `session.js` (el token como credencial: se saca de la contraseña guardada, se renueva cuando el sitio dice que murió y se descarta al cerrar sesión). Encima, la lectura del aula hacia las tablas `pva_*`: identidad y catálogo de funciones, materias con sus secciones y módulos, tareas con su estado de entrega, libro de calificaciones, calendario de lo que vence, foros y campanita. El delta lo da el servidor (`core_course_get_updates_since`) y nada se borra en duro: lo que deja de venir se marca. Los materiales se bajan aparte, con presupuesto: `files.js` (descarga condicional por ETag, deduplicada por sha256, con tope por archivo y por disco) y `extract.js` (texto de PDF, Word, PowerPoint y páginas, con FTS5 encima). Lo que no deja texto se guarda igual y se dice por qué, en vez de fingir que se indexó. Encima, `alerts.js`: tarea nueva, tarea por vencer, nota publicada y anuncio del profesor, cada uno con el disparo que la plataforma permite y todos apagados hasta que los enciendas.
 - `src/peoplesoft/cart.js` — lee el carrito y el estado (Open/Closed/Wait List) de cada materia.
 - `src/peoplesoft/enroll.js` — corre el asistente de inscripción (Step 1→2→3) sobre todo el carrito y reporta éxito/error por materia.
 - `src/peoplesoft/classSearch.js` — busca clases por término/carrera/código y las agrega al carrito, incluyendo los pasos intermedios que PeopleSoft pida (sección relacionada, preferencias de inscripción).
@@ -283,7 +422,8 @@ node scripts/sync-catalog.mjs ICC MAT       # títulos + secciones de un subject
 
 ## Riesgos a tener en cuenta
 
-- **Credenciales**: se ingresan en la UI una vez y quedan en `credenciales.env` dentro de la carpeta de datos (`~/.local/share/mikampus/` en Linux), en texto claro y con permisos 0600. Podés editar o vaciar ese archivo a mano; cerrar sesión lo vacía. Nunca lo compartas ni lo subas a un repo.
+- **Materiales del aula**: la copia local de lo que el profesor subió a la PVA vive en `pva/` dentro de la carpeta de datos, nunca en la base ni en las copias de seguridad. Tiene tope por archivo y por disco (25 MB y 500 MB por defecto) y se borra con el resto de tus datos.
+- **Credenciales**: se ingresan en la UI una vez y quedan en `credenciales.env` dentro de la carpeta de datos (`~/.local/share/mikampus/` en Linux), en texto claro y con permisos 0600. Son dos fuentes con el mismo usuario: micampus (PeopleSoft) y la PVA (Moodle), cada una con su contraseña, más el token de Web Service que mikampus obtiene con la de la PVA. Podés editar o vaciar ese archivo a mano; cerrar sesión lo vacía entero. Nunca lo compartas ni lo subas a un repo.
 - **Política institucional**: varias universidades consideran estos bots una forma de saltarse el proceso de inscripción frente a otros estudiantes y han introducido límites de intentos de login o monitoreo tras detectarlos. Vale la pena revisar el reglamento de PUCMM antes de dejarlo corriendo en producción.
 - **No sumar carga en el pico**: el intervalo de polling del watcher no debe bajar de los ~30-45s durante la ventana de alta demanda.
 - **Selección de sección relacionada**: si una materia tiene varias secciones de práctico disponibles, `addClassToCart` elige la primera que encuentra — no hay todavía forma de elegir manualmente cuál.

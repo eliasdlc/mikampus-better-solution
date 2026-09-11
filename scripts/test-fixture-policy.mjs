@@ -2,11 +2,16 @@ import assert from 'node:assert/strict';
 import { readdir, readFile, stat } from 'node:fs/promises';
 
 const manifest = JSON.parse(await readFile('fixtures/manifest.json', 'utf8'));
-const fixtureFiles = (await readdir('fixtures')).filter((file) => file.endsWith('.html')).sort();
+// HTML de PeopleSoft y JSON de los Web Services de la PVA: dos formas, una
+// sola política.
+const fixtureFiles = (await readdir('fixtures'))
+  .filter((file) => file.endsWith('.html') || file.endsWith('.json'))
+  .filter((file) => file !== 'manifest.json')
+  .sort();
 const reviewedFiles = Object.keys(manifest.fixtures).sort();
 
 assert.equal(manifest.version, 1, 'la política de fixtures tiene una versión conocida');
-assert.deepEqual(reviewedFiles, fixtureFiles, 'cada fixture HTML está revisado y no hay entradas obsoletas');
+assert.deepEqual(reviewedFiles, fixtureFiles, 'cada fixture está revisado y no hay entradas obsoletas');
 
 for (const file of fixtureFiles) {
   const description = manifest.fixtures[file];

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchMySchedule, syncMySchedule, fetchTermContext } from '../lib/api.ts';
+import { fetchMySchedule, syncMySchedule, fetchTermContext, fetchAulaDeadlines } from '../lib/api.ts';
 import { WeeklyGrid } from '../components/WeeklyGrid.tsx';
 import { ClassDetail } from '../components/ClassDetail.tsx';
 import { MapPin } from 'lucide-react';
@@ -9,7 +9,7 @@ import { courseColor } from '../lib/color.ts';
 import { StalenessTag } from '../components/StalenessTag.tsx';
 import { TermBadge } from '../components/TermBadge.tsx';
 import { DropCoursePanel } from '../components/DropCoursePanel.tsx';
-import { toBlocks } from '../lib/grid.ts';
+import { toBlocks, toDeadlineChips, deadlinesByDay, DEADLINE_WINDOW_DAYS, type DeadlineChip } from '../lib/grid.ts';
 import { downloadICS } from '../lib/ics.ts';
 import { DAY_LABELS, WEEK_DAYS, formatTime12, toMinutes, type DayCode } from '../../../src/shared/meetings.ts';
 import type { ScheduleResponse } from '../../../src/shared/schemas.ts';
@@ -21,13 +21,34 @@ import type { ScheduleResponse } from '../../../src/shared/schemas.ts';
 // materia primero, después cuándo, después DÓNDE —que es lo que se busca
 // corriendo entre dos aulas— después con quién, y el código y el NRC al final
 // como lo que son: identificadores, no el nombre de la cosa.
-function Agenda({ data, onSelect }: { data: ScheduleResponse; onSelect: (block: Block) => void }) {
+function Agenda({
+  data,
+  onSelect,
+  deadlines = [],
+}: {
+  data: ScheduleResponse;
+  onSelect: (block: Block) => void;
+  deadlines?: DeadlineChip[];
+}) {
   const blocks = toBlocks(data.courses);
   const byDay = new Map<DayCode, typeof blocks>(WEEK_DAYS.map((d) => [d, []]));
   for (const b of blocks) byDay.get(b.day)?.push(b);
-  const days = WEEK_DAYS.filter((d) => (byDay.get(d)?.length ?? 0) > 0);
+  // Las entregas van en la MISMA lista que las clases, en su día y en su hora.
+  // En teléfono esta es la vista por defecto: dejarlas solo en la grilla las
+  // haría invisibles justo donde más se lee.
+  const duesByDay = deadlinesByDay(deadlines, WEEK_DAYS);
+  const days = WEEK_DAYS.filter((d) => (byDay.get(d)?.length ?? 0) > 0 || (duesByDay.get(d)?.length ?? 0) > 0);
 
   if (!days.length) return <p className="text-muted text-sm">Ninguna de tus materias tiene horario asignado todavía.</p>;
+
+  // Un día es UNA lista en orden de reloj. Poner las clases primero y las
+  // entregas después dejaría un quiz de las 8 a.m. debajo de una clase de las
+  // 10, que es leer el día al revés.
+  const filasDe = (day: DayCode) =>
+    [
+      ...(byDay.get(day) ?? []).map((clase) => ({ at: toMinutes(clase.start), clase, chip: null })),
+      ...(duesByDay.get(day) ?? []).map((chip) => ({ at: toMinutes(chip.at), clase: null, chip })),
+    ].sort((a, b) => a.at - b.at || (a.clase ? -1 : 1));
 
   return (
     <div className="space-y-5">
@@ -35,42 +56,70 @@ function Agenda({ data, onSelect }: { data: ScheduleResponse; onSelect: (block: 
         <section key={day}>
           <h2 className="text-muted mb-2 text-xs font-medium tracking-wide uppercase">{DAY_LABELS[day]}</h2>
           <ul className="border-line divide-line divide-y rounded-[var(--radius)] border">
-            {byDay
-              .get(day)!
-              .sort((a, b) => toMinutes(a.start) - toMinutes(b.start))
-              .map((b) => (
-                <li key={b.id}>
+            {filasDe(day).map(({ clase, chip }) =>
+              clase ? (
+                <li key={clase.id}>
                   <button
                     type="button"
-                    onClick={() => onSelect(b)}
+                    onClick={() => onSelect(clase)}
                     className="hover:bg-surface-2 focus-visible:outline-accent flex w-full min-h-11 items-start gap-3 px-3 py-2.5 text-left transition-colors duration-100 focus-visible:outline-2 focus-visible:-outline-offset-2"
                   >
                     <span className="tabular w-20 shrink-0 pt-0.5 font-mono text-xs whitespace-nowrap">
-                      <span className="block">{formatTime12(b.start)}</span>
-                      <span className="text-muted block">{formatTime12(b.end)}</span>
+                      <span className="block">{formatTime12(clase.start)}</span>
+                      <span className="text-muted block">{formatTime12(clase.end)}</span>
                     </span>
                     <span
                       className="mt-0.5 h-10 w-1 shrink-0 rounded-full"
-                      style={{ background: courseColor(b.code) }}
+                      style={{ background: courseColor(clase.code) }}
                       aria-hidden
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium">{b.title}</span>
+                      <span className="block text-sm font-medium">{clase.title}</span>
                       <span className="mt-0.5 flex items-center gap-1 text-sm">
                         <MapPin className="text-muted size-3.5 shrink-0" aria-hidden />
-                        <span className="font-medium">{b.room ?? 'Aula por definir'}</span>
+                        <span className="font-medium">{clase.room ?? 'Aula por definir'}</span>
                       </span>
                       <span className="text-muted mt-0.5 block text-xs">
-                        {b.instructor ?? 'Profesor no publicado'}
+                        {clase.instructor ?? 'Profesor no publicado'}
                       </span>
                       <span className="text-muted tabular mt-0.5 block font-mono text-[11px]">
-                        {b.code} · NRC {b.classNbr}
-                        {b.component ? ` · ${b.component}` : ''}
+                        {clase.code} · NRC {clase.classNbr}
+                        {clase.component ? ` · ${clase.component}` : ''}
                       </span>
                     </span>
                   </button>
                 </li>
-              ))}
+              ) : chip ? (
+                <li key={chip.id}>
+                  {/* Una entrega no es una clase: no tiene fin, no tiene aula y
+                      lleva a la PVA. Comparte la fila para que el día se lea de
+                      corrido, y se distingue por el rótulo y el color del acento. */}
+                  <a
+                    href={chip.url ?? undefined}
+                    target={chip.url ? '_blank' : undefined}
+                    rel={chip.url ? 'noreferrer' : undefined}
+                    aria-label={`${chip.title}${chip.courseLabel ? ` de ${chip.courseLabel}` : ''}, vence ${chip.atLabel}`}
+                    className="hover:bg-surface-2 focus-visible:outline-accent flex w-full min-h-11 items-start gap-3 px-3 py-2.5 text-left transition-colors duration-100 focus-visible:outline-2 focus-visible:-outline-offset-2"
+                  >
+                    <span className="tabular w-20 shrink-0 pt-0.5 font-mono text-xs whitespace-nowrap">
+                      <span className="block">{formatTime12(chip.at)}</span>
+                      <span className="text-muted block">vence</span>
+                    </span>
+                    <span
+                      className={`mt-0.5 h-10 w-1 shrink-0 rounded-full ${chip.overdue ? 'bg-closed' : 'bg-accent'}`}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium">{chip.title}</span>
+                      <span className="text-muted mt-0.5 block text-xs">
+                        Entrega del aula{chip.courseLabel ? ` · ${chip.courseLabel}` : ''}
+                        {chip.overdue ? ' · ya venció' : ''}
+                      </span>
+                    </span>
+                  </a>
+                </li>
+              ) : null
+            )}
           </ul>
         </section>
       ))}
@@ -118,6 +167,19 @@ export function Horario() {
     queryFn: () => fetchMySchedule(activeTerm ?? undefined),
     enabled: activeTerm != null,
   });
+
+  // Las entregas del aula viven en el mismo horario que las clases, en un
+  // carril propio sobre la grilla. Van solo en la vista de semana del ciclo
+  // ACTUAL: pegarle fechas reales al patrón semanal de un ciclo pasado sería
+  // ponerlas en la columna de un día que ya no existe.
+  const ahora = new Date();
+  const esCicloActual = activeOption?.isCurrent ?? false;
+  const entregasQ = useQuery({
+    queryKey: ['aula-entregas'],
+    queryFn: () => fetchAulaDeadlines(DEADLINE_WINDOW_DAYS),
+    enabled: esCicloActual,
+  });
+  const vencimientos = esCicloActual ? toDeadlineChips(entregasQ.data?.items ?? [], ahora) : [];
 
   // El refresh es explícito y va en vivo contra PeopleSoft (tarda segundos).
   // Mientras corre, la pantalla sigue mostrando lo cacheado: nunca se bloquea.
@@ -247,9 +309,9 @@ export function Horario() {
           </button>
         </div>
       ) : view === 'grid' ? (
-        <WeeklyGrid blocks={toBlocks(courses)} onSelect={setDetail} now={new Date()} />
+        <WeeklyGrid blocks={toBlocks(courses)} onSelect={setDetail} now={ahora} deadlines={vencimientos} />
       ) : (
-        <Agenda data={data} onSelect={setDetail} />
+        <Agenda data={data} onSelect={setDetail} deadlines={vencimientos} />
       )}
 
       {/* Dar de baja: el mismo panel y el mismo contrato de confirmación que en

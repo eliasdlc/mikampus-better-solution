@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { withPage, resetSession, shutdown } from './session.js';
@@ -31,6 +32,29 @@ import { db, lastSync, deleteAllUserData, logAction, readActions } from './db.js
 import { getUser, LOCAL_USER_ID } from './users.js';
 import * as auth from './auth.js';
 import { credentialInfo, deleteCredential, ensureCredentialFile } from './credentialStore.js';
+import { alertPrefs, readAlerts, setAlertPrefs } from './moodle/alerts.js';
+import { upcoming } from './moodle/calendar.js';
+import { aulaCourse, aulaOverview } from './moodle/aula.js';
+import { hasPvaCredential, pvaLinkState } from './moodle/session.js';
+import {
+  courseDocuments,
+  documentText,
+  searchCourseDocuments,
+  pendingDownloads,
+  downloadCourseDocuments,
+  blobOf,
+} from './moodle/documents.js';
+import { filesUsage } from './moodle/files.js';
+import { coursePairs, archivedCourses, hideCourse, showCourse, keepPair } from './moodle/materias.js';
+import { readGradeItems, courseTotals, gradebookAccess } from './moodle/grades.js';
+import {
+  previewSubmission,
+  saveSubmission,
+  submitForGrading,
+  listDiscussions,
+  replyToDiscussion,
+  recentWrites,
+} from './moodle/writes.js';
 import * as plans from './plans.js';
 import * as goals from './goals.js';
 import * as scheduler from './scheduler.js';
@@ -118,10 +142,15 @@ app.post('/api/onboarding/complete', (req, res) => {
 // ── Auth (§5): el login de mikampus ES el login del portal ──────────────────
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { user, token, csrfToken, expiresAt } = await auth.loginWithPortal(req.body ?? {});
+    const { user, token, csrfToken, expiresAt, pva } = await auth.loginWithPortal(req.body ?? {});
     scheduler.emitEvent({ type: 'log', message: `Sesión iniciada: ${user.portalUsername}` });
+    // La PVA es la segunda fuente y no bloquea el login: si su contraseña no
+    // vino o no sirvió, se entra igual y el aviso dice qué quedó sin vincular.
+    if (!pva.linked) {
+      scheduler.emitEvent({ type: 'log', message: `PVA sin vincular (${pva.reason})` });
+    }
     res.set('Set-Cookie', auth.sessionCookieHeader(token, { secure: secureCookies(req) }));
-    res.json({ ok: true, user: { id: user.id, username: user.portalUsername }, csrfToken, expiresAt });
+    res.json({ ok: true, user: { id: user.id, username: user.portalUsername }, csrfToken, expiresAt, pva });
   } catch (err) {
     res.status(err.status ?? 500).json({ error: err.message });
   }
@@ -211,6 +240,253 @@ app.get('/api/notifications', (req, res) => {
 
 app.post('/api/notifications/read', (req, res) => {
   res.json({ marked: markFeedRead(req.userId) });
+});
+
+// Las entregas del aula para el horario. Sirve siempre desde SQLite, como el
+// resto de las pantallas: entrar no dispara una consulta a la PVA.
+app.get('/api/aula/entregas', (req, res) => {
+  const days = Math.min(60, Math.max(1, Number(req.query.days) || 7));
+  const items = upcoming(req.userId, { days }).map((item) => ({
+    id: item.eventId ? `event:${item.eventId}` : `cmid:${item.cmid}`,
+    kind: item.assignmentId ? 'assign_due' : 'event',
+    title: item.activityName ?? item.name,
+    courseShortname: item.courseShortname ?? null,
+    dueAt: new Date(item.timesort * 1000).toISOString(),
+    url: item.url ?? null,
+    submitted: item.submissionStatus == null ? null : item.submissionStatus === 'submitted',
+    graded: item.gradingStatus == null ? null : item.gradingStatus === 'graded',
+    overdue: item.overdue === 1,
+  }));
+  res.json({ items, syncedAt: lastSync('pvaCalendar', { userId: req.userId }), linked: hasPvaCredential() });
+});
+
+// La pantalla Aula: la raíz (materias y qué está pasando) y una materia.
+// Sirven desde SQLite como todo lo demás: entrar no dispara una consulta.
+app.get('/api/aula', (req, res) => {
+  const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+  const pva = pvaLinkState();
+  const escondidas = archivedCourses(req.userId);
+  res.json({
+    ...aulaOverview(req.userId, { days }),
+    // Los pares vivos, con su evidencia, y cuántas hay guardadas en el cajón.
+    pairs: coursePairs(req.userId),
+    archived: { copies: escondidas.copies.length, previous: escondidas.previous.length },
+    linked: pva.linked,
+    // Por qué no hay nada: sin el motivo, un aula vacía se lee como "no tenés
+    // materias" y la salida real queda invisible.
+    pvaReason: pva.reason,
+    syncedAt: lastSync('pvaCourses', { userId: req.userId }),
+  });
+});
+
+app.get('/api/aula/materia/:courseId', (req, res) => {
+  const data = aulaCourse(req.userId, Number(req.params.courseId));
+  if (!data) return res.status(404).json({ error: 'Esa materia no está en el aula sincronizada' });
+  res.json(data);
+});
+
+// ── Las dos clases por materia ─────────────────────────────────────────────
+// La universidad crea dos y el profesor usa una. Esconder la copia es una
+// preferencia de la persona: vive en la base local y NUNCA toca la PVA.
+
+app.post('/api/aula/materia/:courseId/esconder', (req, res) => {
+  hideCourse(req.userId, Number(req.params.courseId), { key: req.body?.pairKey ?? null });
+  res.json({ ok: true });
+});
+
+app.post('/api/aula/materia/:courseId/mostrar', (req, res) => {
+  showCourse(req.userId, Number(req.params.courseId));
+  res.json({ ok: true });
+});
+
+// "Dejar las dos": el par no se vuelve a proponer.
+app.post('/api/aula/par/conservar', (req, res) => {
+  const ids = Array.isArray(req.body?.courseIds) ? req.body.courseIds.map(Number) : [];
+  if (!req.body?.pairKey || ids.length === 0) return res.status(400).json({ error: 'Falta el par a conservar' });
+  keepPair(req.userId, String(req.body.pairKey), ids);
+  res.json({ ok: true });
+});
+
+// Las escondidas: las copias de este ciclo y las materias de ciclos pasados.
+app.get('/api/aula/escondidas', (req, res) => {
+  res.json(archivedCourses(req.userId));
+});
+
+// ── El material de una materia ─────────────────────────────────────────────
+// La PVA reparte los archivos entre las unidades del profesor. Acá se ven
+// juntos, se buscan por dentro y se abren, que es lo único que faltaba: el
+// agente ya los bajaba y les extraía el texto, pero ninguna ruta los entregaba.
+
+app.get('/api/pva/materia/:courseId/material', (req, res) => {
+  const courseId = Number(req.params.courseId);
+  res.json({
+    documents: courseDocuments(req.userId, courseId),
+    pending: pendingDownloads(req.userId, courseId),
+    usage: filesUsage(req.userId),
+  });
+});
+
+app.get('/api/pva/materia/:courseId/material/buscar', (req, res) => {
+  res.json({ results: searchCourseDocuments(req.userId, Number(req.params.courseId), req.query.q ?? '') });
+});
+
+// Bajar lo que falta nace de un toque, nunca del scheduler, y lo pesado solo
+// viaja si se pidió aparte.
+app.post('/api/pva/materia/:courseId/material/bajar', async (req, res) => {
+  try {
+    const summary = await downloadCourseDocuments(req.userId, Number(req.params.courseId), {
+      includeHeavy: req.body?.includeHeavy === true,
+    });
+    res.json(summary);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Las notas del aula item por item. No son las oficiales del expediente: son
+// las que el profesor puso en su libro, y por eso viven acá y no en Notas.
+app.get('/api/pva/materia/:courseId/notas', (req, res) => {
+  const courseId = Number(req.params.courseId);
+  const access = gradebookAccess(req.userId).find((row) => row.courseId === courseId) ?? null;
+  res.json({
+    items: readGradeItems(req.userId, courseId),
+    total: courseTotals(req.userId).find((row) => row.courseId === courseId) ?? null,
+    access,
+  });
+});
+
+// El archivo en sí. Sale del blob que el agente ya bajó, con el tipo real que
+// devolvió el servidor: nada acá vuelve a tocar la PVA.
+app.get('/api/pva/archivo/:fileId', (req, res) => {
+  const blob = blobOf(req.userId, Number(req.params.fileId));
+  if (!blob) return res.status(404).json({ error: 'Ese archivo todavía no está bajado' });
+  const disposition = req.query.descargar === '1' ? 'attachment' : 'inline';
+  // El nombre viaja en la forma que entienden los navegadores viejos y en
+  // UTF-8 para el resto: un acento en el nombre no puede romper la descarga.
+  const ascii = blob.filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '');
+  res.set({
+    'Content-Type': blob.contentType,
+    'Content-Length': String(blob.bytes),
+    'Content-Disposition': `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(blob.filename)}`,
+    // Es material de la persona servido desde su propia máquina: no se cachea
+    // en ningún intermediario, y el navegador lo revalida.
+    'Cache-Control': 'private, no-cache',
+  });
+  fs.createReadStream(blob.path).pipe(res);
+});
+
+// El texto extraído, para buscar dentro del documento sin volver a abrirlo.
+app.get('/api/pva/archivo/:fileId/texto', (req, res) => {
+  const text = documentText(req.userId, Number(req.params.fileId));
+  if (!text) return res.status(404).json({ error: 'De ese archivo no se pudo extraer texto' });
+  res.json(text);
+});
+
+// ── Escribir en la PVA ─────────────────────────────────────────────────────
+// El único carril del proyecto que no se puede deshacer. Cada ruta nace de una
+// acción de la persona en la app: ni el scheduler ni el watcher las llaman, y
+// el módulo de escritura no es alcanzable desde el sync (verificado sobre el
+// grafo de imports en scripts/test-pva-escritura.mjs).
+//
+// Los archivos viajan en base64 dentro del JSON, con un tope propio: es una
+// entrega de estudiante, no una subida de video, y el límite real lo pone la
+// tarea (`maxsubmissionsizebytes`), que se chequea antes de tocar la red.
+const ENTREGA_JSON = express.json({ limit: '25mb' });
+
+const archivosDe = (payload) =>
+  (Array.isArray(payload) ? payload : []).map((file) => ({
+    name: String(file?.name ?? ''),
+    mimetype: file?.mimetype ?? null,
+    bytes: Buffer.from(String(file?.base64 ?? ''), 'base64'),
+  }));
+
+// Qué va a viajar, antes de que viaje.
+app.get('/api/pva/tarea/:assignmentId/entrega', (req, res) => {
+  // Sin cuerpo todavía: acá `blockers` son los de la ventana y el estado (no
+  // abrió, cerró, ya entregada), no los del payload. Los del payload salen del
+  // ensayo, que sí manda lo que la persona escribió.
+  const preview = previewSubmission(req.userId, Number(req.params.assignmentId), { purpose: 'entregar' });
+  if (!preview) return res.status(404).json({ error: 'Esa tarea no está en el aula sincronizada' });
+  res.json(preview);
+});
+
+app.post('/api/pva/tarea/:assignmentId/guardar', ENTREGA_JSON, async (req, res) => {
+  try {
+    const result = await saveSubmission(req.userId, Number(req.params.assignmentId), {
+      body: req.body?.body ?? '',
+      files: archivosDe(req.body?.files),
+      confirmName: req.body?.confirmName ?? null,
+      dryRun: req.body?.dryRun === true,
+      origin: 'web',
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message, blockers: err.blockers ?? null });
+  }
+});
+
+app.post('/api/pva/tarea/:assignmentId/entregar', async (req, res) => {
+  try {
+    const result = await submitForGrading(req.userId, Number(req.params.assignmentId), {
+      confirmName: req.body?.confirmName ?? null,
+      acceptStatement: req.body?.acceptStatement === true,
+      dryRun: req.body?.dryRun === true,
+      origin: 'web',
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Las discusiones se leen en el momento: mikampus solo guarda el contador de
+// anuncios, así que no hay lista local a la que responderle.
+app.get('/api/pva/foro/:forumId/discusiones', async (req, res) => {
+  try {
+    const data = await listDiscussions(req.userId, Number(req.params.forumId));
+    if (!data) return res.status(404).json({ error: 'Ese foro no está en el aula sincronizada' });
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post('/api/pva/foro/responder', async (req, res) => {
+  try {
+    const result = await replyToDiscussion(req.userId, {
+      postId: Number(req.body?.postId),
+      discussionId: req.body?.discussionId == null ? null : Number(req.body.discussionId),
+      subject: req.body?.subject ?? '',
+      message: req.body?.message ?? '',
+      forumName: req.body?.forumName ?? null,
+      dryRun: req.body?.dryRun === true,
+      origin: 'web',
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// El recibo: qué escribió mikampus en la PVA, incluidos los ensayos y lo que
+// se rechazó antes de salir.
+app.get('/api/pva/escrituras', (req, res) => {
+  res.json({ items: recentWrites(req.userId, { limit: Math.min(100, Number(req.query.limit) || 20) }) });
+});
+
+// Los avisos del aula nacen apagados: se detectan y se asientan igual, y esta
+// es la llave que decide si además interrumpen.
+app.get('/api/pva/alerts', (req, res) => {
+  res.json({ prefs: alertPrefs(), items: readAlerts(req.userId) });
+});
+
+app.patch('/api/pva/alerts', (req, res) => {
+  try {
+    const prefs = setAlertPrefs({ enabled: req.body?.enabled, kinds: req.body?.kinds });
+    res.json({ prefs });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get('/api/notifications/channels', (req, res) => {

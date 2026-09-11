@@ -74,6 +74,90 @@ export const READ_ALLOWLIST = {
   ],
   schedules: ['user_id', 'at_iso', 'state', 'last_error', 'updated_at'],
   runtime_events: ['id', 'kind', 'detail', 'started_at', 'ended_at'],
+
+  // ── La PVA (Moodle) ──────────────────────────────────────────────────────
+  // Mismo criterio que arriba: columna por columna, y afuera lo que identifica
+  // a la persona o lo que es una credencial.
+  //
+  // De pva_identity NO salen moodle_userid, username, firstname, lastname ni
+  // fullname: ninguna herramienta necesita saber cómo se llama el estudiante
+  // para contestar qué vence el martes. userprivateaccesskey ni siquiera existe
+  // como columna, porque nunca se guardó.
+  //
+  // De pva_notification NO sale full_message_html: el cuerpo del aviso trae el
+  // nombre de pila y el nombre del curso en prosa, y el asunto más el
+  // contexturl_name alcanzan para decir qué pasó y adónde ir.
+  pva_identity: ['user_id', 'siteurl', 'release', 'version', 'lang', 'fetched_at'],
+  pva_course: [
+    'course_id', 'user_id', 'shortname', 'fullname', 'displayname', 'format', 'lang',
+    'startdate', 'enddate', 'visible', 'hidden', 'show_grades', 'enable_completion',
+    'progress', 'completed', 'last_access', 'first_seen_at', 'last_seen_at', 'missing_since',
+  ],
+  pva_course_section: [
+    'section_id', 'user_id', 'course_id', 'section_number', 'name', 'summary_html',
+    'visible', 'uservisible', 'sort_index', 'seen_at',
+  ],
+  pva_module: [
+    'cmid', 'user_id', 'course_id', 'section_id', 'sort_index', 'modname', 'instance', 'name', 'url',
+    'description_html', 'visible', 'uservisible', 'no_view_link', 'purpose',
+    'completion_rule', 'completion_state', 'completed_at', 'seen_at',
+  ],
+  pva_module_date: ['cmid', 'data_id', 'ts', 'label'],
+  pva_course_sync: ['user_id', 'course_id', 'contents_at', 'sections', 'modules', 'last_error'],
+  pva_assignment: [
+    'assignment_id', 'user_id', 'cmid', 'course_id', 'name', 'intro_html', 'duedate',
+    'allowsubmissionsfromdate', 'cutoffdate', 'grade_max', 'submissiondrafts',
+    'requiresubmissionstatement', 'maxattempts', 'markingworkflow', 'fetched_at',
+  ],
+  pva_assignment_inaccessible: ['user_id', 'course_id', 'cmid', 'message', 'fetched_at'],
+  pva_submission: [
+    'assignment_id', 'attemptnumber', 'user_id', 'status', 'is_latest', 'timecreated', 'timemodified',
+    'submissions_enabled', 'locked', 'graded', 'can_edit', 'can_submit', 'grading_status',
+    'extensionduedate', 'fetched_at',
+  ],
+  pva_submission_feedback: [
+    'assignment_id', 'attemptnumber', 'grade_value', 'grade_raw_text', 'grade_for_display',
+    'graded_date', 'comment_html',
+  ],
+  pva_grade_item: [
+    'item_id', 'user_id', 'course_id', 'itemtype', 'itemmodule', 'iteminstance', 'cmid',
+    'category_id', 'itemname', 'grademin', 'grademax', 'sort_index', 'is_gradable', 'last_seen_at',
+  ],
+  pva_grade_value: [
+    'item_id', 'graderaw', 'graderaw_src', 'gradedatesubmitted', 'gradedategraded', 'grade_display',
+    'percentage_display', 'range_display', 'feedback_html', 'is_hidden', 'needs_update', 'fetched_at',
+  ],
+  pva_grade_change: ['change_id', 'item_id', 'kind', 'new_raw_src', 'detected_at', 'notified_at'],
+  pva_course_total: ['user_id', 'course_id', 'grade_display', 'rawgrade_src', 'rawgrade', 'fetched_at'],
+  pva_gradebook_access: [
+    'user_id', 'course_id', 'show_grades', 'reachable', 'last_errorcode', 'last_ok_at', 'in_overview',
+  ],
+  pva_calendar_event: [
+    'event_id', 'user_id', 'course_id', 'cmid', 'component', 'modulename', 'eventtype', 'name',
+    'activityname', 'description_html', 'timestart', 'timesort', 'timeusermidnight', 'local_day',
+    'overdue', 'is_action_event', 'action_actionable', 'module_url', 'last_seen_at', 'missing_since',
+  ],
+  pva_forum: [
+    'forum_id', 'user_id', 'course_id', 'cmid', 'type', 'is_announcements', 'name', 'intro_html',
+    'num_discussions', 'duedate', 'cutoffdate', 'fetched_at',
+  ],
+  // Los materiales. El blob NO se expone: su local_path es una ruta del disco
+  // de la persona y ninguna herramienta necesita leerla para contestar dónde
+  // está algo. De pva_file_text sale el texto extraído, que es el punto de la
+  // fase: poder estudiar sin abrir la plataforma.
+  pva_file: [
+    'file_id', 'user_id', 'course_id', 'cmid', 'component', 'area', 'filepath', 'filename',
+    'filesize', 'mimetype', 'timemodified', 'source_fn', 'seen_at', 'deleted_at',
+  ],
+  pva_file_text: ['file_id', 'extractor', 'pages', 'filename', 'content', 'extracted_at'],
+  pva_file_text_fts: ['rowid', 'filename', 'content'],
+  pva_link: ['link_id', 'user_id', 'course_id', 'cmid', 'name', 'url', 'host', 'timemodified', 'seen_at'],
+  pva_module_contents_info: ['cmid', 'files_count', 'files_size', 'last_modified', 'mime_types_json'],
+  pva_notification: [
+    'notification_id', 'user_id', 'component', 'eventtype', 'subject', 'small_message',
+    'contexturl', 'contexturl_name', 'cmid', 'course_id', 'instance_id', 'customdata_duedate',
+    'created_at', 'read_remote', 'deleted_remote',
+  ],
 };
 
 // Nombres de columna que no pueden aparecer en una consulta del MCP ni siquiera
@@ -81,6 +165,14 @@ export const READ_ALLOWLIST = {
 // a la allowlist sin mirar sus columnas, estas siguen prohibidas.
 export const FORBIDDEN_IDENTIFIERS = [
   'portal_username',
+  // El id del estudiante dentro de Moodle. Ninguna herramienta lo necesita para
+  // contestar nada, y es lo que identifica a la persona en la otra plataforma.
+  'moodle_userid',
+  'userprivateaccesskey',
+  'full_message_html',
+  // La ruta del blob en el disco de la persona. Saber dónde vive un archivo no
+  // ayuda a contestar nada y expone la estructura de su equipo.
+  'local_path',
   'token_hash',
   'csrf_token',
   'p256dh',

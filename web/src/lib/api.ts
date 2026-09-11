@@ -55,6 +55,28 @@ import {
   type MesaSolveResponse,
   type ScheduleConstraintsInput,
   type TermPhaseResponse,
+  pvaDeadlinesResponseSchema,
+  type PvaDeadlinesResponse,
+  aulaOverviewResponseSchema,
+  aulaCourseResponseSchema,
+  entregaPreviewSchema,
+  entregaResultSchema,
+  discusionesResponseSchema,
+  escondidasResponseSchema,
+  type EscondidasResponse,
+  materialResponseSchema,
+  busquedaMaterialSchema,
+  descargaResultSchema,
+  notasAulaSchema,
+  type MaterialResponse,
+  type BusquedaMaterial,
+  type DescargaResult,
+  type NotasAula,
+  type EntregaPreview,
+  type EntregaResult,
+  type DiscusionesResponse,
+  type AulaOverviewResponse,
+  type AulaCourseResponse,
 } from '../../../src/shared/schemas.ts';
 import { z } from 'zod';
 
@@ -192,6 +214,104 @@ export async function syncCourseSections(input: {
 export async function fetchMySchedule(term?: string): Promise<ScheduleResponse> {
   const qs = term ? `?term=${encodeURIComponent(term)}` : '';
   return scheduleResponseSchema.parse(await getJSON(`/api/my-schedule${qs}`));
+}
+
+// Las entregas del aula que vencen pronto, desde cache. Van al mismo horario
+// que las clases: la pantalla las pide junto con el horario y las pasa al
+// carril del grid. Sin la PVA vinculada devuelve una lista vacía con
+// `linked: false`, que es distinto de "no tenés nada que entregar".
+export async function fetchAulaDeadlines(days = 7): Promise<PvaDeadlinesResponse> {
+  return pvaDeadlinesResponseSchema.parse(await getJSON(`/api/aula/entregas?days=${days}`));
+}
+
+// El Aula: la raíz con las materias del ciclo y lo que está pasando, y una
+// materia con sus unidades. Las dos desde cache, como el resto de la app.
+export async function fetchAula(days = 7): Promise<AulaOverviewResponse> {
+  return aulaOverviewResponseSchema.parse(await getJSON(`/api/aula?days=${days}`));
+}
+
+export async function fetchAulaCourse(courseId: number): Promise<AulaCourseResponse> {
+  return aulaCourseResponseSchema.parse(await getJSON(`/api/aula/materia/${courseId}`));
+}
+
+// ── Escribir en la PVA ──
+// El único carril de la app que no se puede deshacer. El ensayo (`dryRun`) usa
+// la MISMA ruta que el envío: así lo que se muestra es lo que viajaría, y no
+// una simulación aparte que podría diverger.
+
+export type ArchivoParaEntregar = { name: string; mimetype: string | null; base64: string };
+
+export async function fetchEntregaPreview(assignmentId: number): Promise<EntregaPreview> {
+  return entregaPreviewSchema.parse(await getJSON(`/api/pva/tarea/${assignmentId}/entrega`));
+}
+
+export async function guardarEntrega(
+  assignmentId: number,
+  input: { body: string; files: ArchivoParaEntregar[]; confirmName?: string; dryRun?: boolean }
+): Promise<EntregaResult> {
+  return entregaResultSchema.parse(await send(`/api/pva/tarea/${assignmentId}/guardar`, 'POST', input));
+}
+
+export async function entregarTarea(
+  assignmentId: number,
+  input: { confirmName: string; acceptStatement?: boolean; dryRun?: boolean }
+): Promise<EntregaResult> {
+  return entregaResultSchema.parse(await send(`/api/pva/tarea/${assignmentId}/entregar`, 'POST', input));
+}
+
+// Las discusiones se leen en el momento: no hay copia local a la que responder.
+export async function fetchDiscusiones(forumId: number): Promise<DiscusionesResponse> {
+  return discusionesResponseSchema.parse(await getJSON(`/api/pva/foro/${forumId}/discusiones`));
+}
+
+// ── Las dos clases por materia ──
+// Esconder es una preferencia local: no toca la PVA y se deshace.
+
+export async function esconderMateria(courseId: number, pairKey?: string): Promise<void> {
+  await send(`/api/aula/materia/${courseId}/esconder`, 'POST', { pairKey: pairKey ?? null });
+}
+
+export async function mostrarMateria(courseId: number): Promise<void> {
+  await send(`/api/aula/materia/${courseId}/mostrar`, 'POST', {});
+}
+
+export async function conservarPar(pairKey: string, courseIds: number[]): Promise<void> {
+  await send('/api/aula/par/conservar', 'POST', { pairKey, courseIds });
+}
+
+export async function fetchEscondidas(): Promise<EscondidasResponse> {
+  return escondidasResponseSchema.parse(await getJSON('/api/aula/escondidas'));
+}
+
+// ── El material de una materia ──
+// Todo esto sale del blob que el agente ya bajó: abrir un documento no vuelve a
+// tocar la PVA, y por eso funciona igual sin conexión.
+
+export async function fetchMaterial(courseId: number): Promise<MaterialResponse> {
+  return materialResponseSchema.parse(await getJSON(`/api/pva/materia/${courseId}/material`));
+}
+
+export async function buscarMaterial(courseId: number, query: string): Promise<BusquedaMaterial> {
+  return busquedaMaterialSchema.parse(
+    await getJSON(`/api/pva/materia/${courseId}/material/buscar?q=${encodeURIComponent(query)}`)
+  );
+}
+
+export async function bajarMaterial(courseId: number, includeHeavy = false): Promise<DescargaResult> {
+  return descargaResultSchema.parse(await send(`/api/pva/materia/${courseId}/material/bajar`, 'POST', { includeHeavy }));
+}
+
+export async function fetchNotasAula(courseId: number): Promise<NotasAula> {
+  return notasAulaSchema.parse(await getJSON(`/api/pva/materia/${courseId}/notas`));
+}
+
+export async function fetchTextoDocumento(fileId: number): Promise<{ content: string; pages: number | null; extractor: string }> {
+  return (await getJSON(`/api/pva/archivo/${fileId}/texto`)) as { content: string; pages: number | null; extractor: string };
+}
+
+/** La URL del archivo servido por el agente. Se usa tal cual en un embed o un enlace. */
+export function urlDocumento(fileId: number, { descargar = false } = {}): string {
+  return `/api/pva/archivo/${fileId}${descargar ? '?descargar=1' : ''}`;
 }
 
 // Refresh en vivo contra PeopleSoft: tarda segundos y publica su progreso en

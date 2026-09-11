@@ -1,0 +1,5 @@
+{
+  "exception": "moodle_exception",
+  "errorcode": "nopermissiontoviewgrades",
+  "message": "No tienes permisos para ver las calificaciones de este curso"
+}

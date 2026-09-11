@@ -40,6 +40,9 @@ export function createMcpServer({ allowActions = false, now = () => new Date() }
         'mikampus expone los datos académicos locales de Elias en PUCMM.',
         'Empezá por get_overview. Antes de afirmar algo, mirá freshness y unknown de la respuesta:',
         'lo que aparece en unknown no se sabe y no se estima.',
+        'Son dos plataformas: MiCampus (expediente, horario, inscripción, notas oficiales) y la PVA,',
+        'el Moodle del aula (tareas, entregas, material, avisos y el libro del profesor), con el prefijo get_pva_.',
+        'La nota del aula y la del expediente no son la misma: leé el recurso mikampus://about antes de mezclarlas.',
         allowActions
           ? 'El carril de acción está encendido: propose_action nunca ejecuta, y confirm_action exige el código de 6 dígitos que mikampus le manda por push al teléfono de Elias, fuera de esta conversación.'
           : 'Este servidor es de solo lectura: no puede cambiar nada en el portal.',

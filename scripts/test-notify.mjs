@@ -48,4 +48,10 @@ const sinKey = noticeFor({ type: 'notice', level: 'info', title: 'Catálogo actu
 assert.equal(sinKey.key, 'notice:Catálogo actualizado');
 assert.equal(sinKey.urgency, 'normal');
 
+// Un aviso puede pedir su propia urgencia: el "vence pronto" del aula es el
+// único con una fecha detrás y no puede auto-cerrarse solo.
+assert.equal(noticeFor({ type: 'notice', title: 'x' }).urgency, 'normal');
+assert.equal(noticeFor({ type: 'notice', title: 'x', urgency: 'critical' }).urgency, 'critical');
+assert.equal(noticeFor({ type: 'notice', title: 'x', level: 'error' }).urgency, 'critical');
+
 console.log('✓ política de notificaciones (qué interrumpe, qué va al feed, y con qué urgencia)');

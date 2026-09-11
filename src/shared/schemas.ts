@@ -1153,3 +1153,359 @@ export const mesaSolveResponseSchema = z.object({
   ),
 });
 export type MesaSolveResponse = z.infer<typeof mesaSolveResponseSchema>;
+
+// Las entregas del aula que vencen pronto. Van al mismo horario que las clases
+// (carril propio sobre la grilla), así que la pantalla del horario las pide
+// junto con el horario mismo.
+//
+// `submitted` es tri-estado a propósito: `null` significa que nunca se consultó
+// el estado de esa entrega, que no es lo mismo que "sin entregar". Un carril
+// que pinte el null como pendiente miente sobre algo que nadie preguntó.
+export const pvaDeadlineSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['assign_due', 'forum_due', 'event']),
+  title: z.string(),
+  courseShortname: z.string().nullable(),
+  dueAt: z.string(),
+  url: z.string().nullable(),
+  submitted: z.boolean().nullable(),
+  graded: z.boolean().nullable(),
+  overdue: z.boolean(),
+});
+export type PvaDeadline = z.infer<typeof pvaDeadlineSchema>;
+
+export const pvaDeadlinesResponseSchema = z.object({
+  items: z.array(pvaDeadlineSchema),
+  syncedAt: z.string().nullable(),
+  /** Si la PVA no está vinculada, la pantalla no puede pedir que se refresque. */
+  linked: z.boolean(),
+});
+export type PvaDeadlinesResponse = z.infer<typeof pvaDeadlinesResponseSchema>;
+
+// La pantalla Aula. Dos formas: la raíz (materias y qué está pasando) y una
+// materia (su estado y las unidades del profesor).
+//
+// `submitted` es tri-estado en las dos: null significa que nunca se consultó el
+// estado de esa entrega. La pantalla lo pinta distinto de "sin entregar",
+// porque son cosas distintas.
+export const aulaCourseCardSchema = z.object({
+  courseId: z.number().int(),
+  shortname: z.string(),
+  fullname: z.string(),
+  // El nombre sin el código adelante. `fullname` lo repite: "CSTI-1930-5227 -
+  // Inteligencia de Negocios", y nadie conoce su materia por ese código.
+  name: z.string(),
+  progress: z.number().nullable().default(null),
+  pending: z.number().int(),
+  grade: z.object({
+    // `checked` distingue "el libro está vacío" de "nunca se leyó el libro".
+    checked: z.boolean(),
+    hidden: z.boolean(),
+    reason: z.string().nullable(),
+    total: z.string().nullable(),
+    gradedItems: z.number().int(),
+    gradableItems: z.number().int(),
+  }),
+  next: z
+    .object({
+      assignmentId: z.number().int(),
+      cmid: z.number().int(),
+      name: z.string(),
+      dueAt: z.string().nullable(),
+      submitted: z.boolean().nullable(),
+    })
+    .nullable(),
+});
+
+export type AulaCourseCard = z.infer<typeof aulaCourseCardSchema>;
+
+export const aulaFeedItemSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  courseId: z.number().int().nullable(),
+  courseShortname: z.string().nullable(),
+  title: z.string(),
+  detail: z.string().nullable(),
+  at: z.string(),
+  submitted: z.boolean().nullable(),
+  url: z.string().nullable(),
+});
+
+export type AulaFeedItem = z.infer<typeof aulaFeedItemSchema>;
+export type AulaModule = z.infer<typeof aulaModuleSchema>;
+
+export const aulaOverviewResponseSchema = z.object({
+  courses: z.array(aulaCourseCardSchema),
+  items: z.array(aulaFeedItemSchema),
+  // Un par es la misma materia en dos clases. Viaja con su evidencia para que
+  // la pantalla proponga en vez de decidir.
+  pairs: z
+    .array(
+      z.object({
+        key: z.string(),
+        name: z.string(),
+        courses: z.array(
+          z.object({
+            courseId: z.number().int(),
+            shortname: z.string(),
+            name: z.string(),
+            modules: z.number().int(),
+            assignments: z.number().int(),
+            files: z.number().int(),
+          })
+        ),
+        suggested: z.array(z.number().int()),
+      })
+    )
+    .default([]),
+  archived: z.object({ copies: z.number().int(), previous: z.number().int() }).default({ copies: 0, previous: 0 }),
+  linked: z.boolean(),
+  pvaReason: z.string().nullable().default(null),
+  syncedAt: z.string().nullable(),
+});
+export type AulaOverviewResponse = z.infer<typeof aulaOverviewResponseSchema>;
+
+export const aulaModuleSchema = z.object({
+  cmid: z.number().int(),
+  instance: z.number().int(),
+  modname: z.string(),
+  name: z.string(),
+  url: z.string().nullable(),
+  inlineOnly: z.boolean(),
+  completion: z.enum(['sin_seguimiento', 'pendiente', 'hecho']),
+  dueAt: z.string().nullable(),
+  assignment: z
+    .object({
+      assignmentId: z.number().int(),
+      status: z.string().nullable(),
+      submitted: z.boolean().nullable(),
+      graded: z.boolean(),
+      gradeText: z.string().nullable(),
+      isLate: z.boolean(),
+      isOverdue: z.boolean(),
+    })
+    .nullable(),
+  files: z.array(
+    z.object({
+      fileId: z.number().int(),
+      filename: z.string(),
+      mimetype: z.string().nullable(),
+      downloaded: z.boolean(),
+      indexed: z.boolean(),
+    })
+  ),
+  links: z.array(z.object({ name: z.string(), url: z.string(), host: z.string() })),
+});
+
+// ── Las escondidas ─────────────────────────────────────────────────────────
+// Dos grupos que no se pueden mezclar: la copia sin usar de una materia que
+// estás cursando, y las materias de un ciclo que ya terminó.
+
+const escondidaSchema = z.object({
+  courseId: z.number().int(),
+  shortname: z.string(),
+  name: z.string(),
+  cycle: z.string(),
+  hiddenRemote: z.boolean(),
+  hiddenLocal: z.boolean(),
+  modules: z.number().int(),
+  assignments: z.number().int(),
+  files: z.number().int(),
+});
+
+export const escondidasResponseSchema = z.object({
+  copies: z.array(escondidaSchema),
+  previous: z.array(escondidaSchema),
+});
+export type EscondidasResponse = z.infer<typeof escondidasResponseSchema>;
+
+// ── El material de una materia ─────────────────────────────────────────────
+// Tres estados, no dos: un archivo puede estar sin bajar, bajado, o bajado y
+// con su texto indexado. "Bajado" y "buscable" no son lo mismo y la pantalla
+// los dice distinto.
+
+export const documentoSchema = z.object({
+  fileId: z.number().int(),
+  courseId: z.number().int(),
+  filename: z.string(),
+  mimetype: z.string().nullable(),
+  bytes: z.number(),
+  // Cuando el archivo no está bajado, el peso es el que declaró la plataforma,
+  // y un mod_page declara 0 con cuerpo real.
+  bytesAreDeclared: z.boolean(),
+  downloaded: z.boolean(),
+  indexed: z.boolean(),
+  pages: z.number().nullable(),
+  extractor: z.string().nullable(),
+  lastError: z.string().nullable(),
+  cmid: z.number().int(),
+  moduleName: z.string().nullable(),
+  modname: z.string().nullable(),
+  moduleUrl: z.string().nullable(),
+  sectionName: z.string().nullable(),
+  origin: z.string(),
+});
+export type Documento = z.infer<typeof documentoSchema>;
+
+const pesoSchema = z.object({ files: z.number().int(), bytes: z.number() });
+
+export const materialResponseSchema = z.object({
+  documents: z.array(documentoSchema),
+  pending: z.object({ light: pesoSchema, heavy: pesoSchema, heavyBytes: z.number() }),
+  usage: z.object({
+    files: z.number().int(),
+    downloaded: z.number().int(),
+    bytes: z.number(),
+    indexed: z.number().int(),
+    budgetBytes: z.number(),
+    maxFileBytes: z.number(),
+    remainingBytes: z.number(),
+  }),
+});
+export type MaterialResponse = z.infer<typeof materialResponseSchema>;
+
+export const busquedaMaterialSchema = z.object({
+  results: z.array(
+    z.object({
+      fileId: z.number().int(),
+      filename: z.string(),
+      cmid: z.number().int(),
+      moduleName: z.string().nullable(),
+      sectionName: z.string().nullable(),
+      pages: z.number().nullable(),
+      extractor: z.string().nullable(),
+      snippet: z.string(),
+      score: z.number(),
+    })
+  ),
+});
+export type BusquedaMaterial = z.infer<typeof busquedaMaterialSchema>;
+
+export const descargaResultSchema = z.object({
+  downloaded: z.number().int(),
+  indexed: z.number().int(),
+  failed: z.number().int(),
+  skipped: z.number().int(),
+  bytes: z.number(),
+  budgetLeft: z.number(),
+});
+export type DescargaResult = z.infer<typeof descargaResultSchema>;
+
+export const notasAulaSchema = z.object({
+  items: z.array(
+    z.object({
+      itemId: z.number().int(),
+      itemtype: z.string(),
+      name: z.string().nullable(),
+      cmid: z.number().int().nullable(),
+      gradeMax: z.number().nullable(),
+      isGradable: z.number().int(),
+      rawText: z.string().nullable(),
+      display: z.string().nullable(),
+      range: z.string().nullable(),
+      gradedAt: z.number().nullable(),
+      isHidden: z.number().int().nullable(),
+    })
+  ),
+  total: z.object({ courseId: z.number().int(), display: z.string().nullable(), rawText: z.string().nullable() }).nullable(),
+  access: z
+    .object({ courseId: z.number().int(), showGrades: z.number().int(), reachable: z.number().int() })
+    .partial()
+    .nullable(),
+});
+export type NotasAula = z.infer<typeof notasAulaSchema>;
+
+// ── Escribir en la PVA ─────────────────────────────────────────────────────
+// Lo que la pantalla necesita para no mentir sobre lo que va a pasar: qué
+// viaja, qué lo impide, qué hay que saber igual, y si guardar ya es entregar.
+
+export const entregaPreviewSchema = z.object({
+  assignment: z.object({
+    assignmentId: z.number().int(),
+    courseId: z.number().int(),
+    cmid: z.number().int(),
+    name: z.string(),
+    dueAt: z.string().nullable(),
+    closesAt: z.string().nullable(),
+    opensAt: z.string().nullable(),
+  }),
+  sends: z.object({
+    onlineText: z.string().nullable(),
+    files: z.array(z.object({ name: z.string(), bytes: z.number(), mimetype: z.string().nullable() })),
+  }),
+  limits: z.object({
+    onlineText: z.object({ enabled: z.boolean(), wordLimit: z.number() }),
+    file: z.object({
+      enabled: z.boolean(),
+      maxFiles: z.number(),
+      maxBytes: z.number(),
+      types: z.array(z.string()),
+    }),
+  }),
+  // `drafts` en false es la trampa que la pantalla tiene que decir en voz alta:
+  // guardar ya es entregar.
+  drafts: z.boolean(),
+  requiresConfirmation: z.boolean(),
+  requiresStatement: z.boolean(),
+  statement: z.string().nullable(),
+  current: z
+    .object({ status: z.string().nullable(), canEdit: z.boolean(), submittedAt: z.string().nullable() })
+    .nullable(),
+  blockers: z.array(z.string()),
+  warnings: z.array(z.string()),
+});
+export type EntregaPreview = z.infer<typeof entregaPreviewSchema>;
+
+export const entregaResultSchema = entregaPreviewSchema.extend({
+  writeId: z.number().int(),
+  sent: z.boolean(),
+  dryRun: z.boolean(),
+  warnings: z.array(z.string()).default([]),
+});
+export type EntregaResult = z.infer<typeof entregaResultSchema>;
+
+export const discusionesResponseSchema = z.object({
+  forum: z.object({
+    forumId: z.number().int(),
+    courseId: z.number().int(),
+    cmid: z.number().int(),
+    name: z.string(),
+    type: z.string(),
+  }),
+  discussions: z.array(
+    z.object({
+      discussionId: z.number().int(),
+      postId: z.number().int(),
+      subject: z.string(),
+      author: z.string(),
+      locked: z.boolean(),
+      canReply: z.boolean(),
+      createdAt: z.string().nullable(),
+      lastPostAt: z.string().nullable(),
+    })
+  ),
+});
+export type DiscusionesResponse = z.infer<typeof discusionesResponseSchema>;
+
+export const aulaCourseResponseSchema = aulaCourseCardSchema
+  .pick({ pending: true, grade: true, next: true })
+  .extend({
+    course: z.object({
+      courseId: z.number().int(),
+      shortname: z.string(),
+      fullname: z.string(),
+      name: z.string(),
+      progress: z.number().nullable(),
+    }),
+    sections: z.array(
+      z.object({
+        sectionId: z.number().int(),
+        number: z.number().int(),
+        name: z.string(),
+        summary: z.string().nullable(),
+        modules: z.array(aulaModuleSchema),
+      })
+    ),
+    contentsSynced: z.boolean(),
+  });
+export type AulaCourseResponse = z.infer<typeof aulaCourseResponseSchema>;

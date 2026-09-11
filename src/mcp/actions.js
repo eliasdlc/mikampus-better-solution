@@ -156,6 +156,42 @@ async function execute(payload) {
         );
         return result.message ?? (result.ok ? 'baja confirmada' : 'la baja no fue confirmada por el portal');
       }
+      // La PVA pasa por las mismas rutas del agente que usa la pantalla, con
+      // sus barreras intactas: el nombre escrito, la ventana de entrega y el
+      // libro de escrituras valen igual venga de donde venga.
+      case 'pva_save_submission': {
+        const result = await callAgent(
+          base,
+          `/api/pva/tarea/${payload.assignmentId}/guardar`,
+          { body: payload.body, confirmName: payload.confirmName },
+          credentials
+        );
+        return result.sent ? 'entrega guardada en la PVA' : 'la PVA no aceptó la entrega';
+      }
+      case 'pva_submit_for_grading': {
+        const result = await callAgent(
+          base,
+          `/api/pva/tarea/${payload.assignmentId}/entregar`,
+          { confirmName: payload.confirmName, acceptStatement: payload.acceptStatement },
+          credentials
+        );
+        return result.sent ? 'entregada para calificar' : 'la PVA no aceptó la entrega';
+      }
+      case 'pva_forum_reply': {
+        const result = await callAgent(
+          base,
+          '/api/pva/foro/responder',
+          {
+            postId: payload.postId,
+            discussionId: payload.discussionId,
+            subject: payload.subject,
+            message: payload.message,
+            forumName: payload.forumName,
+          },
+          credentials
+        );
+        return result.sent ? `publicado (post ${result.postId ?? 'sin id'})` : 'no se publicó';
+      }
       default:
         throw new Error(`Acción desconocida: ${payload.kind}`);
     }
@@ -173,7 +209,9 @@ export const ACTION_TOOLS = [
     },
     async run({ payload }) {
       const parsed = actionPayloadSchema.parse(payload);
-      if (parsed.kind !== 'sync') requireScraperMutationSupport();
+      // El bloqueo por portal incompatible es del scraper de PeopleSoft. La PVA
+      // es REST y otra fuente: un portal roto no tiene por qué frenarla.
+      if (parsed.kind !== 'sync' && !parsed.kind.startsWith('pva_')) requireScraperMutationSupport();
       const ticket = await tickets.createTicket(parsed);
       return {
         summary: `${ticket.summary} ${ticket.requiresCode ? `Pedile a Elias el código de 6 dígitos que le llegó al teléfono (${ticket.deliveredVia.join(', ')}). Vence ${ticket.expiresAt}.` : 'Confirmá con confirm_action.'}`,

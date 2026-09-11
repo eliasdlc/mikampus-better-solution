@@ -6,6 +6,7 @@ import {
   FILAS_POR_HORA,
   bandLine,
   bandRows,
+  deadlinesByDay,
   foldBands,
   layoutDay,
   paletteFor,
@@ -13,6 +14,7 @@ import {
   visibleDays,
   type Band,
   type Block,
+  type DeadlineChip,
   type PlacedBlock,
 } from '../lib/grid.ts';
 
@@ -223,6 +225,43 @@ function Hora({ hour }: { hour: number }) {
   );
 }
 
+// Un vencimiento en el carril. Es un enlace cuando la PVA dio a dónde ir, y
+// texto cuando no: un control que no lleva a ninguna parte no se pinta como si
+// llevara. El rótulo accesible dice la fecha completa, que la celda sola no
+// puede decir.
+function Vencimiento({ chip }: { chip: DeadlineChip }) {
+  // La hora va compacta y con minutos: en una celda de columna no entra
+  // "11:59 p.m.", y "11:59 p" se lee cortado a la mitad.
+  const [hh, mm] = chip.at.split(':').map(Number);
+  const hora = `${hh % 12 === 0 ? 12 : hh % 12}:${String(mm).padStart(2, '0')}${hh < 12 ? 'a' : 'p'}`;
+  const etiqueta = `${chip.title}${chip.courseLabel ? ` de ${chip.courseLabel}` : ''}, vence ${chip.atLabel}`;
+  const clase = `flex min-h-6 items-center gap-1 truncate rounded-[4px] px-1.5 py-0.5 text-[10px] font-medium ${
+    chip.overdue ? 'bg-closed text-white' : 'bg-accent text-accent-fg'
+  }`;
+  const contenido = (
+    <>
+      <span className="truncate">{chip.title}</span>
+      <span className="tabular ml-auto shrink-0 font-mono opacity-80">{hora}</span>
+    </>
+  );
+  return chip.url ? (
+    <a
+      href={chip.url}
+      target="_blank"
+      rel="noreferrer"
+      title={etiqueta}
+      aria-label={etiqueta}
+      className={`${clase} focus-visible:outline-accent hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-1`}
+    >
+      {contenido}
+    </a>
+  ) : (
+    <span title={etiqueta} aria-label={etiqueta} className={clase}>
+      {contenido}
+    </span>
+  );
+}
+
 /**
  * `animate` prende el único momento orquestado de la app: el bloque aterrizando
  * al elegir una sección. `selectedIds` marca lo elegido con anillo y punto.
@@ -235,6 +274,7 @@ export function WeeklyGrid({
   onSelect,
   selectedIds,
   now,
+  deadlines = [],
 }: {
   blocks: Block[];
   animate?: boolean;
@@ -244,6 +284,13 @@ export function WeeklyGrid({
   selectedIds?: ReadonlySet<string>;
   /** El momento presente: día resaltado en la cabecera y línea de la hora. */
   now?: Date;
+  /**
+   * Las entregas del aula que vencen esta semana. Van en un carril propio
+   * sobre la grilla y NO como bloques: una entrega no tiene duración, y casi
+   * todas vencen a las 11:59 pm, donde la grilla está más apretada y nadie
+   * mira. El carril solo existe cuando hay algo que vencer.
+   */
+  deadlines?: DeadlineChip[];
 }) {
   const [verTodos, setVerTodos] = useState(false);
   const [desplegadas, setDesplegadas] = useState<ReadonlySet<number>>(new Set<number>());
@@ -292,9 +339,16 @@ export function WeeklyGrid({
     return { fila: bandLine(bands, `${String(hora).padStart(2, '0')}:00`), fraccion: now.getMinutes() / 60 };
   }, [now, columnaHoy, bands]);
 
+  // El carril de vencimientos es una fila más de la MISMA grilla, no un bloque
+  // aparte: así se desplaza con las columnas y queda alineado con su día.
+  const porDia = useMemo(() => deadlinesByDay(deadlines, days), [deadlines, days]);
+  const hayCarril = deadlines.some((chip) => days.includes(chip.day));
+
   const filas = bands.map((band) => (band.kind === 'hora' ? `${FILA} ${FILA}` : FILA_PLEGADA)).join(' ');
+  // Con carril, todo lo que viene después baja una fila.
+  const filaBase = hayCarril ? 3 : 2;
   const filaDe = (i: number) =>
-    bands.slice(0, i).reduce((n, b) => n + (b.kind === 'hora' ? FILAS_POR_HORA : 1), 0) + 2;
+    bands.slice(0, i).reduce((n, b) => n + (b.kind === 'hora' ? FILAS_POR_HORA : 1), 0) + filaBase;
 
   // La grilla es UNA parada de tabulación con foco rotativo. Doce paradas
   // obligan a atravesar el horario entero para llegar al botón de abajo.
@@ -348,7 +402,7 @@ export function WeeklyGrid({
           className="weekly-grid focus-visible:outline-accent grid focus-visible:outline-2"
           style={{
             gridTemplateColumns: `${GUTTER} repeat(${days.length}, minmax(var(--day-min), 1fr))`,
-            gridTemplateRows: `auto ${filas}`,
+            gridTemplateRows: `auto ${hayCarril ? 'auto ' : ''}${filas}`,
           }}
         >
           <div className="bg-surface border-line sticky left-0 z-10 border-b" style={{ gridColumn: 1, gridRow: 1 }} />
@@ -369,6 +423,30 @@ export function WeeklyGrid({
               )}
             </div>
           ))}
+
+          {/* El carril de vencimientos: una celda por día, sobre la grilla y
+              debajo de la cabecera. La grilla de abajo no cambia en nada. */}
+          {hayCarril && (
+            <>
+              <div
+                className="bg-surface border-line text-muted sticky left-0 z-10 flex items-center justify-end border-b pr-2 text-[10px] font-medium tracking-wide uppercase"
+                style={{ gridColumn: 1, gridRow: 2 }}
+              >
+                Vence
+              </div>
+              {days.map((day, i) => (
+                <div
+                  key={`vence-${day}`}
+                  className="border-line flex flex-col gap-0.5 border-b border-l px-1 py-1"
+                  style={{ gridColumn: i + 2, gridRow: 2 }}
+                >
+                  {(porDia.get(day) ?? []).map((chip) => (
+                    <Vencimiento key={chip.id} chip={chip} />
+                  ))}
+                </div>
+              ))}
+            </>
+          )}
 
           {/* Canaleta y hairlines. La etiqueta vive DENTRO de la celda de su
               hora, arriba y pegada a la línea que la abre: una clase que

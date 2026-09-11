@@ -1,0 +1,37 @@
+{
+  "settings": [
+    {
+      "name": "shortname",
+      "value": "PVA"
+    },
+    {
+      "name": "numsections",
+      "value": 1
+    },
+    {
+      "name": "sitepolicy",
+      "value": ""
+    },
+    {
+      "name": "tool_mobile_disabledfeatures",
+      "value": ""
+    },
+    {
+      "name": "calendar_startwday",
+      "value": "1"
+    },
+    {
+      "name": "coursegraceperiodbefore",
+      "value": "7"
+    },
+    {
+      "name": "timezone",
+      "value": "America/Santo_Domingo"
+    },
+    {
+      "name": "forcetimezone",
+      "value": "America/Santo_Domingo"
+    }
+  ],
+  "warnings": []
+}

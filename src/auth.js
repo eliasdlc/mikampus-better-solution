@@ -2,7 +2,15 @@ import crypto from 'node:crypto';
 import { db, deleteAllUserData } from './db.js';
 import { LOCAL_USER_ID, adoptLocalUsername, getUser, touchLastLogin } from './users.js';
 import { verifyPortalCredentials, adoptSession, resetSession } from './session.js';
-import { readCredential, writeCredential, deleteCredential } from './credentialStore.js';
+import {
+  readCredential,
+  writeCredential,
+  deleteCredential,
+  pvaAutolinkRejected,
+  markPvaAutolinkRejected,
+  clearPvaAutolinkRejected,
+} from './credentialStore.js';
+import { linkPvaCredential, forgetPvaSession, hasPvaCredential } from './moodle/session.js';
 
 // El login de mikampus ES el login del portal: no hay cuenta paralela. El
 // estudiante entra por el formulario con sus credenciales de micampus, mikampus
@@ -11,6 +19,12 @@ import { readCredential, writeCredential, deleteCredential } from './credentialS
 // reinicio) y emite una sesión propia por cookie. Esa cookie solo vale mientras
 // el archivo tenga credencial: vaciarlo (cerrar sesión, edición manual o un
 // rechazo del portal) saca al usuario en la próxima request.
+//
+// Son DOS fuentes y por lo tanto dos credenciales: micampus (PeopleSoft) y la
+// PVA (el Moodle). El usuario es el mismo, la contraseña no, así que el login
+// acepta una segunda contraseña opcional. La regla que gobierna todo lo de
+// abajo: un rechazo en una fuente no puede tumbar la otra. El portal decide si
+// hay sesión de mikampus; la PVA, como mucho, queda sin vincular.
 
 export const SESSION_COOKIE = 'mikampus_session';
 export const CSRF_HEADER = 'x-csrf-token';
@@ -116,7 +130,7 @@ export function noteLoginSuccess(username) {
 // ── El flujo de login completo ─────────────────────────────────────────────
 // Verifica contra el portal, crea/encuentra el usuario, adopta el context ya
 // logueado (el primer sync no paga un segundo signon) y emite la sesión.
-export async function loginWithPortal({ username, password }) {
+export async function loginWithPortal({ username, password, pvaPassword }) {
   const user = String(username ?? '').trim();
   if (!user || !password) throw Object.assign(new Error('Faltan usuario o contraseña'), { status: 400 });
   if (loginBlocked(user)) {
@@ -141,11 +155,62 @@ export async function loginWithPortal({ username, password }) {
   noteLoginSuccess(user);
   adoptIdentity(user);
   writeCredential({ username: user, password });
+  const pva = await linkPvaOnLogin({ username: user, portalPassword: password, pvaPassword });
   const account = getUser(LOCAL_USER_ID);
   touchLastLogin(account.id);
   await adoptSession(account.id, live);
   const session = createSession(account.id);
-  return { user: account, ...session };
+  return { user: account, pva, ...session };
+}
+
+// La PVA es la segunda fuente, no un requisito para entrar: si rechaza o no
+// responde, el login sigue siendo válido porque micampus no depende de Moodle.
+//
+// Entrar a mikampus vincula las dos fuentes con una sola contraseña. La guía de
+// la PVA dice que sus credenciales son las de Campus Solutions, así que lo
+// primero que se prueba es esa misma, sin pedir nada dos veces.
+//
+// Lo que el recon encontró el 7 de septiembre de 2026 es que para esta cuenta
+// la PVA responde `invalidlogin` a la contraseña que el portal sí acepta: su
+// copia se desincronizó en algún momento. Por eso el intento automático se hace
+// UNA vez por contraseña y queda anotada su huella: reintentar en cada login
+// contra un Moodle que puede tener bloqueo por intentos es cómo se traba una
+// cuenta sola. Cambiar la contraseña del portal borra la huella y vuelve a
+// intentar, que es justo cuando puede haberse resincronizado.
+export async function linkPvaOnLogin({ username, portalPassword, pvaPassword = null, fetchImpl } = {}) {
+  if (pvaPassword) {
+    try {
+      await linkPvaCredential({ username, password: pvaPassword }, { fetchImpl });
+      clearPvaAutolinkRejected();
+      return { linked: true, reason: null, mode: 'propia' };
+    } catch (err) {
+      return { linked: false, reason: err?.credentialRejected ? 'rechazada' : 'sin-respuesta', mode: 'propia' };
+    }
+  }
+
+  if (hasPvaCredential()) return { linked: true, reason: null, mode: 'guardada' };
+
+  const fingerprint = passwordFingerprint(username, portalPassword);
+  if (pvaAutolinkRejected() === fingerprint) {
+    return { linked: false, reason: 'misma-clave-rechazada', mode: 'misma' };
+  }
+  try {
+    await linkPvaCredential({ username, password: portalPassword }, { fetchImpl });
+    clearPvaAutolinkRejected();
+    return { linked: true, reason: null, mode: 'misma' };
+  } catch (err) {
+    if (err?.credentialRejected) {
+      markPvaAutolinkRejected(fingerprint);
+      return { linked: false, reason: 'misma-clave-rechazada', mode: 'misma' };
+    }
+    return { linked: false, reason: 'sin-respuesta', mode: 'misma' };
+  }
+}
+
+// La huella no es reversible y va por cuenta: solo sirve para responder "¿es la
+// misma contraseña que la PVA ya rechazó?".
+function passwordFingerprint(username, password) {
+  return sha256(`${String(username).toLowerCase()}:${password}`);
 }
 
 // Una instalación representa a una sola persona. Cambiar de cuenta no crea un
@@ -156,17 +221,22 @@ function adoptIdentity(username) {
   if (previous?.portalUsername && previous.portalUsername.toLowerCase() !== username.toLowerCase()) {
     revokeAllSessions(LOCAL_USER_ID);
     deleteAllUserData(LOCAL_USER_ID);
+    // La contraseña y el token de la PVA son de la persona anterior: irse de la
+    // cuenta también es irse de la PVA.
+    forgetPvaSession();
     db.prepare('INSERT OR IGNORE INTO users (id) VALUES (?)').run(LOCAL_USER_ID);
   }
   adoptLocalUsername(username);
 }
 
 // Cerrar sesión vacía el archivo de credencial: sin eso, la próxima apertura
-// volvería a entrar sola.
+// volvería a entrar sola. Se van las dos fuentes, y con la PVA se va su token,
+// que es lo único de mikampus que sigue valiendo aunque nadie lo use.
 export async function logout(token) {
   const session = sessionFor(token);
   revokeSession(token);
   deleteCredential();
+  forgetPvaSession();
   if (session) await resetSession(session.userId);
 }
 

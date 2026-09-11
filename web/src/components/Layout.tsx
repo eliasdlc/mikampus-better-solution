@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
+  BookOpen,
   CalendarDays,
   ChartLine,
   GraduationCap,
@@ -26,6 +27,9 @@ import { SyncControl } from './SyncControl.tsx';
 const NAV: Array<{ to: string; label: string; short: string; icon: LucideIcon; end?: boolean }> = [
   { to: '/', label: 'Inicio', short: 'Inicio', icon: House, end: true },
   { to: '/horario', label: 'Mi horario', short: 'Horario', icon: CalendarDays },
+  // El aula es la otra plataforma, no una pantalla más de micampus: va con su
+  // propio destino y con nombre corto, que a 393px la barra son seis.
+  { to: '/aula', label: 'Aula', short: 'Aula', icon: BookOpen },
   { to: '/inscripcion', label: 'Inscripción', short: 'Inscribir', icon: GraduationCap },
   { to: '/academico', label: 'Notas y avance', short: 'Notas', icon: ChartLine },
   { to: '/ajustes', label: 'Ajustes', short: 'Ajustes', icon: Settings },

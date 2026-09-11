@@ -47,6 +47,21 @@ export function lastSuccessfulBackupAt() {
   return readMeta(LAST_KEY);
 }
 
+// La copia diaria ordena bien como texto porque su fecha es ISO. La
+// pre-upgrade NO: su número de esquema no está acolchado, así que "v9" le gana
+// a "v16" en un orden alfabético y la rotación borra justo la copia del último
+// upgrade, que es la única que sirve para volver de él.
+function newestFirst(pattern) {
+  return (left, right) => {
+    const version = (name) => Number(name.match(/^pre-upgrade-v(\d+)-/)?.[1] ?? 0);
+    if (pattern.source.startsWith('^pre-upgrade')) {
+      const diff = version(right) - version(left);
+      if (diff !== 0) return diff;
+    }
+    return right.localeCompare(left);
+  };
+}
+
 export function rotateBackups(directory = BACKUP_DIR, keep = retention()) {
   if (!fs.existsSync(directory)) return [];
   const removed = [];
@@ -55,7 +70,7 @@ export function rotateBackups(directory = BACKUP_DIR, keep = retention()) {
     [/^pre-upgrade-v\d+-.*\.sqlite$/, KEEP_PRE_UPGRADE],
   ];
   for (const [pattern, limit] of groups) {
-    const files = fs.readdirSync(directory).filter((name) => pattern.test(name)).sort().reverse();
+    const files = fs.readdirSync(directory).filter((name) => pattern.test(name)).sort(newestFirst(pattern));
     for (const name of files.slice(limit)) {
       const target = path.join(directory, name);
       fs.unlinkSync(target);

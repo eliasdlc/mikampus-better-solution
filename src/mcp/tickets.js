@@ -114,6 +114,30 @@ export function describe(payload) {
         effects: ['Te saca de la materia en PeopleSoft', 'Recuperar el cupo depende de que siga abierto'],
         reversible: false,
       };
+    // La PVA. Ninguna es reversible: una entrega guardada la ve el profesor y
+    // un post publicado no se borra desde acá.
+    case 'pva_save_submission':
+      return {
+        summary: `Guardar la entrega de "${payload.assignmentName}" en la PVA.`,
+        effects: [
+          'Escribe en la plataforma donde se califica',
+          'Si la tarea no tiene etapa de borrador, esto YA es la entrega',
+          'El profesor ve lo que quede guardado',
+        ],
+        reversible: false,
+      };
+    case 'pva_submit_for_grading':
+      return {
+        summary: `Entregar "${payload.assignmentName}" en firme para que la califiquen.`,
+        effects: ['Cierra la entrega en la PVA', 'No se puede deshacer sin que el profesor la reabra'],
+        reversible: false,
+      };
+    case 'pva_forum_reply':
+      return {
+        summary: `Publicar una respuesta en el foro ${payload.forumName} de la PVA.`,
+        effects: ['Lo ve el curso entero', 'Un post publicado no se borra desde mikampus'],
+        reversible: false,
+      };
     default:
       throw new Error(`Acción desconocida: ${payload.kind}`);
   }
