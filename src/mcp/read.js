@@ -1007,6 +1007,54 @@ export function pvaCorpus(userId = LOCAL_USER_ID) {
   return { files: row?.files ?? 0, downloaded: row?.downloaded ?? 0, indexed: row?.indexed ?? 0 };
 }
 
+/**
+ * Un material concreto con su texto extraído, para leerlo entero.
+ *
+ * El blob NO entra acá: `local_path` sigue prohibido en la allowlist y esa
+ * decisión no cambia. Lo que hace falta para escribir un apunte a partir de un
+ * material es el TEXTO, no dónde vive el fichero en el disco de la persona.
+ *
+ * Un `pva_file_text` ausente significa "todavía no se bajó"; presente con
+ * `content` vacío significa "se bajó y no dejó texto". Son dos respuestas
+ * distintas y quien pregunte tiene derecho a distinguirlas.
+ */
+export function pvaFile(userId = LOCAL_USER_ID, fileId) {
+  if (!hasTable('pva_file')) return null;
+  return readRow(
+    `SELECT f.file_id AS fileId, f.filename, f.course_id AS courseId, f.cmid,
+            f.mimetype, f.filesize AS declaredBytes, f.component, f.area,
+            c.shortname AS courseShortname,
+            m.name AS moduleName,
+            t.extractor, t.pages, t.content, t.extracted_at AS extractedAt
+     FROM pva_file f
+     LEFT JOIN pva_file_text t ON t.file_id = f.file_id
+     LEFT JOIN pva_course c ON c.user_id = f.user_id AND c.course_id = f.course_id
+     LEFT JOIN pva_module m ON m.cmid = f.cmid
+     WHERE f.file_id = ? AND f.user_id = ? AND f.deleted_at IS NULL`,
+    [fileId, userId],
+    { f: 'pva_file', t: 'pva_file_text', c: 'pva_course', m: 'pva_module' }
+  );
+}
+
+/** Materiales cuyo nombre de archivo contiene lo pedido, para resolver por nombre. */
+export function pvaFindFiles(userId = LOCAL_USER_ID, { query, courseId = null, limit = 10 } = {}) {
+  if (!hasTable('pva_file')) return [];
+  const params = [userId, `%${String(query ?? '')}%`];
+  if (courseId != null) params.push(courseId);
+  params.push(limit);
+  return readRows(
+    `SELECT f.file_id AS fileId, f.filename, f.course_id AS courseId, c.shortname AS courseShortname
+     FROM pva_file f
+     LEFT JOIN pva_course c ON c.user_id = f.user_id AND c.course_id = f.course_id
+     WHERE f.user_id = ? AND f.deleted_at IS NULL AND f.filename LIKE ? COLLATE NOCASE
+       ${courseId != null ? 'AND f.course_id = ?' : ''}
+     ORDER BY f.filename
+     LIMIT ?`,
+    params,
+    { f: 'pva_file', c: 'pva_course' }
+  );
+}
+
 /** Los materiales de un curso, por módulo, para colgarlos del árbol. */
 export function pvaFilesByModule(userId = LOCAL_USER_ID, courseId) {
   if (!hasTable('pva_file')) return new Map();

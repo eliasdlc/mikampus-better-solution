@@ -15,9 +15,11 @@ import {
   pvaAnnouncementsEnvelopeSchema,
   pvaSectionsEnvelopeSchema,
   pvaSearchEnvelopeSchema,
+  pvaFileEnvelopeSchema,
 } from '../shared/mcp.ts';
 import { completionLabel, submissionState } from '../shared/pva.ts';
 import { agentState, expandBlocks, getBlockers, getUpcoming, localDate, resolveCycle } from './kino.js';
+import { MATRICULA } from '../diagnostics.js';
 import { connectionMode } from './db.js';
 import * as read from './read.js';
 
@@ -666,6 +668,127 @@ function pvaSearch({ query, limit, now }) {
   });
 }
 
+// Cuánto texto sale por llamada. 20 000 caracteres son unas diez páginas: una
+// lectura de clase entera entra de una, y un libro completo se pide por partes
+// en vez de llenar la ventana de contexto de golpe.
+const PVA_FILE_CHUNK = 20_000;
+
+// A partir de cuántas partes un material deja de ser una lectura de clase y pasa
+// a ser un libro de texto o un dataset. Recorrerlo entero son decenas de
+// llamadas y casi nunca es lo que se quiso preguntar, así que la respuesta dice
+// cuántas harían falta y cuál es el camino corto. Se cuenta en partes y no en
+// caracteres porque el tamaño de cada parte lo elige quien llama.
+const PVA_FILE_MANY_PARTS = 10;
+
+
+function pvaFile({ fileId, query, course, offset, maxChars, now }) {
+  const courseId = course ? resolvePvaCourse(course).courseId : null;
+  const limit = maxChars ?? PVA_FILE_CHUNK;
+  const warnings = [];
+  const unknown = [];
+
+  let target = null;
+  let matches = [];
+  if (fileId != null) {
+    target = read.pvaFile(read.LOCAL_USER_ID, fileId);
+  } else if (query) {
+    const found = read.pvaFindFiles(read.LOCAL_USER_ID, { query, courseId });
+    // Con varios candidatos se devuelven las opciones y no se elige: adivinar
+    // cuál de tres PDF quiso decir es exactamente donde un agente inventa.
+    if (found.length === 1) target = read.pvaFile(read.LOCAL_USER_ID, found[0].fileId);
+    else {
+      matches = found.map((entry) => ({
+        fileId: entry.fileId,
+        filename: entry.filename,
+        courseShortname: entry.courseShortname ?? null,
+      }));
+    }
+  } else {
+    throw new Error('Hace falta el fileId del material o parte de su nombre.');
+  }
+
+  const freshness = read.freshnessFor(['pvaFiles', 'pvaContents'], { now: now.getTime() });
+
+  if (!target) {
+    return envelope({
+      data: { file: null, text: '', offset: 0, nextOffset: null, matches },
+      summary: matches.length
+        ? `Hay ${matches.length} materiales que coinciden: hace falta elegir uno por su fileId.`
+        : 'No encontré ese material en lo que se leyó del aula.',
+      freshness,
+      warnings,
+      unknown,
+      now,
+    });
+  }
+
+  const content = target.content ?? '';
+  const chars = content.length;
+  const from = Math.min(Math.max(0, offset ?? 0), chars);
+  const text = content.slice(from, from + limit);
+  const nextOffset = from + text.length < chars ? from + text.length : null;
+
+  if (target.extractor == null) {
+    unknown.push({
+      kind: 'pva_material_sin_bajar',
+      reason: 'La PVA declara este material pero todavía no se descargó: no hay contenido que leer, y que esté vacío acá no dice nada de lo que tiene adentro.',
+    });
+  } else if (!chars) {
+    unknown.push({ kind: 'pva_material_sin_texto', reason: extractorReason(target.extractor) });
+  }
+  if (nextOffset != null) {
+    warnings.push({
+      kind: 'pva_material_truncado',
+      detail: `Van ${text.length} de ${chars} caracteres. El resto se pide con offset=${nextOffset}.`,
+    });
+  }
+  const partes = Math.ceil(chars / limit);
+  if (partes > PVA_FILE_MANY_PARTS) {
+    warnings.push({
+      kind: 'pva_material_enorme',
+      detail: `Este material son ${chars} caracteres${target.pages ? ` en ${target.pages} páginas` : ''}: leerlo entero son ${partes} llamadas. Para una pregunta concreta, search_pva_files encuentra el pasaje sin recorrerlo.`,
+    });
+  }
+  // La redacción borra lo que tenga forma de matrícula, y en el texto de un
+  // material eso alcanza a un rango de años o de páginas. Se avisa con el mismo
+  // patrón que redacta, no con una copia: avisar de un agujero que no existe es
+  // tan malo como no avisar del que sí.
+  if (MATRICULA.test(text)) {
+    warnings.push({
+      kind: 'pva_texto_redactado',
+      detail: 'Este fragmento trae secuencias con forma de matrícula (####-####). La redacción las reemplaza antes de salir, así que un rango de años o de páginas va a aparecer como [matrícula-redactada].',
+    });
+  }
+
+  return envelope({
+    data: {
+      file: {
+        fileId: target.fileId,
+        filename: target.filename,
+        courseId: target.courseId,
+        courseShortname: target.courseShortname ?? null,
+        cmid: target.cmid,
+        moduleName: target.moduleName ?? null,
+        mimetype: target.mimetype ?? null,
+        extractor: target.extractor ?? null,
+        pages: target.pages ?? null,
+        chars,
+      },
+      text,
+      offset: from,
+      nextOffset,
+      matches: [],
+    },
+    summary: chars
+      ? `${target.filename}${target.courseShortname ? ` (${target.courseShortname})` : ''}: ${text.length} de ${chars} caracteres.`
+      : `${target.filename}: no hay texto que leer todavía.`,
+    freshness,
+    warnings,
+    unknown,
+    now,
+  });
+}
+
 // Una materia se nombra como la nombra el estudiante (MAT-101-01) o por su id.
 function resolvePvaCourse(ref) {
   const course = read.pvaResolveCourse(read.LOCAL_USER_ID, ref);
@@ -1235,6 +1358,23 @@ export const READ_TOOLS = [
     run: ({ query, limit, now }) => pvaSearch({ query, limit: limit ?? 20, now }),
   },
   {
+    name: 'get_pva_file',
+    config: {
+      title: 'Leer un material del aula',
+      description:
+        'El texto completo de un material que el profesor subió a la PVA, para leerlo entero en vez del fragmento que devuelve la búsqueda. Se pide por fileId (el que traen search_pva_files y get_pva_section) o por parte del nombre del archivo; si el nombre coincide con varios, devuelve las opciones en vez de elegir. Devuelve texto, no el fichero: el binario no sale del disco. El texto sale por partes: mientras el sobre traiga nextOffset, el documento sigue. Un material que la PVA declara pero que todavía no se descargó lo dice en unknown en vez de contestar vacío, y uno que es un libro o un dataset avisa cuántas llamadas costaría antes de que valga la pena recorrerlo.',
+      inputSchema: {
+        fileId: z.number().int().optional(),
+        query: z.string().min(2).optional().describe('Parte del nombre del archivo'),
+        course: z.string().min(2).optional().describe('Nombre corto de la materia, para desambiguar por nombre'),
+        offset: z.number().int().min(0).optional().describe('Desde qué carácter seguir leyendo; por defecto 0'),
+        maxChars: z.number().int().min(500).max(40_000).optional().describe('Por defecto 20000'),
+      },
+      outputSchema: pvaFileEnvelopeSchema,
+    },
+    run: pvaFile,
+  },
+  {
     name: 'get_activity',
     config: {
       title: 'Qué hizo mikampus',
@@ -1299,9 +1439,24 @@ asistencia: nada de eso existe en esa plataforma, así que no se busca ahí.
 - Lo que hay adentro de un archivo del aula que todavía no se descargó, o que
   no dejó texto: una imagen o un PDF escaneado se guardan igual, pero no se
   pueden buscar por dentro sin OCR. La herramienta search_pva_files dice
-  cuántos materiales quedaron así.
+  cuántos materiales quedaron así, y get_pva_file distingue "no se bajó" de
+  "se bajó y no dejó texto" en vez de contestar vacío en los dos casos.
 - Si una tarea de la PVA está entregada, mientras no se haya consultado su
   estado. La respuesta lo dice en unknown en vez de asumir que no lo está.
+
+## Los materiales del aula
+
+search_pva_files busca por dentro de los PDF, documentos y presentaciones ya
+descargados y devuelve el fragmento donde aparece el término, con el fileId de
+cada uno. get_pva_file toma ese fileId y devuelve el texto completo, por partes
+de 20 000 caracteres: cuando el sobre trae nextOffset, el documento sigue. El
+fichero en sí nunca sale: lo que se sirve es el texto extraído.
+
+No todo material se lee entero. Entre los de una materia hay libros de texto y
+datasets de cientos de miles de caracteres, y el sobre avisa con
+pva_material_enorme cuántas llamadas costaría recorrerlo. Para una pregunta
+concreta, buscar el pasaje es el camino; leer de punta a punta es para una
+lectura de clase.
 
 ## Cómo leer una respuesta
 

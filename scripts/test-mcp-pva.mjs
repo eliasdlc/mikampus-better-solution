@@ -47,7 +47,15 @@ for (const kind of ['pvaCourses', 'pvaAssignments', 'pvaCalendar', 'pvaGrades', 
 // vacío, que es justo el que no tiene gracia.
 const { indexFileText } = await import('../src/moodle/files.js');
 const material = db.prepare('SELECT file_id, filename, mimetype FROM pva_file WHERE user_id = ?').get(USER);
-await indexFileText({ ...material, sha256: 'sha-de-prueba' }, Buffer.from('<p>La integral definida de una función continua</p>'), {
+// El cuerpo pasa de 500 caracteres a propósito: por debajo de eso la lectura
+// entera entra en una sola llamada y el camino de continuación nunca se prueba.
+// El "2024-2025" tampoco es decorativo: tiene forma de matrícula y sirve para
+// verificar que la redacción lo tapa y que la respuesta lo avisa.
+const cuerpo =
+  '<p>La integral definida de una función continua</p>' +
+  '<p>El periodo 2024-2025 quedó cubierto en el repaso.</p>' +
+  '<p>Repaso del capitulo uno con sus ejercicios.</p>'.repeat(150);
+await indexFileText({ ...material, sha256: 'sha-de-prueba' }, Buffer.from(cuerpo), {
   contentType: 'text/html',
 });
 // Y uno que la PVA declara pero que todavía no se bajó: es el caso que hace
@@ -71,6 +79,7 @@ const {
   pvaAnnouncementsEnvelopeSchema,
   pvaSectionsEnvelopeSchema,
   pvaSearchEnvelopeSchema,
+  pvaFileEnvelopeSchema,
 } = await import('../src/shared/mcp.ts');
 
 const tool = (name) => {
@@ -81,8 +90,21 @@ const tool = (name) => {
 const call = (name, args = {}) => tool(name).run({ ...args, now: NOW });
 const unknownKinds = (result) => result.payload.unknown.map((entry) => entry.kind);
 
+// Zod descarta en silencio las claves que el contrato no declara, pero el
+// servidor MCP valida el JSON Schema con additionalProperties: false: lo que acá
+// se tiraba sin ruido, el cliente lo ve como un error de protocolo. Comparar el
+// antes y el después del parse es lo que convierte ese descarte en una falla.
+const estable = (value) =>
+  JSON.stringify(value, (_, entry) =>
+    entry && typeof entry === 'object' && !Array.isArray(entry)
+      ? Object.fromEntries(Object.keys(entry).sort().map((key) => [key, entry[key]]))
+      : entry
+  );
+const parseEstricto = (schema, payload, name) =>
+  assert.equal(estable(schema.parse(payload)), estable(payload), `${name} no devuelve claves fuera de su contrato`);
+
 try {
-  // ── Las seis existen y declaran su contrato ──
+  // ── Las ocho existen y declaran su contrato ──
   {
     const nombres = READ_TOOLS.map((entry) => entry.name).filter((name) => /pva/.test(name));
     assert.deepEqual(nombres.sort(), [
@@ -90,6 +112,7 @@ try {
       'get_pva_assignment',
       'get_pva_courses',
       'get_pva_due',
+      'get_pva_file',
       'get_pva_grades',
       'get_pva_section',
       'search_pva_files',
@@ -329,6 +352,81 @@ try {
     assert.match(vacio.summary, /de 1 con texto buscable|indexado/, 'el resumen dice contra cuántos se buscó');
   }
 
+  // ── Leer un material entero ──
+  {
+    const porNombre = call('get_pva_file', { query: 'lectura-01' });
+    pvaFileEnvelopeSchema.parse(porNombre.payload);
+    assert.equal(porNombre.payload.data.file.filename, 'lectura-01.pdf');
+    assert.equal(porNombre.payload.data.file.courseShortname, 'MAT-101-01');
+    assert.ok(porNombre.payload.data.file.chars > 500, 'chars es el largo del texto completo');
+    assert.match(porNombre.payload.data.text, /integral definida/);
+
+    const id = porNombre.payload.data.file.fileId;
+
+    // El documento se sirve por partes y la continuación es exacta: pegar los
+    // dos fragmentos tiene que dar el texto entero, sin repetir ni saltarse nada.
+    const primera = call('get_pva_file', { fileId: id, maxChars: 500 });
+    assert.equal(primera.payload.data.text.length, 500);
+    assert.equal(primera.payload.data.nextOffset, 500);
+    assert.ok(
+      primera.payload.warnings.some((entry) => entry.kind === 'pva_material_truncado'),
+      'un texto cortado lo dice en vez de parecer completo'
+    );
+    const resto = call('get_pva_file', { fileId: id, offset: primera.payload.data.nextOffset });
+    assert.equal(resto.payload.data.nextOffset, null, 'el último pedazo no promete continuación');
+    assert.equal(
+      primera.payload.data.text + resto.payload.data.text,
+      porNombre.payload.data.text,
+      'las partes reconstruyen el documento'
+    );
+
+    // Lo que tiene forma de matrícula se tapa antes de salir, y la respuesta
+    // avisa para que nadie lea el agujero como parte del material.
+    assert.ok(
+      porNombre.payload.warnings.some((entry) => entry.kind === 'pva_texto_redactado'),
+      'el fragmento avisa que la redacción lo tocó'
+    );
+    assert.match(sanitize(porNombre.payload).data.text, /\[matrícula-redactada\]/);
+
+    // Un nombre que coincide con varios devuelve las opciones y no elige.
+    const ambiguo = call('get_pva_file', { query: '.pdf' });
+    pvaFileEnvelopeSchema.parse(ambiguo.payload);
+    assert.equal(ambiguo.payload.data.file, null);
+    assert.equal(ambiguo.payload.data.matches.length, 2);
+    assert.deepEqual(
+      Object.keys(ambiguo.payload.data.matches[0]).sort(),
+      ['courseShortname', 'fileId', 'filename'],
+      'un match trae lo que el contrato declara y nada más'
+    );
+    assert.match(ambiguo.summary, /elegir/);
+
+    // Declarado pero sin bajar no es un documento vacío.
+    const sinBajar = ambiguo.payload.data.matches.find((entry) => entry.filename === 'enunciado.pdf');
+    const pendiente = call('get_pva_file', { fileId: sinBajar.fileId });
+    pvaFileEnvelopeSchema.parse(pendiente.payload);
+    assert.equal(pendiente.payload.data.text, '');
+    assert.equal(pendiente.payload.data.file.extractor, null);
+    assert.ok(unknownKinds(pendiente).includes('pva_material_sin_bajar'));
+
+    const inexistente = call('get_pva_file', { fileId: 999_999 });
+    assert.equal(inexistente.payload.data.file, null);
+    assert.deepEqual(inexistente.payload.data.matches, []);
+
+    assert.throws(() => call('get_pva_file'), /fileId|nombre/, 'sin material que pedir, no adivina');
+
+    // Un libro de texto o un dataset no se leen de punta a punta: la respuesta
+    // dice lo que costaría antes de que alguien empiece a paginar.
+    assert.equal(
+      porNombre.payload.warnings.some((entry) => entry.kind === 'pva_material_enorme'),
+      false,
+      'una lectura de clase no dispara el aviso de material enorme'
+    );
+    const aviso = primera.payload.warnings.find((entry) => entry.kind === 'pva_material_enorme');
+    assert.ok(aviso, 'con partes de 500 caracteres, este mismo material ya son más de diez llamadas');
+    assert.match(aviso.detail, new RegExp(`${Math.ceil(porNombre.payload.data.file.chars / 500)} llamadas`));
+    assert.match(aviso.detail, /search_pva_files/, 'y nombra el camino corto');
+  }
+
   // ── Una sola semana: la entrega entra a la misma lista que las clases ──
   {
     const { READ_TOOLS: tools } = await import('../src/mcp/tools.js');
@@ -364,7 +462,7 @@ try {
     assert.deepEqual(fechas, [...fechas].sort(), 'una sola línea de tiempo, ordenada');
   }
 
-  // ── Nada identificatorio sale por ninguna de las siete ──
+  // ── Nada identificatorio sale por ninguna de las ocho ──
   {
     const nombres = READ_TOOLS.map((entry) => entry.name).filter((name) => /pva/.test(name));
     const args = {
@@ -372,6 +470,7 @@ try {
       get_pva_section: { course: 'MAT-101-01' },
       get_pva_assignment: { assignmentId: 900001 },
       search_pva_files: { query: 'integral' },
+      get_pva_file: { query: 'lectura-01' },
     };
     const schemas = {
       search_pva_files: pvaSearchEnvelopeSchema,
@@ -381,6 +480,7 @@ try {
       get_pva_grades: pvaGradesEnvelopeSchema,
       get_pva_announcements: pvaAnnouncementsEnvelopeSchema,
       get_pva_section: pvaSectionsEnvelopeSchema,
+      get_pva_file: pvaFileEnvelopeSchema,
     };
     for (const name of nombres) {
       const payload = sanitize(call(name, args[name] ?? {}).payload);
@@ -391,7 +491,7 @@ try {
       // El servidor valida la respuesta DESPUÉS de sanitizarla: si la redacción
       // se llevara una clave del contrato, el cliente vería un error y esta
       // prueba, que valida el sobre crudo más arriba, no lo habría notado.
-      schemas[name].parse(payload);
+      parseEstricto(schemas[name], payload, name);
     }
   }
 
@@ -409,4 +509,4 @@ function porIdIncluye(result, kind) {
   return result.payload.unknown.some((entry) => entry.kind === kind);
 }
 
-console.log('✓ MCP de la PVA: siete herramientas con su contrato, el libro oculto se declara en vez de contestar cero, y la identidad no sale');
+console.log('✓ MCP de la PVA: ocho herramientas con su contrato, el libro oculto se declara en vez de contestar cero, y la identidad no sale');

@@ -421,6 +421,36 @@ export const pvaSearchEnvelopeSchema = envelopeSchema(
     corpus: z.object({ files: z.number().int(), downloaded: z.number().int(), indexed: z.number().int() }),
   })
 );
+// Un material del aula leído entero. `chars` es el largo del texto COMPLETO, no
+// del fragmento devuelto: sin él, un texto cortado por `maxChars` es
+// indistinguible de un documento que se acabó ahí.
+export const pvaFileSchema = z.object({
+  fileId: z.number().int(),
+  filename: z.string(),
+  courseId: z.number().int(),
+  courseShortname: z.string().nullable(),
+  cmid: z.number().int(),
+  moduleName: z.string().nullable(),
+  mimetype: z.string().nullable(),
+  // null mientras el material no se haya descargado.
+  extractor: z.string().nullable(),
+  pages: z.number().int().nullable(),
+  chars: z.number().int(),
+});
+
+export const pvaFileEnvelopeSchema = envelopeSchema(
+  z.object({
+    file: pvaFileSchema.nullable(),
+    text: z.string(),
+    offset: z.number().int(),
+    // Desde dónde pedir la continuación, o null cuando no queda nada más.
+    nextOffset: z.number().int().nullable(),
+    matches: z.array(
+      z.object({ fileId: z.number().int(), filename: z.string(), courseShortname: z.string().nullable() })
+    ),
+  })
+);
+
 export const pvaSectionsEnvelopeSchema = envelopeSchema(
   z.object({ courseId: z.number().int(), courseShortname: z.string().nullable(), sections: z.array(pvaSectionSchema) })
 );
