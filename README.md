@@ -40,6 +40,9 @@ Hoy funciona:
 5. **Buscar materias** — ⌘K, resultados instantáneos del catálogo cacheado
    (índice MiniSearch en el cliente, insensible a acentos).
 6. **Actividad en vivo** — cada operación Playwright reporta su progreso por SSE.
+7. **Tu agente de IA** — un servidor MCP de solo lectura sobre la base local, con
+   dieciocho herramientas mapeadas a preguntas y no a tablas. Ver
+   [Tu agente de IA (MCP)](#tu-agente-de-ia-mcp).
 
 Dos cosas que el portal no puede hacer, porque no corre en tu máquina y no
 recuerda:
@@ -177,6 +180,141 @@ es manual y se puede apagar. Lo que se descargue se verifica por SHA-256, y el
 flujo de update detiene el agente y respalda la base antes de tocar nada. El
 instalador por plataforma llega con la fase de distribución (ver
 [`docs/adr/0002-data-lifecycle.md`](./docs/adr/0002-data-lifecycle.md)).
+
+## Tu agente de IA (MCP)
+
+mikampus expone sus datos por [Model Context Protocol](https://modelcontextprotocol.io),
+así que Claude Code —o cualquier cliente MCP— puede contestar "¿qué entrego esta
+semana?" o "resumime la lectura de cálculo" leyendo tu base local. El servidor es
+un **proceso aparte**: habla por stdio con el cliente que lo lanza y no necesita
+que el agente de mikampus esté corriendo ni que haya un puerto abierto.
+
+Es, de fábrica, **solo lectura**. La conexión a SQLite se abre sin permiso de
+escritura y con `PRAGMA query_only`, cada consulta se valida contra una
+allowlist de tabla y columna, y toda respuesta pasa por una redacción final. Ni
+la contraseña del portal, ni la llave de la PVA, ni tu matrícula salen por acá.
+
+### Instalar
+
+El servidor lee la base que llenó **tu** mikampus, así que el orden importa:
+primero instalá mikampus en esa máquina, entrá con tu cuenta y dejá que
+sincronice al menos una vez. Sin base, el servidor arranca y avisa que no la
+encuentra.
+
+Desde un checkout del repo:
+
+```bash
+npm ci
+claude mcp add -s user mikampus -- node /ruta/al/repo/src/mcp/stdio.js
+```
+
+`-s user` lo deja disponible en cualquier proyecto; sin esa bandera queda solo
+en el directorio desde el que lo agregaste.
+
+El paquete `mikampus` todavía no está publicado en npm: mientras tanto, una
+instalación global se arma desde el checkout (`npm run prepack && npm i -g .`) y
+deja el binario `mikampus-mcp`, que hace lo mismo sin depender de la ruta del
+repo:
+
+```bash
+claude mcp add mikampus -- mikampus-mcp
+```
+
+Cualquier otro cliente MCP usa la misma forma. La configuración equivalente:
+
+```json
+{
+  "mcpServers": {
+    "mikampus": {
+      "command": "node",
+      "args": ["/ruta/al/repo/src/mcp/stdio.js"]
+    }
+  }
+}
+```
+
+Si tus datos no están en la ubicación por defecto, pasale `MIKAMPUS_DATA_DIR` en
+el entorno del servidor: resuelve rutas igual que el agente y nunca usa el CWD.
+
+Para comprobar que quedó vivo, `claude mcp list` tiene que mostrarlo conectado;
+el propio proceso escribe a stderr si arrancó en solo lectura o con acciones.
+
+### Cuando mikampus corre en otra máquina
+
+El servidor habla por stdio, y stdio no exige que el proceso sea local: exige
+que haya una tubería. SSH es una tubería. Así que si mikampus vive en un equipo
+que siempre está encendido y vos trabajás en otro, el cliente lanza el servidor
+**allá** y lee la base de allá, sin copiar datos ni abrir un puerto:
+
+```bash
+claude mcp add -s user mikampus -- ssh -T <equipo> /ruta/al/node /ruta/al/repo/src/mcp/stdio.js
+```
+
+Tres detalles que deciden si funciona a la primera:
+
+- **La ruta absoluta del `node`.** Una sesión SSH no interactiva no carga tu
+  shell de login, así que un gestor de versiones (mise, nvm, asdf) no está
+  activo y `node` puede resolver a otra versión, o a ninguna. Comprobalo con
+  `ssh <equipo> /ruta/al/node --version` antes de agregarlo.
+- **`-T` y stdout limpio.** El canal del protocolo es stdout: un banner o un MOTD
+  lo corrompen. `ssh <equipo> true | cat -A` tiene que no imprimir nada.
+- **Llave sin passphrase.** El cliente lanza el proceso solo; si SSH pide algo,
+  la conexión no llega a levantar. `ControlMaster` en tu `~/.ssh/config` hace que
+  la segunda conexión entre al instante.
+
+Lo que ganás es que los datos no se duplican y el equipo que scrapea es el mismo
+que contesta. Lo que pagás es que si ese equipo está apagado o fuera de alcance,
+el MCP no responde: es un cambio de "la base vive conmigo" a "la base vive allá".
+
+### Qué contesta
+
+Dieciocho herramientas mapeadas a preguntas, no a tablas. Todas devuelven el
+mismo sobre: `data`, `freshness` (qué tan viejo es lo que estás leyendo),
+`warnings` y `unknown` (lo que **no** se sabe y por qué). Ese último campo es lo
+que hace estructuralmente imposible que el agente rellene un hueco con un
+invento.
+
+| Plataforma | Herramientas |
+| --- | --- |
+| MiCampus (expediente) | `get_overview`, `get_cycle`, `get_schedule`, `get_academics`, `get_degree_progress`, `find_courses`, `suggest_load`, `get_blockers`, `get_upcoming`, `get_activity` |
+| PVA (el aula, Moodle) | `get_pva_courses`, `get_pva_due`, `get_pva_assignment`, `get_pva_grades`, `get_pva_announcements`, `get_pva_section`, `search_pva_files`, `get_pva_file` |
+
+El recurso `mikampus://about` trae el glosario y la lista de lo que mikampus no
+sabe; conviene que el cliente lo cargue antes de la primera pregunta.
+
+La nota del aula y la del expediente **no** son la misma, y el servidor lo repite
+en cada respuesta que las toca: `get_pva_grades` es el libro que el profesor
+lleva en su Moodle, `get_academics` es el expediente oficial.
+
+**Leer un material.** `search_pva_files` busca por dentro de los PDF,
+presentaciones y documentos ya descargados y devuelve el fragmento con su
+`fileId`; `get_pva_file` toma ese id y devuelve el texto completo en partes de
+20 000 caracteres (mientras el sobre traiga `nextOffset`, el documento sigue).
+Sale **texto extraído**, nunca el fichero ni su ruta en tu disco. Un material que
+la PVA declara pero que todavía no se bajó lo dice en `unknown` en vez de
+contestar vacío.
+
+### El carril de acción
+
+Apagado salvo que lo enciendas con `--allow-actions`. Sin la bandera, el proceso
+ni siquiera importa el módulo de acciones ni abre una conexión de escritura:
+
+```bash
+claude mcp add mikampus -- node /ruta/al/repo/src/mcp/stdio.js --allow-actions
+```
+
+Encendido, agrega `propose_action`, `confirm_action`, `cancel_action` y
+`list_pending_actions`. **`propose_action` nunca ejecuta**: deja una propuesta
+esperando, y `confirm_action` exige un código de seis dígitos de un solo uso que
+mikampus te manda por push al teléfono, fuera de la conversación. Si no hay un
+dispositivo suscrito, el proceso lo dice al arrancar en vez de descubrirlo
+cuando ya haya una baja esperando confirmación. Todo queda en `action_log`.
+
+Ese push necesita las llaves VAPID (`MIKAMPUS_VAPID_PUBLIC` y
+`MIKAMPUS_VAPID_PRIVATE`) en el entorno del servidor. `dotenv` las lee del `.env`
+del directorio desde el que arranque el proceso, que no tiene por qué ser el
+repo: si tu cliente no las hereda, pasáselas con `-e` al agregarlo. El carril de
+lectura no las necesita para nada.
 
 ## Garantías y límites operativos
 
