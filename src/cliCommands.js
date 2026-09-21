@@ -25,6 +25,8 @@ export const CLI_COMMANDS = [
   'diagnostics',
   'update',
   'aula-a-kino',
+  'teams-login',
+  'teams-status',
 ];
 
 export function isCliCommand(value) {
