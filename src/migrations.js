@@ -278,6 +278,15 @@ export const MIGRATIONS = [
     minCompatibleVersion: 1,
     up: createPvaCoursePrefTable,
   },
+  {
+    version: 19,
+    name: 'pva-material-y-kino',
+    // Una app de esquema 18 lee la tabla nueva sin problema: la columna que se
+    // agrega es opcional y el CHECK solo se ensancha. Lo que no puede es
+    // escribir un aviso de material nuevo, y no lo intenta porque no lo conoce.
+    minCompatibleVersion: 1,
+    up: widenPvaAlertTable,
+  },
 ];
 
 
@@ -1531,5 +1540,64 @@ export function createPvaWriteTable(db) {
     CREATE INDEX IF NOT EXISTS idx_pva_write_reciente ON pva_write (created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_pva_write_tarea
       ON pva_write (assignment_id) WHERE assignment_id IS NOT NULL;
+  `);
+}
+
+
+/**
+ * Ensancha el libro de avisos por dos motivos que llegaron juntos.
+ *
+ * El tipo `material_nuevo`. Los cuatro avisos originales cubren lo que hay que
+ * entregar y lo que ya se calificó; ninguno cubre que la profesora subió las
+ * diapositivas de la unidad 3, que es la mitad de lo que pasa en un aula.
+ *
+ * La columna `kino_at`. `delivered_at` es el libro de la notificación local y
+ * se marca aunque los avisos estén apagados, así que usarlo también para la
+ * subida a Kino haría que un aviso silenciado no llegara nunca a las tareas.
+ * Son dos entregas distintas del mismo hecho y cada una lleva su fecha.
+ *
+ * SQLite no sabe modificar un CHECK, así que la tabla se recrea y las filas se
+ * copian. Corre dentro de la transacción de la migración: o está entera o no
+ * está.
+ */
+export function widenPvaAlertTable(db) {
+  const columns = db.prepare('PRAGMA table_info(pva_alert)').all().map((row) => row.name);
+  // Una base que nunca tuvo la tabla la recibe ya ancha y no copia nada.
+  if (columns.length === 0) {
+    createPvaAlertTable(db);
+    db.exec(`ALTER TABLE pva_alert ADD COLUMN kino_at INTEGER`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_pva_alert_sin_kino
+               ON pva_alert (occurred_at DESC) WHERE kino_at IS NULL`);
+    return;
+  }
+
+  db.exec(`
+    CREATE TABLE pva_alert_nueva (
+      alert_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         INTEGER NOT NULL,
+      kind            TEXT    NOT NULL CHECK (kind IN ('tarea_nueva','tarea_por_vencer','nota_publicada','anuncio','material_nuevo')),
+      source          TEXT    NOT NULL CHECK (source IN ('notification','diff')),
+      subject_key     TEXT    NOT NULL,
+      notification_id INTEGER REFERENCES pva_notification(notification_id) ON DELETE SET NULL,
+      course_id       INTEGER,
+      title           TEXT    NOT NULL,
+      url             TEXT,
+      occurred_at     INTEGER NOT NULL,
+      created_at      INTEGER NOT NULL,
+      delivered_at    INTEGER,
+      -- Cuándo se subió a Kino. Independiente de delivered_at a propósito.
+      kino_at         INTEGER,
+      UNIQUE (user_id, kind, subject_key)
+    );
+    INSERT INTO pva_alert_nueva
+      (alert_id, user_id, kind, source, subject_key, notification_id, course_id, title, url, occurred_at, created_at, delivered_at, kino_at)
+      SELECT alert_id, user_id, kind, source, subject_key, notification_id, course_id, title, url, occurred_at, created_at, delivered_at, NULL
+      FROM pva_alert;
+    DROP TABLE pva_alert;
+    ALTER TABLE pva_alert_nueva RENAME TO pva_alert;
+    CREATE INDEX IF NOT EXISTS idx_pva_alert_pendientes
+      ON pva_alert (occurred_at DESC) WHERE delivered_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_pva_alert_sin_kino
+      ON pva_alert (occurred_at DESC) WHERE kino_at IS NULL;
   `);
 }

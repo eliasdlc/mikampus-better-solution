@@ -24,6 +24,7 @@ export const CLI_COMMANDS = [
   'uninstall',
   'diagnostics',
   'update',
+  'aula-a-kino',
 ];
 
 export function isCliCommand(value) {

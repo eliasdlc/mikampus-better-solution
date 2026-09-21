@@ -1,0 +1,17 @@
+[Unit]
+Description=El aula, cada seis horas
+
+[Timer]
+# 03:17, 09:17, 15:17 y 21:17 locales. El minuto no es redondo a proposito: las
+# horas en punto son cuando todo lo demas de la maquina tambien se despierta.
+OnCalendar=*-*-* 03,09,15,21:17:00
+# Recupera el disparo que se perdio con la maquina apagada, que es el caso
+# normal de un portatil. Sin esto, un fin de semana cerrado son cuatro barridos
+# que nunca ocurrieron.
+Persistent=true
+# Reparte la carga si alguna vez hay mas de un timer en el mismo minuto.
+RandomizedDelaySec=90
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
