@@ -211,6 +211,38 @@ async function aulaAKino() {
   for (const materia of res.kino?.sinCarpeta ?? []) console.log(`aula-a-kino: sin carpeta en Kino para "${materia}"`);
 }
 
+/**
+ * El login de Teams, que es el unico momento en que este proyecto abre una
+ * ventana. Una pantalla de MFA institucional no se resuelve headless, y un
+ * segundo factor no se guarda en un fichero: lo que se guarda es el resultado.
+ */
+async function teamsLogin() {
+  const { teamsLogin: login, teamsStatePath } = await import('./teams/session.js');
+  console.log('Se va a abrir una ventana de Chromium en Teams. Entrá con tu cuenta de PUCMM.');
+  console.log('Cuando la aplicacion cargue, la sesion se guarda sola y la ventana se cierra.\n');
+  try {
+    await login();
+    console.log(`Sesion guardada en ${teamsStatePath()} (modo 600).`);
+    console.log('Dura lo que duren las cookies de Microsoft; cuando caduque hay que repetirlo.');
+  } catch (err) {
+    console.error(`El login no termino: ${err.message}`);
+    process.exitCode = 1;
+  }
+}
+
+function teamsStatus() {
+  return import('./teams/session.js').then(({ hasTeamsSession, teamsStatePath }) => {
+    if (!hasTeamsSession()) {
+      console.log('Teams: sin sesion. Corré `mikampus teams-login`.');
+      return;
+    }
+    const stat = fs.statSync(teamsStatePath());
+    const dias = Math.floor((Date.now() - stat.mtimeMs) / 86_400_000);
+    console.log(`Teams: sesion guardada hace ${dias} dia(s) en ${teamsStatePath()}.`);
+    console.log('Que exista no prueba que siga viva: eso solo lo dice usarla.');
+  });
+}
+
 function diagnostics() {
   const index = process.argv.indexOf('--export');
   if (index === -1) {
@@ -239,6 +271,7 @@ async function main() {
   if (command === 'erase-data') return eraseData(); if (command === 'uninstall') return uninstall();
   if (command === 'diagnostics') return diagnostics(); if (command === 'update') return update();
   if (command === 'aula-a-kino') return aulaAKino();
+  if (command === 'teams-login') return teamsLogin(); if (command === 'teams-status') return teamsStatus();
   // La lista de CLI_COMMANDS y este dispatch tienen que decir lo mismo: si se
   // agrega un comando arriba y no a la lista, el launcher lo manda al server.
   throw new Error(`Comando desconocido: ${command}. Comandos: ${CLI_COMMANDS.join(', ')}`);
