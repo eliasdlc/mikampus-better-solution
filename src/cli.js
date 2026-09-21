@@ -14,6 +14,7 @@ import { exportDiagnostics, listDiagnostics } from './diagnostics.js';
 import { SCHEMA_VERSION } from './migrations.js';
 import { resourceRoot } from './paths.js';
 import { checkForUpdate, currentVersion, setUpdatePolicy, updatePolicy } from './updates.js';
+import { LOCAL_USER_ID } from './users.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const command = process.argv[2] || 'status';
@@ -162,6 +163,54 @@ async function uninstall() {
   installService(true);
   await eraseData();
 }
+/**
+ * Sincroniza el aula y sube a Kino lo que publicó.
+ *
+ * Es lo que invoca el timer de systemd cada seis horas, en el laptop y en
+ * agentbox. Corre entero sin nadie delante, así que imprime el resumen y sale
+ * con 0 salvo que la subida fallara: un timer que siempre sale bien es un timer
+ * que no dice nada cuando deja de funcionar.
+ *
+ * `--dry-run` enseña exactamente lo que subiría sin tocar Kino ni marcar nada.
+ */
+async function aulaAKino() {
+  const dryRun = process.argv.includes('--dry-run');
+  const { runSync } = await import('./syncOrchestrator.js');
+  const { previewBatch, pushToKino, kinoConfig, pendingCount } = await import('./moodle/kinoSync.js');
+
+  if (!kinoConfig() && !dryRun) {
+    console.log('aula-a-kino: apagado. Faltan KINO_ACADEMICO_URL y KINO_ACADEMICO_TOKEN.');
+    return;
+  }
+
+  // Solo las fuentes del aula: el portal de MiCampus no tiene nada que ver acá
+  // y su sesión de Playwright es la que no se puede ocupar por gusto.
+  const keys = ['pvaIdentity', 'pvaConfig', 'pvaCourses', 'pvaAssignments', 'pvaContents', 'pvaNotifications', 'pvaAlerts'];
+  const results = await runSync(LOCAL_USER_ID, { keys, emit: () => {} });
+  const fallidas = (results ?? []).filter((r) => r?.ok === false).map((r) => r.key);
+  console.log(`aula-a-kino: ${keys.length - fallidas.length}/${keys.length} fuentes al día${fallidas.length ? ` · fallaron: ${fallidas.join(', ')}` : ''}`);
+
+  if (dryRun) {
+    const { items } = previewBatch(LOCAL_USER_ID);
+    console.log(`aula-a-kino: ${pendingCount(LOCAL_USER_ID)} pendiente(s), ${items.length} en el próximo envío`);
+    console.log(JSON.stringify(items, null, 2));
+    return;
+  }
+
+  const res = await pushToKino(LOCAL_USER_ID);
+  if (res.error) {
+    console.error(`aula-a-kino: la subida falló${res.status ? ` (${res.status})` : ''} — ${res.error}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (res.skipped) {
+    console.log(`aula-a-kino: ${res.skipped}`);
+    return;
+  }
+  console.log(`aula-a-kino: ${res.sent} subido(s), ${res.marked ?? 0} asentado(s)${res.kino ? ` · Kino: ${res.kino.creadas ?? 0} nueva(s), ${res.kino.actualizadas ?? 0} actualizada(s)` : ''}`);
+  for (const materia of res.kino?.sinCarpeta ?? []) console.log(`aula-a-kino: sin carpeta en Kino para "${materia}"`);
+}
+
 function diagnostics() {
   const index = process.argv.indexOf('--export');
   if (index === -1) {
@@ -189,6 +238,7 @@ async function main() {
   if (command === 'backup') return backup(); if (command === 'restore') return restore(process.argv[3]);
   if (command === 'erase-data') return eraseData(); if (command === 'uninstall') return uninstall();
   if (command === 'diagnostics') return diagnostics(); if (command === 'update') return update();
+  if (command === 'aula-a-kino') return aulaAKino();
   // La lista de CLI_COMMANDS y este dispatch tienen que decir lo mismo: si se
   // agrega un comando arriba y no a la lista, el launcher lo manda al server.
   throw new Error(`Comando desconocido: ${command}. Comandos: ${CLI_COMMANDS.join(', ')}`);

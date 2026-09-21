@@ -17,6 +17,9 @@ import { cmidFromUrl, int, nowSeconds, text } from './shape.js';
 //                      depende de las preferencias del usuario y de
 //                      forcesubscribe, así que el contador de discusiones del
 //                      foro es un respaldo obligatorio, no un lujo.
+//   material nuevo     SOLO diff, igual que la tarea nueva y por la misma
+//                      razón: Moodle no avisa de un recurso subido. Sale del
+//                      árbol del curso, que ya se sincroniza entero.
 //
 // Dos reglas duras:
 //
@@ -34,7 +37,7 @@ import { cmidFromUrl, int, nowSeconds, text } from './shape.js';
 // asentado y entregado en seco.
 
 const PREFS_KEY = 'pva.alerts';
-export const ALERT_KINDS = ['tarea_nueva', 'tarea_por_vencer', 'nota_publicada', 'anuncio'];
+export const ALERT_KINDS = ['tarea_nueva', 'tarea_por_vencer', 'nota_publicada', 'anuncio', 'material_nuevo'];
 
 export function alertPrefs() {
   const stored = readMetaJson(PREFS_KEY, null);
@@ -120,6 +123,58 @@ export function recordNewAssignments(userId, { created = [], seeded = false, now
         subjectKey: `assign:${row.assignmentId}`,
         title: `Tarea nueva${where}: ${row.name}`,
         url: `/aula/tarea/${row.assignmentId}`,
+        courseId: row.courseId,
+        occurredAt: nowSeconds(now),
+        now,
+      })
+    ) {
+      recorded += 1;
+    }
+  }
+  return recorded;
+}
+
+/**
+ * Qué módulos de Moodle son material de estudio.
+ *
+ * Fuera quedan los que ya tienen su propio aviso (`assign` es tarea nueva,
+ * `forum` es anuncio) y `label`, que es un texto suelto en la página del curso
+ * y no un recurso que se pueda abrir. Un `quiz` sí entra: es algo que hay que
+ * hacer, aunque no se entregue por la bandeja de tareas.
+ */
+const MATERIAL_MODNAMES = new Set(['resource', 'folder', 'url', 'page', 'book', 'quiz', 'lesson', 'glossary', 'wiki']);
+
+export function isMaterialModname(modname) {
+  return MATERIAL_MODNAMES.has(String(modname ?? '').toLowerCase());
+}
+
+/**
+ * Material nuevo. `created` son los cmid que no estaban en el árbol antes, y
+ * `seeded` dice si era la primera vez que se veía el curso: el primer sync
+ * siembra y no avisa, igual que con las tareas, o encender esto cualquier día
+ * de noviembre trae el cuatrimestre entero de golpe.
+ */
+export function recordNewMaterial(userId, { created = [], seeded = false, now = Date.now() } = {}) {
+  if (seeded || !created.length) return 0;
+  const rows = db
+    .prepare(
+      `SELECT m.cmid, m.name, m.modname, m.course_id AS courseId, c.shortname AS courseShortname
+       FROM pva_module m
+       LEFT JOIN pva_course c ON c.user_id = m.user_id AND c.course_id = m.course_id
+       WHERE m.user_id = ? AND m.uservisible = 1 AND m.cmid IN (${created.map(() => '?').join(', ')})`
+    )
+    .all(userId, ...created);
+  let recorded = 0;
+  for (const row of rows) {
+    if (!isMaterialModname(row.modname)) continue;
+    const where = row.courseShortname ? ` en ${row.courseShortname}` : '';
+    if (
+      recordAlert(userId, {
+        kind: 'material_nuevo',
+        source: 'diff',
+        subjectKey: `cmid:${row.cmid}`,
+        title: `Material nuevo${where}: ${row.name}`,
+        url: `/aula/material/${row.cmid}`,
         courseId: row.courseId,
         occurredAt: nowSeconds(now),
         now,
@@ -299,6 +354,7 @@ const URGENCY = {
   tarea_nueva: 'normal',
   nota_publicada: 'normal',
   anuncio: 'normal',
+  material_nuevo: 'low',
 };
 
 /**
@@ -334,4 +390,59 @@ export function deliverAlerts(userId, { emit = null, now = Date.now() } = {}) {
     mark.run(nowSeconds(now), alert.alertId);
   }
   return summary;
+}
+
+// ── El libro de Kino ───────────────────────────────────────────────────────
+//
+// Segundo libro, con su propia fecha. `delivered_at` dice si la notificación
+// local salió; `kino_at` dice si el hecho llegó a las tareas. Un aviso
+// silenciado en el escritorio igual tiene que convertirse en tarea, y por eso
+// una marca no puede consumir a la otra.
+
+/** Qué tipos de aviso se convierten en una tarea de Kino, y cuáles no. */
+export const KINO_KINDS = new Set(['tarea_nueva', 'tarea_por_vencer', 'material_nuevo']);
+
+/**
+ * Lo que todavía no subió a Kino, de los tipos que allá significan algo.
+ *
+ * Una nota publicada no es algo que hacer y un anuncio casi nunca lo es: los
+ * dos se quedan en el aviso local. Lo que sí sube es lo que ocupa tiempo.
+ *
+ * `tarea_por_vencer` comparte `subject_key` con `tarea_nueva` (las dos apuntan
+ * a `assign:<instanceid>`), así que cuando los dos avisos de la misma tarea
+ * están pendientes, Kino recibe el mismo `externalId` dos veces y su
+ * idempotencia lo resuelve en una sola tarea.
+ */
+export function pendingForKino(userId, { limit = 50 } = {}) {
+  return db
+    .prepare(
+      `SELECT alert_id AS alertId, kind, subject_key AS subjectKey, course_id AS courseId,
+              title, url, occurred_at AS occurredAt
+       FROM pva_alert
+       WHERE user_id = ? AND kino_at IS NULL AND kind IN (${[...KINO_KINDS].map(() => '?').join(', ')})
+       ORDER BY occurred_at ASC
+       LIMIT ?`
+    )
+    .all(userId, ...KINO_KINDS, limit);
+}
+
+/**
+ * Asienta que estos avisos ya son tareas. Se llama después de que Kino
+ * responde, nunca antes: un aviso marcado sin que la subida llegara es un aviso
+ * que no vuelve a intentarse y una tarea que no existe en ningún lado.
+ */
+export function markKinoSent(alertIds, { now = Date.now() } = {}) {
+  if (!alertIds.length) return 0;
+  const mark = db.prepare('UPDATE pva_alert SET kino_at = ? WHERE alert_id = ? AND kino_at IS NULL');
+  const stamp = nowSeconds(now);
+  let marked = 0;
+  db.exec('BEGIN');
+  try {
+    for (const id of alertIds) marked += mark.run(stamp, id).changes;
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return marked;
 }

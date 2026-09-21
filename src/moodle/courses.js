@@ -3,6 +3,7 @@ import { callPva } from './session.js';
 import { moodleUserId } from './identity.js';
 import { bool01, epoch, hashOf, int, nowSeconds, real, text, textOrNull } from './shape.js';
 import { harvestCourseFiles } from './files.js';
+import { recordNewMaterial } from './alerts.js';
 
 // Materias, secciones y módulos: la columna vertebral del dominio.
 //
@@ -160,6 +161,13 @@ export function saveCourseContents(userId, courseId, sections, { now = Date.now(
   const stamp = new Date(now).toISOString();
   const hash = contentsHash(sections);
 
+  // Qué módulos había antes de escribir este árbol. Es lo que convierte el
+  // upsert en un diff: sin esta foto, un recurso subido ayer y uno subido hace
+  // un mes son la misma fila y nadie puede avisar del primero.
+  const before = new Set(
+    db.prepare('SELECT cmid FROM pva_module WHERE user_id = ? AND course_id = ?').all(userId, courseId).map((row) => row.cmid)
+  );
+
   const upsertSection = db.prepare(
     `INSERT INTO pva_course_section (
        section_id, user_id, course_id, section_number, name, summary_html, summary_format,
@@ -296,7 +304,14 @@ export function saveCourseContents(userId, courseId, sections, { now = Date.now(
   // Anotar no es bajar: la descarga decide después, con presupuesto.
   const harvested = harvestCourseFiles(userId, courseId, sections, { now });
 
-  return { sections: sections.length, modules: moduleCount, hash, stamp, ...harvested };
+  // El diff se convierte en aviso donde aterriza el dato, igual que en tareas.
+  // `seeded` mira este curso y no la base entera: una materia que aparece en
+  // noviembre no tiene por qué soltar su semestre completo de una vez.
+  const created = sections.flatMap((section) => (section.modules ?? []).map((module) => int(module.id))).filter((cmid) => cmid && !before.has(cmid));
+  const seeded = before.size === 0;
+  recordNewMaterial(userId, { created, seeded, now });
+
+  return { sections: sections.length, modules: moduleCount, hash, stamp, created, seeded, ...harvested };
 }
 
 export async function syncCourseContents(userId, courseId, { call = callPva, now = Date.now() } = {}) {
