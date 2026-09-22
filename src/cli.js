@@ -243,6 +243,34 @@ function teamsStatus() {
   });
 }
 
+/**
+ * Busca en OneDrive lo que Teams subio al terminar una clase y lo deja donde el
+ * vigilante lo recoge. Es lo que invoca el timer, y no abre ninguna ventana.
+ */
+async function teamsSync() {
+  const dryRun = process.argv.includes('--dry-run');
+  const { sync, transcriptsDir } = await import('./teams/transcripts.js');
+  const res = await sync({ dryRun });
+
+  if (res.needsLogin) {
+    console.error('teams-sync: no hay sesion de Teams. Corré `mikampus teams-login` una vez.');
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`teams-sync: ${res.recordings.length} grabacion(es) reciente(s)`);
+  for (const bajada of res.bajadas) {
+    if (bajada.dryRun) console.log(`teams-sync: bajaria ${bajada.name}`);
+    else console.log(`teams-sync: ${bajada.skipped ? 'ya estaba' : 'bajada'} ${bajada.path}${bajada.bytes ? ` (${bajada.bytes} bytes)` : ''}`);
+  }
+  // Lo normal en los minutos siguientes a colgar: el video ya subio y la
+  // transcripcion se esta generando. Se dice, porque el silencio aqui parece un
+  // fallo y no lo es.
+  for (const nombre of res.sinTranscripcion) console.log(`teams-sync: sin transcripcion todavia: ${nombre}`);
+  if (!res.bajadas.length && !res.sinTranscripcion.length && !dryRun) console.log(`teams-sync: nada nuevo en ${transcriptsDir()}`);
+  for (const fallo of res.fallos) console.error(`teams-sync: ${fallo}`);
+  if (res.fallos.length && !res.bajadas.length) process.exitCode = 1;
+}
+
 function diagnostics() {
   const index = process.argv.indexOf('--export');
   if (index === -1) {
@@ -272,6 +300,7 @@ async function main() {
   if (command === 'diagnostics') return diagnostics(); if (command === 'update') return update();
   if (command === 'aula-a-kino') return aulaAKino();
   if (command === 'teams-login') return teamsLogin(); if (command === 'teams-status') return teamsStatus();
+  if (command === 'teams-sync') return teamsSync();
   // La lista de CLI_COMMANDS y este dispatch tienen que decir lo mismo: si se
   // agrega un comando arriba y no a la lista, el launcher lo manda al server.
   throw new Error(`Comando desconocido: ${command}. Comandos: ${CLI_COMMANDS.join(', ')}`);

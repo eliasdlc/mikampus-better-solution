@@ -27,6 +27,7 @@ export const CLI_COMMANDS = [
   'aula-a-kino',
   'teams-login',
   'teams-status',
+  'teams-sync',
 ];
 
 export function isCliCommand(value) {
