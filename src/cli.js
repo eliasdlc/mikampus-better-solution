@@ -257,11 +257,16 @@ async function teamsSync() {
     process.exitCode = 1;
     return;
   }
-  console.log(`teams-sync: ${res.items.length} transcripcion(es) reciente(s)${res.items.length ? ': ' + res.items.join(', ') : ''}`);
+  console.log(`teams-sync: ${res.recordings.length} grabacion(es) reciente(s)`);
   for (const bajada of res.bajadas) {
-    console.log(`teams-sync: ${bajada.skipped ? 'ya estaba' : 'bajada'} ${bajada.path}${bajada.bytes ? ` (${bajada.bytes} bytes)` : ''}`);
+    if (bajada.dryRun) console.log(`teams-sync: bajaria ${bajada.name}`);
+    else console.log(`teams-sync: ${bajada.skipped ? 'ya estaba' : 'bajada'} ${bajada.path}${bajada.bytes ? ` (${bajada.bytes} bytes)` : ''}`);
   }
-  if (!res.bajadas.length && !dryRun) console.log(`teams-sync: nada nuevo en ${transcriptsDir()}`);
+  // Lo normal en los minutos siguientes a colgar: el video ya subio y la
+  // transcripcion se esta generando. Se dice, porque el silencio aqui parece un
+  // fallo y no lo es.
+  for (const nombre of res.sinTranscripcion) console.log(`teams-sync: sin transcripcion todavia: ${nombre}`);
+  if (!res.bajadas.length && !res.sinTranscripcion.length && !dryRun) console.log(`teams-sync: nada nuevo en ${transcriptsDir()}`);
   for (const fallo of res.fallos) console.error(`teams-sync: ${fallo}`);
   if (res.fallos.length && !res.bajadas.length) process.exitCode = 1;
 }

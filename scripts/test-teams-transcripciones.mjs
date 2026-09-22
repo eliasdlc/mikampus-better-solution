@@ -1,8 +1,9 @@
 // La busqueda de transcripciones en OneDrive. Sin red: la pagina se sustituye.
 //
-// Lo que se prueba es lo que hace inservible esto: bajar dos veces la misma
-// clase porque aparece en las dos puertas, tomar por nueva una transcripcion de
-// la semana pasada, y dejar en disco un nombre que no dice de que clase es.
+// Lo que se prueba es lo que hace inservible esto: confundir "todavia no se ha
+// generado" con "no hay", bajar dos veces la misma clase porque aparece en las
+// dos puertas, tomar por nueva una grabacion de la semana pasada, y dejar en
+// disco un nombre que no dice de que clase es.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -15,85 +16,84 @@ process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
 process.env.MIKAMPUS_SILENT = '1';
 
 const { db } = await import('../src/db.js');
-const { recentTranscripts, download, RECENT_HOURS } = await import('../src/teams/transcripts.js');
+const { recentRecordings, transcriptsOf, download, RECENT_HOURS } = await import('../src/teams/transcripts.js');
 
 const NOW = Date.parse('2026-09-21T23:00:00.000Z');
 const hace = (horas) => new Date(NOW - horas * 3600_000).toISOString();
+const VTT = '﻿WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n<v Profesor>Buenas tardes</v>\n';
 
-// Una pagina falsa: devuelve lo que cada puerta responderia.
-const pageWith = (porPuerta, cuerpo = 'WEBVTT\n') => ({
+/** Una pagina falsa: responde lo que cada endpoint real responderia. */
+const pageWith = ({ shared = [], recent = [], transcripts = {}, contenido = VTT } = {}) => ({
+  goto: async () => {},
+  waitForTimeout: async () => {},
   request: {
     get: async (url) => {
-      const puerta = url.includes('sharedWithMe') ? 'shared' : url.includes('recent') ? 'recent' : 'content';
-      if (puerta === 'content') {
-        return { ok: () => true, status: () => 200, body: async () => Buffer.from(cuerpo) };
+      const ok = (body) => ({ ok: () => true, status: () => 200, json: async () => body, text: async () => body });
+      if (url.includes('sharedWithMe')) return ok({ value: shared });
+      if (url.includes('/me/drive/recent')) return ok({ value: recent });
+      const m = url.match(/items\/([^/]+)\/media\/transcripts$/);
+      if (m) return ok({ value: transcripts[m[1]] ?? [] });
+      if (url.includes('/streamContent') || url.includes('download')) {
+        return { ok: () => true, status: () => 200, text: async () => contenido };
       }
-      const payload = porPuerta[puerta];
-      if (payload instanceof Error) return { ok: () => false, status: () => 401, text: async () => payload.message };
-      return { ok: () => true, status: () => 200, json: async () => payload };
+      return { ok: () => false, status: () => 404, text: async () => 'no' };
     },
   },
 });
 
-const item = (name, horas, extra = {}) => ({
-  id: 'i-' + name, name, size: 1000, lastModifiedDateTime: hace(horas),
-  parentReference: { driveId: 'd1' }, ...extra,
+const grabacion = (name, horas, id = 'it-' + name) => ({
+  name, id, lastModifiedDateTime: hace(horas), parentReference: { driveId: 'd1' },
 });
 
 try {
-  // ── Las dos puertas se juntan sin duplicar ──
-  //
-  // Una clase de canal aparece en `recent` y en `sharedWithMe`. Bajarla dos
-  // veces son dos corridas de agente sobre la misma clase.
+  // ── Las dos puertas se juntan sin repetir ──
   const page = pageWith({
-    recent: { value: [item('Reunion en _General_ .vtt', 1)] },
-    shared: { value: [item('Reunion en _General_ .vtt', 1), item('Clase de Moviles.vtt', 2)] },
+    shared: [grabacion('Clase de Moviles.mp4', 1, 'A'), grabacion('Gestion.mp4', 3, 'B')],
+    recent: [grabacion('Clase de Moviles.mp4', 1, 'A')],
   });
-  const { items, fallos } = await recentTranscripts(page, { now: NOW });
+  const { recordings, fallos } = await recentRecordings(page, { now: NOW });
   assert.equal(fallos.length, 0);
-  assert.equal(items.length, 2, 'la misma transcripcion por dos puertas es una sola');
-  assert.deepEqual(items.map((i) => i.name).sort(), ['Clase de Moviles.vtt', 'Reunion en _General_ .vtt']);
+  assert.equal(recordings.length, 2, 'la misma grabacion por dos puertas es una sola');
 
   // ── Lo viejo no entra ──
-  const viejas = await recentTranscripts(pageWith({
-    recent: { value: [item('De la semana pasada.vtt', 24 * 7)] },
-    shared: { value: [] },
-  }), { now: NOW });
-  assert.equal(viejas.items.length, 0, `nada de mas de ${RECENT_HOURS} horas`);
+  const viejas = await recentRecordings(pageWith({ shared: [grabacion('De junio.mp4', 24 * 90, 'C')] }), { now: NOW });
+  assert.equal(viejas.recordings.length, 0, `nada de mas de ${RECENT_HOURS} horas`);
 
-  // ── Lo que no es transcripcion tampoco ──
-  const otros = await recentTranscripts(pageWith({
-    recent: { value: [item('Grabacion de la clase.mp4', 1), item('presentacion.pptx', 1)] },
-    shared: { value: [] },
-  }), { now: NOW });
-  assert.equal(otros.items.length, 0, 'el video no es la transcripcion');
+  // ── Un pdf compartido no es una clase ──
+  const otros = await recentRecordings(pageWith({ shared: [grabacion('Diapositivas.pdf', 1, 'D')] }), { now: NOW });
+  assert.equal(otros.recordings.length, 0);
 
-  // ── Una puerta caida no tumba la otra ──
+  // ── "Todavia no" no es "no hay" ──
   //
-  // sharedWithMe puede responder 401 con la sesion a medio caducar, y las
-  // clases que organizas tu seguirian llegando por recent.
-  const media = await recentTranscripts(pageWith({
-    recent: { value: [item('Clase viva.vtt', 1)] },
-    shared: new Error('unauthorized'),
-  }), { now: NOW });
-  assert.equal(media.items.length, 1);
-  assert.equal(media.fallos.length, 1);
-  assert.match(media.fallos[0], /sharedWithMe/);
+  // Es el caso normal en los minutos siguientes a colgar, y confundirlo con un
+  // fallo es perder la clase: el video ya subio y Teams la esta generando.
+  const sinAun = await transcriptsOf(pageWith({ transcripts: {} }), { driveId: 'd1', itemId: 'A' });
+  assert.deepEqual(sinAun, [], 'lista vacia, no excepcion');
 
-  // ── El nombre en disco dice de que dia es ──
-  //
-  // "Reunion en _General_ .vtt" nombra dos materias distintas. La fecha de
-  // modificacion es cuando termino la llamada.
+  // ── Con transcripcion, baja el WEBVTT ──
+  const conTr = pageWith({ transcripts: { A: [{ id: 't1', languageTag: 'es-es' }] } });
+  const lista = await transcriptsOf(conTr, { driveId: 'd1', itemId: 'A' });
+  assert.equal(lista.length, 1);
+
   const destino = path.join(dir, 'bajadas');
-  const uno = items.find((i) => i.name.startsWith('Reunion'));
-  const res = await download(pageWith({}), uno, { dir: destino, now: NOW });
+  const rec = { name: 'Clase de Moviles-20260921_180000-Grabación de la reunión.mp4', modified: NOW, driveId: 'd1', itemId: 'A' };
+  const res = await download(conTr, rec, lista[0], { dir: destino, now: NOW });
   assert.equal(res.skipped, false);
-  assert.match(path.basename(res.path), /^2026-09-2\d-Reunion/, 'la fecha va delante');
-  assert.ok(fs.readFileSync(res.path, 'utf8').startsWith('WEBVTT'));
+  // La fecha delante, y sin el sufijo que Teams le cuelga al nombre.
+  assert.match(path.basename(res.path), /^2026-09-2\d-Clase-de-Moviles-20260921_180000\.vtt$/);
+  assert.ok(fs.readFileSync(res.path, 'utf8').includes('WEBVTT'));
 
   // Y no se baja dos veces.
-  const otra = await download(pageWith({}), uno, { dir: destino, now: NOW });
-  assert.equal(otra.skipped, true);
+  assert.equal((await download(conTr, rec, lista[0], { dir: destino, now: NOW })).skipped, true);
+
+  // ── Lo que no es un VTT no se guarda ──
+  //
+  // Una sesion a medio caducar devuelve 200 con una pagina de login, y guardar
+  // eso deja al agente leyendo HTML como si fuera una clase.
+  const basura = pageWith({ transcripts: { A: [{ id: 't1' }] }, contenido: '<!doctype html><title>Sign in</title>' });
+  const rec2 = { ...rec, name: 'Otra clase.mp4' };
+  await assert.rejects(() => download(basura, rec2, { id: 't1' }, { dir: destino, now: NOW }), /WEBVTT/);
+  assert.equal(fs.existsSync(path.join(destino, '2026-09-21-Otra-clase.vtt')), false);
 
   console.log('test-teams-transcripciones: ok');
 } finally {
