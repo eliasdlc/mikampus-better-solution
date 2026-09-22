@@ -4,7 +4,7 @@ Description=El aula cada seis horas, veinte minutos despues del laptop
 [Timer]
 # Veinte minutos detras del laptop: le da tiempo a hacerlo el primero cuando
 # esta encendido, y la condicion de la unidad se encarga del resto.
-OnCalendar=*-*-* 03,09,15,21:37:00
+OnCalendar=*-*-* *:37:00
 Persistent=true
 RandomizedDelaySec=90
 AccuracySec=1min
