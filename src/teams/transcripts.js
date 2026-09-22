@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { withTeamsPage } from './session.js';
+import { SITES_HOST, recordingsInSite, sitesWithRecentRecordings } from './sites.js';
 
 // De donde salen de verdad las transcripciones de clase.
 //
@@ -74,6 +75,8 @@ function recordingOf(item) {
     modified: Date.parse(item.lastModifiedDateTime ?? remote.lastModifiedDateTime ?? '') || null,
     driveId: remote.parentReference?.driveId ?? null,
     itemId: remote.id ?? null,
+    host: TENANT_HOST,
+    site: null,
   };
 }
 
@@ -108,7 +111,7 @@ export async function recentRecordings(page, { host = TENANT_HOST, hours = RECEN
  * video ya subio y la transcripcion todavia se esta generando. Por eso el
  * llamador la reintenta en vez de darla por perdida.
  */
-export async function transcriptsOf(page, rec, { host = TENANT_HOST } = {}) {
+export async function transcriptsOf(page, rec, { host = rec.host ?? TENANT_HOST } = {}) {
   const payload = await json(page, `https://${host}/_api/v2.1/drives/${rec.driveId}/items/${rec.itemId}/media/transcripts`);
   return payload?.value ?? [];
 }
@@ -130,9 +133,11 @@ function tidyName(name) {
  * "Reunion en _General_" nombra dos materias distintas. La fecha es la de la
  * grabacion, que es cuando termino la llamada.
  */
-export async function download(page, rec, transcript, { host = TENANT_HOST, dir = transcriptsDir(), now = Date.now() } = {}) {
+export async function download(page, rec, transcript, { host = rec.host ?? TENANT_HOST, dir = transcriptsDir(), now = Date.now() } = {}) {
   const dia = new Date(rec.modified ?? now).toISOString().slice(0, 10);
-  const destino = path.join(dir, `${dia}-${tidyName(rec.name)}.vtt`);
+  // Con la materia delante, porque "Meeting in General" nombra a las tres.
+  const etiqueta = rec.site ? `${tidyName(rec.site)}-${tidyName(rec.name)}` : tidyName(rec.name);
+  const destino = path.join(dir, `${dia}-${etiqueta}.vtt`);
   fs.mkdirSync(dir, { recursive: true });
   // Si ya esta, no se vuelve a bajar: el vigilante ya lo tiene en su libreta.
   if (fs.existsSync(destino)) return { path: destino, skipped: true };
@@ -160,6 +165,21 @@ export async function sync({ hours = RECENT_HOURS, dir = transcriptsDir(), now =
     return await withTeamsPage(async (page) => {
       await signIntoDrive(page, TENANT_HOST);
       const { recordings, fallos } = await recentRecordings(page, { hours, now });
+
+      // Las clases no estan en el OneDrive personal: son reuniones de canal y
+      // su grabacion vive en el equipo de la materia. Sin esta puerta el
+      // barrido encuentra reuniones sueltas y ninguna clase.
+      try {
+        await page.goto(`https://${SITES_HOST}/`, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => {});
+        await page.waitForTimeout(4_000);
+        for (const sitio of await sitesWithRecentRecordings(page, { hours, now })) {
+          for (const rec of await recordingsInSite(page, sitio, { hours, now })) {
+            if (!recordings.some((r) => r.itemId === rec.itemId)) recordings.push(rec);
+          }
+        }
+      } catch (err) {
+        fallos.push(`equipos: ${err.message}`);
+      }
       const bajadas = [];
       const sinTranscripcion = [];
 
