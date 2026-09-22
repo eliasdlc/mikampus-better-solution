@@ -11,7 +11,9 @@ Type=oneshot
 # ahora. Da igual: subir dos veces el mismo aviso cuesta una peticion, porque
 # Kino guarda cada item bajo (userId, pva, externalId) y no duplica la tarea.
 ExecCondition=/bin/sh -c '! /usr/bin/tailscale ping -c 1 --timeout 5s decruces-omarchy >/dev/null 2>&1'
-EnvironmentFile=%h/.config/mikampus/aula-a-kino.env
+# El guion hace el fichero opcional: sin el, la unidad arrancaria y fallaria
+# antes de llegar al comando, que ya sabe decir que esta apagado y salir con 0.
+EnvironmentFile=-%h/.config/mikampus/aula-a-kino.env
 # mikampus corre desde su checkout: no hay paquete instalado en esta maquina.
 WorkingDirectory=%h/dev/projects/mikampus-better-solution
 ExecStart=/usr/bin/node bin/mikampus.mjs aula-a-kino
