@@ -399,8 +399,23 @@ export function deliverAlerts(userId, { emit = null, now = Date.now() } = {}) {
 // silenciado en el escritorio igual tiene que convertirse en tarea, y por eso
 // una marca no puede consumir a la otra.
 
-/** Qué tipos de aviso se convierten en una tarea de Kino, y cuáles no. */
-export const KINO_KINDS = new Set(['tarea_nueva', 'tarea_por_vencer', 'material_nuevo']);
+/**
+ * Qué tipos de aviso se convierten en una tarea de Kino, y cuáles no.
+ *
+ * **Solo las tareas.** Elias lo acotó el 21 de septiembre de 2026: "solo las
+ * tareas nada más, para que se puedan subir a kino automaticamente". Una nota
+ * publicada no es algo que hacer, un anuncio casi nunca lo es, y el material
+ * nuevo tampoco: que la profesora suba unas diapositivas no crea una entrega.
+ *
+ * `material_nuevo` se sigue detectando y se sigue avisando en el escritorio;
+ * lo que no hace es aparecer en la lista de tareas, que es la que él mira para
+ * saber qué le queda por entregar. Meterle ahí cada recurso del cuatrimestre
+ * convertiría esa lista en el feed del aula.
+ *
+ * `tarea_por_vencer` comparte `subject_key` con `tarea_nueva`, así que las dos
+ * apuntan a la misma tarea de Kino y su idempotencia las resuelve en una.
+ */
+export const KINO_KINDS = new Set(['tarea_nueva', 'tarea_por_vencer']);
 
 /**
  * Lo que todavía no subió a Kino, de los tipos que allá significan algo.

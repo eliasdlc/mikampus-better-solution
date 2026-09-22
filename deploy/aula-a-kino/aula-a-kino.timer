@@ -2,9 +2,16 @@
 Description=El aula, cada seis horas
 
 [Timer]
-# 03:17, 09:17, 15:17 y 21:17 locales. El minuto no es redondo a proposito: las
-# horas en punto son cuando todo lo demas de la maquina tambien se despierta.
-OnCalendar=*-*-* 03,09,15,21:17:00
+# Cada hora, en el minuto 17. Una tarea nueva en la PVA es lo unico que hay que
+# saber pronto: aparece sin avisar y con fecha de entrega, y enterarse seis
+# horas tarde es media tarde menos para hacerla.
+#
+# El minuto no es redondo a proposito: las horas en punto son cuando todo lo
+# demas de la maquina tambien se despierta.
+#
+# Barato por diseno: la PVA se consulta con su token, no con un navegador, y una
+# vuelta sin novedades no levanta ningun agente.
+OnCalendar=*-*-* *:17:00
 # Recupera el disparo que se perdio con la maquina apagada, que es el caso
 # normal de un portatil. Sin esto, un fin de semana cerrado son cuatro barridos
 # que nunca ocurrieron.

@@ -19,7 +19,7 @@ const { db } = await import('../src/db.js');
 const { saveIdentity } = await import('../src/moodle/identity.js');
 const { saveCourses, saveCourseContents } = await import('../src/moodle/courses.js');
 const { saveAssignments } = await import('../src/moodle/assignments.js');
-const { recordAlert, deliverAlerts, pendingForKino, markKinoSent, isMaterialModname, ALERT_KINDS } = await import('../src/moodle/alerts.js');
+const { recordAlert, deliverAlerts, pendingForKino, markKinoSent, isMaterialModname, readAlerts, ALERT_KINDS } = await import('../src/moodle/alerts.js');
 const { itemOf, previewBatch, pushToKino, kinoConfig, pendingCount } = await import('../src/moodle/kinoSync.js');
 
 const fixture = async (name) => JSON.parse(await readFile(`fixtures/${name}`, 'utf8'));
@@ -50,8 +50,11 @@ try {
   alerta('material_nuevo', 'cmid:4242', { title: 'Material nuevo en CSTI-1930: Diapositivas unidad 3' });
 
   const suben = pendingForKino(USER).map((row) => row.kind).sort();
-  assert.deepEqual(suben, ['material_nuevo', 'tarea_nueva'], 'solo sube lo que ocupa tiempo');
-  assert.equal(pendingCount(USER), 2);
+  // Solo las tareas. El material nuevo se detecta y se avisa en el escritorio,
+  // pero no entra en la lista que Elias mira para saber qué le queda por
+  // entregar: unas diapositivas subidas no son una entrega.
+  assert.deepEqual(suben, ['tarea_nueva'], 'a Kino solo van las tareas');
+  assert.equal(pendingCount(USER), 1);
 
   // ── Dos libros, y ninguno consume al otro ──
   //
@@ -59,7 +62,7 @@ try {
   // fuera la misma marca, un aviso silenciado en el escritorio no llegaría
   // nunca a ser una tarea.
   deliverAlerts(USER, { now: NOW });
-  assert.equal(pendingForKino(USER).length, 2, 'la entrega local no puede consumir la subida a Kino');
+  assert.equal(pendingForKino(USER).length, 1, 'la entrega local no puede consumir la subida a Kino');
 
   // ── La forma del item ──
   const { items } = previewBatch(USER);
@@ -70,25 +73,24 @@ try {
   if (primera.duedate) {
     assert.equal(tarea.dueDate, primera.duedate * 1000, 'Moodle guarda segundos y Kino espera milisegundos');
   }
-  const material = items.find((item) => item.externalId === 'cmid:4242');
-  assert.equal(material.title, 'Diapositivas unidad 3', 'el título pierde el prefijo del canal: la materia ya está en la carpeta');
+  assert.equal(items.find((item) => item.externalId === 'cmid:4242'), undefined, 'el material no viaja a Kino');
 
   // ── Apagado por defecto ──
   assert.equal(kinoConfig({}), null);
   const apagado = await pushToKino(USER, { env: {}, fetchImpl: () => assert.fail('apagado no puede tocar la red') });
   assert.equal(apagado.skipped, 'no-configurado');
-  assert.equal(pendingForKino(USER).length, 2, 'apagado no marca nada');
+  assert.equal(pendingForKino(USER).length, 1, 'apagado no marca nada');
 
   // ── Un fallo de red no asienta nada ──
   const caido = await pushToKino(USER, { env, fetchImpl: async () => { throw new Error('ECONNREFUSED'); } });
   assert.equal(caido.sent, 0);
   assert.match(caido.error, /ECONNREFUSED/);
-  assert.equal(pendingForKino(USER).length, 2, 'lo que no subió se reintenta solo');
+  assert.equal(pendingForKino(USER).length, 1, 'lo que no subió se reintenta solo');
 
   // Un 403 tampoco: la respuesta del servidor manda sobre el optimismo.
   const rechazado = await pushToKino(USER, { env, fetchImpl: async () => new Response('FORBIDDEN', { status: 403 }) });
   assert.equal(rechazado.status, 403);
-  assert.equal(pendingForKino(USER).length, 2);
+  assert.equal(pendingForKino(USER).length, 1);
 
   // ── La subida buena asienta, y solo una vez ──
   let enviado = null;
@@ -97,14 +99,14 @@ try {
     now: NOW,
     fetchImpl: async (url, init) => {
       enviado = { url, headers: init.headers, body: JSON.parse(init.body) };
-      return new Response(JSON.stringify({ creadas: 2, actualizadas: 0, sinCambio: 0, sinCarpeta: [] }), { status: 200 });
+      return new Response(JSON.stringify({ creadas: 1, actualizadas: 0, sinCambio: 0, sinCarpeta: [] }), { status: 200 });
     },
   });
   assert.equal(enviado.url, env.KINO_ACADEMICO_URL);
   assert.equal(enviado.headers.Authorization, 'Bearer secreto');
   assert.equal(enviado.body.source, 'pva');
-  assert.equal(ok.sent, 2);
-  assert.equal(ok.marked, 2);
+  assert.equal(ok.sent, 1);
+  assert.equal(ok.marked, 1);
   assert.equal(pendingForKino(USER).length, 0);
 
   const segunda = await pushToKino(USER, { env, fetchImpl: () => assert.fail('no queda nada que subir') });
@@ -130,10 +132,13 @@ try {
   const crecido = [{ ...seccion, modules: [...seccion.modules, nuevoRecurso, etiqueta] }, ...contents.slice(1)];
   saveCourseContents(USER, curso, crecido, { now: NOW + 1000 });
 
-  const material2 = pendingForKino(USER);
-  assert.equal(material2.length, 1, 'avisa del recurso y calla la etiqueta');
-  assert.equal(material2[0].subjectKey, 'cmid:999001');
+  // El aviso existe: se sigue detectando y se sigue viendo en el escritorio.
+  const avisos = readAlerts(USER).filter((a) => a.kind === 'material_nuevo');
+  assert.ok(avisos.some((a) => a.title.includes('Diapositivas unidad 3')), 'avisa del recurso');
+  assert.ok(!avisos.some((a) => a.title.includes('Un titulito')), 'y calla la etiqueta');
   assert.ok(isMaterialModname('resource') && !isMaterialModname('label') && !isMaterialModname('assign'));
+  // Lo que no hace es viajar a Kino.
+  assert.equal(pendingForKino(USER).length, 0, 'el material no entra en la lista de tareas');
 
   assert.ok(ALERT_KINDS.includes('material_nuevo'));
 
