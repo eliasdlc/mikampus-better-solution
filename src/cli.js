@@ -230,7 +230,23 @@ async function teamsLogin() {
   }
 }
 
-function teamsStatus() {
+/**
+ * Sin flags dice si hay fichero de sesión. Con `--check` la usa: sale 0 si
+ * SharePoint la acepta y 2 si falta o caducó, para que un timer pueda avisar.
+ */
+async function teamsStatus() {
+  if (process.argv.includes('--check')) {
+    const { teamsSessionState } = await import('./teams/session.js');
+    const state = await teamsSessionState();
+    const messages = {
+      alive: 'Teams: sesion viva.',
+      expired: 'Teams: sesion caducada. Corré `mikampus teams-login` en una maquina con pantalla.',
+      missing: 'Teams: sin sesion. Corré `mikampus teams-login` en una maquina con pantalla.',
+    };
+    console.log(messages[state]);
+    if (state !== 'alive') process.exitCode = 2;
+    return;
+  }
   return import('./teams/session.js').then(({ hasTeamsSession, teamsStatePath }) => {
     if (!hasTeamsSession()) {
       console.log('Teams: sin sesion. Corré `mikampus teams-login`.');
@@ -249,8 +265,17 @@ function teamsStatus() {
  */
 async function teamsSync() {
   const dryRun = process.argv.includes('--dry-run');
-  const { sync, transcriptsDir } = await import('./teams/transcripts.js');
-  const res = await sync({ dryRun });
+  const { sync, transcriptsDir, RECENT_HOURS } = await import('./teams/transcripts.js');
+  // `--hours N` mira mas atras que el barrido normal, para recuperar clases
+  // que se publicaron cuando nada estaba mirando.
+  const at = process.argv.indexOf('--hours');
+  const hours = at === -1 ? RECENT_HOURS : Number(process.argv[at + 1]);
+  if (!Number.isInteger(hours) || hours < 1 || hours > 24 * 180) {
+    console.error('teams-sync: --hours espera un entero entre 1 y 4320');
+    process.exitCode = 1;
+    return;
+  }
+  const res = await sync({ dryRun, hours });
 
   if (res.needsLogin) {
     console.error('teams-sync: no hay sesion de Teams. Corré `mikampus teams-login` una vez.');

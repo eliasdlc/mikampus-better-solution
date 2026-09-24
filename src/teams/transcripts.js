@@ -172,7 +172,10 @@ export async function sync({ hours = RECENT_HOURS, dir = transcriptsDir(), now =
       try {
         await page.goto(`https://${SITES_HOST}/`, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => {});
         await page.waitForTimeout(4_000);
-        for (const sitio of await sitesWithRecentRecordings(page, { hours, now })) {
+        // Una ventana larga recupera clases pasadas, y el indice mezcla los
+        // equipos de sus materias con todo lo demas: hacen falta mas filas.
+        const rows = hours > RECENT_HOURS ? 200 : 25;
+        for (const sitio of await sitesWithRecentRecordings(page, { hours, now, rows })) {
           for (const rec of await recordingsInSite(page, sitio, { hours, now })) {
             if (!recordings.some((r) => r.itemId === rec.itemId)) recordings.push(rec);
           }

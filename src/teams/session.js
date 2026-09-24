@@ -119,7 +119,38 @@ export async function withTeamsPage(fn, { env = process.env } = {}) {
   try {
     const context = await browser.newContext({ storageState: file });
     const page = await context.newPage();
-    return await fn(page, context);
+    const result = await fn(page, context);
+    // Microsoft renueva sus cookies en cada carga. Sin guardarlas de vuelta, el
+    // fichero se queda con las del login y caduca en la fecha de entonces
+    // aunque la sesión se use a diario.
+    writeTeamsState(file, await context.storageState());
+    return result;
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * Si la sesión guardada todavía abre SharePoint, que es donde viven las
+ * grabaciones de las clases.
+ *
+ * Existir el fichero no lo prueba: solo cargarlo. Una sesión caducada acaba en
+ * `login.microsoftonline.com`, y eso es lo que se mira, no el DOM de nadie.
+ * Devuelve `missing`, `expired` o `alive`; al estar viva, las cookies
+ * renovadas quedan guardadas.
+ */
+export async function teamsSessionState({ env = process.env, url = 'https://cepucmmedu.sharepoint.com/' } = {}) {
+  if (!hasTeamsSession(env)) return 'missing';
+  const file = teamsStatePath(env);
+  const browser = await chromium.launch({ headless: true, ...(await browserLaunchOptions()) });
+  try {
+    const context = await browser.newContext({ storageState: file });
+    const page = await context.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.waitForTimeout(3_000);
+    if (new URL(page.url()).hostname !== new URL(url).hostname) return 'expired';
+    writeTeamsState(file, await context.storageState());
+    return 'alive';
   } finally {
     await browser.close().catch(() => {});
   }
