@@ -16,7 +16,7 @@ process.env.MIKAMPUS_DB = path.join(dir, 'test.db');
 process.env.MIKAMPUS_SILENT = '1';
 
 const { db } = await import('../src/db.js');
-const { teamsStatePath, hasTeamsSession, forgetTeamsSession, withTeamsPage, writeTeamsState } = await import('../src/teams/session.js');
+const { teamsStatePath, hasTeamsSession, forgetTeamsSession, withTeamsPage, writeTeamsState, teamsSessionState } = await import('../src/teams/session.js');
 
 try {
   const file = teamsStatePath();
@@ -29,6 +29,9 @@ try {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, '');
   assert.equal(hasTeamsSession(), false, 'un fichero vacío no es una sesión');
+
+  // Sin fichero, el chequeo de un timer responde sin lanzar un navegador.
+  assert.equal(await teamsSessionState(), 'missing');
 
   // ── Un proceso automático nunca abre una ventana ──
   //
