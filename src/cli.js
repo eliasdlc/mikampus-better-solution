@@ -190,7 +190,9 @@ async function aulaAKino() {
   // vacía y todo esperaría para siempre.
   const keys = ['pvaIdentity', 'pvaConfig', 'pvaCourses', 'pvaAssignments', 'pvaSubmissions', 'pvaContents', 'pvaNotifications', 'pvaAlerts'];
   const results = await runSync(LOCAL_USER_ID, { keys, emit: () => {} });
-  const fallidas = (results ?? []).filter((r) => r?.ok === false).map((r) => r.key);
+  // Una fuente al día terminó como `updated` o `fresh`; `error`, `blocked` o
+  // `paused` no trajeron nada, y el resumen tiene que decirlo.
+  const fallidas = (results ?? []).filter((r) => r && !['updated', 'fresh', 'skipped'].includes(r.status)).map((r) => r.key);
   console.log(`aula-a-kino: ${keys.length - fallidas.length}/${keys.length} fuentes al día${fallidas.length ? ` · fallaron: ${fallidas.join(', ')}` : ''}`);
 
   if (dryRun) {

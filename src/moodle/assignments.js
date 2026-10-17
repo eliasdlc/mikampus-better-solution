@@ -312,7 +312,8 @@ export function assignmentsNeedingStatus(userId, { now = Date.now(), limit = 25 
        -- llegarían a esperar sin fin.
        ORDER BY CASE WHEN EXISTS (
                   SELECT 1 FROM pva_alert al
-                  WHERE al.user_id = a.user_id AND al.kino_at IS NULL AND al.subject_key = 'assign:' || a.assignment_id
+                  WHERE al.user_id = a.user_id AND al.kino_at IS NULL
+                    AND al.subject_key IN ('assign:' || a.assignment_id, 'cmid:' || a.cmid)
                 ) THEN 0 ELSE 1 END,
                 CASE WHEN a.duedate IS NULL THEN 1 ELSE 0 END, a.duedate`
     )

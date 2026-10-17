@@ -1,6 +1,6 @@
 import { db } from '../db.js';
 import { KINO_KINDS, markKinoSent, pendingForKino } from './alerts.js';
-import { int, text } from './shape.js';
+import { int, nowSeconds, text } from './shape.js';
 
 // La subida de lo que publica el aula a Kino, que es donde Elias mira qué tiene
 // que hacer.
@@ -22,6 +22,16 @@ import { int, text } from './shape.js';
 //      identidad `(userId, 'pva', externalId)` del lado de Kino, no un candado
 //      acá: dos máquinas que se coordinan por un candado se bloquean cuando una
 //      se apaga, que es justo el caso para el que existe la segunda.
+
+/**
+ * Cuánto espera un aviso a que el aula diga lo que falta: su tarea en la base
+ * (un «por vencer» llega antes que la fila de la tarea, que se refresca cada
+ * seis horas) o su estado de entrega (25 consultas por vuelta). Dos días cubren
+ * varias vueltas de las dos cosas. Pasado ese plazo nada sigue esperando: lo
+ * que tiene tarea sube como pendiente y lo que no la tiene se asienta, porque
+ * una espera sin fin bloquea la cola de los cincuenta avisos de cada envío.
+ */
+export const ESPERA_MAX_S = 2 * 86_400;
 
 /** Cuántos avisos viajan en un envío. El tope de la ruta de Kino es el mismo. */
 export const KINO_BATCH_MAX = 50;
@@ -121,8 +131,11 @@ export function dueDateOf(userId, alert) {
 /** Un aviso, con la forma exacta que valida la ruta `/academico`. */
 export function itemOf(userId, alert) {
   const course = alert.courseId ? courseRow(userId, alert.courseId) : null;
+  // La llave es la de la tarea aunque el aviso venga con la del cmid: así los
+  // dos avisos de una misma tarea son una sola tarea en Kino.
+  const resuelta = assignmentIdOf(alert, userId);
   const item = {
-    externalId: externalIdOf(alert),
+    externalId: resuelta ? `assign:${resuelta}` : externalIdOf(alert),
     title: titleOf(userId, alert),
   };
   if (course?.shortname) item.courseCode = text(course.shortname);
@@ -144,33 +157,33 @@ export function itemOf(userId, alert) {
  * del comando y lo que prueban los tests: el formato del envío se puede revisar
  * sin tocar la red.
  */
-export function previewBatch(userId, { limit = KINO_BATCH_MAX } = {}) {
+export function previewBatch(userId, { limit = KINO_BATCH_MAX, now = Date.now() } = {}) {
   const alerts = pendingForKino(userId, { limit });
-  // Dos avisos de la misma tarea (`tarea_nueva` y `tarea_por_vencer`) son un
-  // solo item: Kino los resolvería igual por su llave, pero viajarían dos veces.
-  // Y una tarea ya entregada no viaja: sus avisos se asientan sin crear nada.
+  const ahora = nowSeconds(now);
+  // Dos avisos de la misma tarea son un solo item, y una tarea ya entregada no
+  // viaja: sus avisos se asientan sin crear nada.
   const items = new Map();
   const entregadas = [];
   const huerfanas = [];
   const enEspera = [];
   const listos = [];
   for (const alert of alerts) {
+    const vencida = ahora - int(alert.occurredAt, ahora) >= ESPERA_MAX_S;
     const assignmentId = assignmentIdOf(alert, userId);
-    // Un aviso de tarea cuya tarea no está en la base después de sincronizar
-    // las tareas no es de una materia en curso (oculta, de otro ciclo): subirlo
-    // sería una tarea sin materia, sin fecha y sin enlace. Se asienta sin subir,
-    // como lo entregado; esperarlo sería esperar siempre.
-    const exists = assignmentId && db.prepare('SELECT 1 FROM pva_assignment WHERE user_id = ? AND assignment_id = ?').get(userId, assignmentId);
-    const estado = !assignmentId || !exists ? 'huerfana' : estadoDeEntrega(userId, assignmentId);
-    if (estado === 'huerfana') {
-      huerfanas.push(alert);
+    const fila = assignmentId && db.prepare('SELECT 1 FROM pva_assignment WHERE user_id = ? AND assignment_id = ?').get(userId, assignmentId);
+    if (!fila) {
+      // Sin la tarea en la base todavía puede llegar en el próximo refresco;
+      // pasado el plazo no es de una materia en curso y subirla sería una
+      // tarea sin materia, sin fecha y sin enlace.
+      (vencida ? huerfanas : enEspera).push(alert);
       continue;
     }
+    const estado = estadoDeEntrega(userId, assignmentId);
     if (estado === 'entregada') {
       entregadas.push(alert);
       continue;
     }
-    if (estado === 'desconocida') {
+    if (estado === 'desconocida' && !vencida) {
       enEspera.push(alert);
       continue;
     }
@@ -193,7 +206,7 @@ export async function pushToKino(userId, { fetchImpl = fetch, env = process.env,
   const config = kinoConfig(env);
   if (!config) return { skipped: 'no-configurado', sent: 0 };
 
-  const { alerts, items, entregadas, huerfanas, enEspera } = previewBatch(userId, { limit });
+  const { alerts, items, entregadas, huerfanas, enEspera } = previewBatch(userId, { limit, now });
   // Lo que se asienta sin subir: lo entregado y los avisos sin tarea en curso.
   const sinSubir = [...entregadas, ...huerfanas];
   if (!items.length) {
