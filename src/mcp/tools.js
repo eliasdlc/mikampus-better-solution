@@ -16,10 +16,12 @@ import {
   pvaSectionsEnvelopeSchema,
   pvaSearchEnvelopeSchema,
   pvaFileEnvelopeSchema,
+  pvaForumEnvelopeSchema,
 } from '../shared/mcp.ts';
 import { completionLabel, submissionState } from '../shared/pva.ts';
 import { agentState, expandBlocks, getBlockers, getUpcoming, localDate, resolveCycle } from './kino.js';
 import { MATRICULA } from '../diagnostics.js';
+import { htmlToText } from '../moodle/extract.js';
 import { connectionMode } from './db.js';
 import * as read from './read.js';
 
@@ -1023,6 +1025,65 @@ function pvaGrades({ course, now }) {
   });
 }
 
+function pvaForum({ forumId, cmid, query, now }) {
+  const found = read.pvaForum(read.LOCAL_USER_ID, { forumId, cmid, query });
+  const freshness = read.freshnessFor(['pvaForums'], { now: now.getTime() });
+  const unknown = [];
+  if (!found.forum) {
+    return envelope({
+      data: { forum: null, matches: found.matches, discussions: [] },
+      summary: found.matches.length
+        ? `Hay ${found.matches.length} foros que coinciden: hace falta elegir uno.`
+        : 'No encontré ese foro en lo que se leyó del aula.',
+      freshness,
+      unknown,
+      now,
+    });
+  }
+  const f = found.forum;
+  if (!found.postsSynced || (f.type !== 'news' && !found.discussions.length && f.numDiscussions > 0)) {
+    unknown.push({
+      kind: 'pva_mensajes_de_foro',
+      reason: 'Los mensajes de este foro todavía no se leyeron: el foro tiene discusiones pero aquí no hay ninguna. Un borrador escrito ahora no sabe qué dijeron los compañeros.',
+    });
+  }
+  const discussions = found.discussions.map((d) => ({
+    discussionId: d.discussionId,
+    subject: d.posts[0]?.subject ?? null,
+    posts: d.posts.map((p) => ({
+      postId: p.postId,
+      parentId: p.parentId ?? null,
+      subject: p.subject ?? null,
+      author: p.author ?? null,
+      isMine: p.isMine === 1,
+      createdAt: read.pvaIso(p.createdAt),
+      text: p.text ?? '',
+    })),
+  }));
+  const posts = discussions.reduce((n, d) => n + d.posts.length, 0);
+  const mine = discussions.some((d) => d.posts.some((p) => p.isMine));
+  return envelope({
+    data: {
+      forum: {
+        forumId: f.forumId,
+        cmid: f.cmid,
+        name: f.name,
+        courseShortname: f.courseShortname ?? null,
+        type: f.type,
+        intro: htmlToText(f.intro ?? ''),
+        dueAt: f.duedate ? read.pvaIso(f.duedate) : null,
+        answeredByMe: mine,
+      },
+      matches: [],
+      discussions,
+    },
+    summary: `${f.name}: ${discussions.length} discusión(es), ${posts} mensaje(s)${mine ? ', ya publicaste aquí' : ''}.`,
+    freshness,
+    unknown,
+    now,
+  });
+}
+
 function pvaAnnouncements({ limit, now }) {
   const notifications = read.pvaNotifications(read.LOCAL_USER_ID, { limit });
   const foros = read.pvaAnnouncementForums();
@@ -1328,6 +1389,21 @@ export const READ_TOOLS = [
       outputSchema: pvaAnnouncementsEnvelopeSchema,
     },
     run: ({ limit, now }) => pvaAnnouncements({ limit: limit ?? 20, now }),
+  },
+  {
+    name: 'get_pva_forum',
+    config: {
+      title: 'Un foro de la materia con lo que dijeron los compañeros',
+      description:
+        'Un foro de estudiantes de la PVA: su consigna, su fecha y cada mensaje publicado, con autor y texto, agrupado por discusión. Sirve para redactar un aporte que no repita lo que ya dijeron los demás. Se pide por forumId, cmid (los trae get_pva_section) o parte del nombre; varias coincidencias se devuelven para elegir. answeredByMe dice si la persona ya publicó. Es lectura de lo que se guardó en el último sync de foros: publicar en el foro no es algo que esta herramienta haga.',
+      inputSchema: {
+        forumId: z.number().int().optional(),
+        cmid: z.number().int().optional(),
+        query: z.string().min(2).optional().describe('Parte del nombre del foro'),
+      },
+      outputSchema: pvaForumEnvelopeSchema,
+    },
+    run: pvaForum,
   },
   {
     name: 'get_pva_section',

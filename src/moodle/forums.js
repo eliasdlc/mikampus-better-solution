@@ -3,6 +3,7 @@ import { callPva } from './session.js';
 import { moodleUserId } from './identity.js';
 import { bool01, cmidFromUrl, int, nowSeconds, parseCustomData, text, textOrNull } from './shape.js';
 import { recordAnnouncements, recordDueSoon } from './alerts.js';
+import { htmlToText } from './extract.js';
 
 // Foros y campanita. Dos fuentes que no se solapan: los mensajes directos
 // viven en un tercer endpoint que esta fase no consume, porque no hay pantalla
@@ -120,14 +121,104 @@ export async function syncForums(userId, { call = callPva, courseIds, now = Date
   }
   const forums = await call('mod_forum_get_forums_by_courses', { courseids: courseIds });
   const result = saveForums(userId, forums, { now });
+  const posts = await syncForumPosts(userId, { call, now });
   logSync({
     userId,
     kind: 'pvaForums',
     status: 'ok',
-    detail: `${result.forums} foro(s), ${result.announcements} de anuncios`,
+    detail: `${result.forums} foro(s), ${result.announcements} de anuncios, ${posts.saved} mensaje(s) nuevos o editados`,
     rows: result.forums,
   });
-  return result;
+  return { ...result, posts };
+}
+
+/** Discusiones que se leen por foro y vuelta: las más recientes. */
+const DISCUSSIONS_PER_FORUM = 30;
+
+/**
+ * Los mensajes de los foros de estudiantes, para que un borrador no repita lo
+ * que ya dijeron los compañeros.
+ *
+ * Solo los foros que no son de anuncios, y solo las discusiones que cambiaron
+ * desde la última vuelta: `timemodified` de la discusión sube con cada
+ * respuesta, así que una discusión quieta no cuesta una llamada. Un foro que
+ * falla no tumba a los demás ni al resto del sync de foros: queda en
+ * `failed` y se reintenta en la próxima vuelta.
+ */
+export async function syncForumPosts(userId, { call = callPva, now = Date.now() } = {}) {
+  const forums = db
+    .prepare("SELECT forum_id AS forumId FROM pva_forum WHERE user_id = ? AND type != 'news'")
+    .all(userId);
+  const seen = db.prepare(
+    'SELECT MAX(COALESCE(modified_at, created_at)) AS at FROM pva_forum_post WHERE user_id = ? AND discussion_id = ?'
+  );
+  const me = moodleUserId(userId);
+  let saved = 0;
+  const failed = [];
+  for (const { forumId } of forums) {
+    try {
+      const payload = await call('mod_forum_get_forum_discussions', {
+        forumid: forumId,
+        sortorder: 1,
+        page: 0,
+        perpage: DISCUSSIONS_PER_FORUM,
+      });
+      for (const row of Array.isArray(payload?.discussions) ? payload.discussions : []) {
+        const discussionId = int(row.discussion ?? row.id, 0);
+        if (!discussionId) continue;
+        const last = seen.get(userId, discussionId)?.at ?? 0;
+        if (last && int(row.timemodified, 0) <= last) continue;
+        const thread = await call('mod_forum_get_discussion_posts', { discussionid: discussionId });
+        saved += saveForumPosts(userId, forumId, discussionId, thread?.posts ?? [], { me, now });
+      }
+    } catch (err) {
+      failed.push({ forumId, error: err?.message ?? String(err) });
+    }
+  }
+  return { saved, failed };
+}
+
+export function saveForumPosts(userId, forumId, discussionId, posts, { me = null, now = Date.now() } = {}) {
+  const upsert = db.prepare(
+    `INSERT INTO pva_forum_post (
+       post_id, user_id, forum_id, discussion_id, parent_id, subject, author, author_id, is_mine,
+       message_text, created_at, modified_at, fetched_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(post_id) DO UPDATE SET
+       subject = excluded.subject, author = excluded.author, message_text = excluded.message_text,
+       modified_at = excluded.modified_at, is_mine = excluded.is_mine, fetched_at = excluded.fetched_at`
+  );
+  const stamp = nowSeconds(now);
+  let count = 0;
+  db.exec('BEGIN');
+  try {
+    for (const post of posts) {
+      const id = int(post.id, 0);
+      if (!id || post.isdeleted) continue;
+      const authorId = int(post.author?.id);
+      upsert.run(
+        id,
+        userId,
+        forumId,
+        discussionId,
+        post.hasparent ? int(post.parentid) : null,
+        textOrNull(post.subject),
+        textOrNull(post.author?.fullname),
+        authorId,
+        me != null && authorId === me ? 1 : 0,
+        htmlToText(post.message),
+        int(post.timecreated, 0),
+        int(post.timemodified),
+        stamp
+      );
+      count += 1;
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return count;
 }
 
 export function announcementForums(userId) {

@@ -141,6 +141,13 @@ export const READ_ALLOWLIST = {
     'forum_id', 'user_id', 'course_id', 'cmid', 'type', 'is_announcements', 'name', 'intro_html',
     'num_discussions', 'duedate', 'cutoffdate', 'fetched_at',
   ],
+  // Lo publicado en los foros de estudiantes, para redactar sin repetir. Sale
+  // el nombre visible del autor, que cualquier compañero ve en la PVA, y no
+  // su id de Moodle, que ninguna herramienta necesita.
+  pva_forum_post: [
+    'post_id', 'user_id', 'forum_id', 'discussion_id', 'parent_id', 'subject', 'author', 'is_mine',
+    'message_text', 'created_at', 'modified_at', 'fetched_at',
+  ],
   // Los materiales. El blob NO se expone: su local_path es una ruta del disco
   // de la persona y ninguna herramienta necesita leerla para contestar dónde
   // está algo. De pva_file_text sale el texto extraído, que es el punto de la

@@ -412,6 +412,35 @@ export const pvaGradesEnvelopeSchema = envelopeSchema(
 export const pvaAnnouncementsEnvelopeSchema = envelopeSchema(
   z.object({ items: z.array(pvaAnnouncementSchema), unreadInPortal: z.number().int().nullable() })
 );
+// Un foro de estudiantes con lo publicado en él. `isMine` marca lo que publicó
+// la persona: un foro que ya contestó no se le propone otra vez.
+export const pvaForumPostSchema = z.object({
+  postId: z.number().int(),
+  parentId: z.number().int().nullable(),
+  subject: z.string().nullable(),
+  author: z.string().nullable(),
+  isMine: z.boolean(),
+  createdAt: z.string().nullable(),
+  text: z.string(),
+});
+export const pvaForumEnvelopeSchema = envelopeSchema(
+  z.object({
+    forum: z
+      .object({
+        forumId: z.number().int(),
+        cmid: z.number().int(),
+        name: z.string(),
+        courseShortname: z.string().nullable(),
+        type: z.string(),
+        intro: z.string(),
+        dueAt: z.string().nullable(),
+        answeredByMe: z.boolean(),
+      })
+      .nullable(),
+    matches: z.array(z.object({ forumId: z.number().int(), name: z.string(), courseShortname: z.string().nullable() })),
+    discussions: z.array(z.object({ discussionId: z.number().int(), subject: z.string().nullable(), posts: z.array(pvaForumPostSchema) })),
+  })
+);
 export const pvaSearchEnvelopeSchema = envelopeSchema(
   z.object({
     query: z.string(),

@@ -287,6 +287,13 @@ export const MIGRATIONS = [
     minCompatibleVersion: 1,
     up: widenPvaAlertTable,
   },
+  {
+    version: 20,
+    name: 'pva-mensajes-de-foro',
+    // Tabla nueva y nada más: una app de esquema 19 no la conoce y no la toca.
+    minCompatibleVersion: 1,
+    up: createPvaForumPostTable,
+  },
 ];
 
 
@@ -1474,6 +1481,39 @@ export function createPvaAlertTable(db) {
   `);
 }
 
+
+/**
+ * Lo que dijo cada quien en los foros de estudiantes.
+ *
+ * Existe para que un agente pueda redactar un aporte sin repetir lo que los
+ * compañeros ya publicaron: sin los mensajes, un foro es solo un nombre y una
+ * fecha. Solo se guarda el texto ya sin HTML y el nombre visible del autor; ni
+ * adjuntos ni fotos. `is_mine` marca lo que publicó la persona, para que nadie
+ * le proponga contestar un foro que ya contestó.
+ *
+ * Un mensaje borrado en la PVA deja de llegar y se queda aquí: la fila es lo
+ * que se leyó, no lo que hay hoy, y `fetched_at` dice cuándo.
+ */
+export function createPvaForumPostTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pva_forum_post (
+      post_id        INTEGER PRIMARY KEY,     -- id del mensaje en Moodle
+      user_id        INTEGER NOT NULL,
+      forum_id       INTEGER NOT NULL,
+      discussion_id  INTEGER NOT NULL,
+      parent_id      INTEGER,                 -- NULL = el mensaje que abre la discusión
+      subject        TEXT,
+      author         TEXT,                    -- nombre como lo muestra la PVA
+      author_id      INTEGER,
+      is_mine        INTEGER NOT NULL DEFAULT 0,
+      message_text   TEXT NOT NULL DEFAULT '',
+      created_at     INTEGER NOT NULL,        -- epoch s de Moodle
+      modified_at    INTEGER,
+      fetched_at     INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pva_forum_post_foro ON pva_forum_post (user_id, forum_id, discussion_id, created_at);
+  `);
+}
 
 /**
  * Lo que la persona decidió sobre sus materias, que la PVA no sabe.

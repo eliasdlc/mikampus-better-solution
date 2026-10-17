@@ -760,6 +760,62 @@ export function pvaDue(userId = LOCAL_USER_ID, { now = Date.now(), days = 7 } = 
   return [...items.values()].sort((left, right) => left.dueAt.localeCompare(right.dueAt));
 }
 
+/**
+ * Un foro de estudiantes con lo que se publicó en él, para redactar un aporte
+ * que no repita a los compañeros. Se pide por forumId, cmid o parte del
+ * nombre; varias coincidencias se devuelven para elegir, igual que las tareas.
+ */
+export function pvaForum(userId = LOCAL_USER_ID, { forumId = null, cmid = null, query = null } = {}) {
+  if (!hasTable('pva_forum')) return { forum: null, matches: [], discussions: [], postsSynced: false };
+  let target = null;
+  if (forumId != null || cmid != null) {
+    target = readRow(
+      `SELECT f.forum_id AS forumId FROM pva_forum f WHERE f.user_id = ? AND (f.forum_id = ? OR f.cmid = ?)`,
+      [userId, forumId ?? -1, cmid ?? -1],
+      { f: 'pva_forum' }
+    );
+  }
+  const matches = query
+    ? readRows(
+        `SELECT f.forum_id AS forumId, f.name, c.shortname AS courseShortname FROM pva_forum f
+         LEFT JOIN pva_course c ON c.user_id = f.user_id AND c.course_id = f.course_id
+         WHERE f.user_id = ? AND f.type != 'news' AND f.name LIKE ? COLLATE NOCASE
+         ORDER BY f.duedate DESC LIMIT 10`,
+        [userId, `%${query}%`],
+        { f: 'pva_forum', c: 'pva_course' }
+      )
+    : [];
+  if (!target && matches.length === 1) target = { forumId: matches[0].forumId };
+  if (!target) return { forum: null, matches, discussions: [], postsSynced: hasTable('pva_forum_post') };
+
+  const forum = readRow(
+    `SELECT f.forum_id AS forumId, f.cmid, f.course_id AS courseId, f.type, f.name, f.intro_html AS intro,
+            f.duedate, f.cutoffdate, f.num_discussions AS numDiscussions, f.fetched_at AS fetchedAt,
+            c.shortname AS courseShortname
+     FROM pva_forum f
+     LEFT JOIN pva_course c ON c.user_id = f.user_id AND c.course_id = f.course_id
+     WHERE f.user_id = ? AND f.forum_id = ?`,
+    [userId, target.forumId],
+    { f: 'pva_forum', c: 'pva_course' }
+  );
+  if (!hasTable('pva_forum_post')) return { forum, matches: [], discussions: [], postsSynced: false };
+  const posts = readRows(
+    `SELECT post_id AS postId, discussion_id AS discussionId, parent_id AS parentId, subject, author,
+            is_mine AS isMine, message_text AS text, created_at AS createdAt, modified_at AS modifiedAt,
+            fetched_at AS fetchedAt
+     FROM pva_forum_post WHERE user_id = ? AND forum_id = ?
+     ORDER BY discussion_id, created_at`,
+    [userId, target.forumId],
+    { p: 'pva_forum_post' }
+  );
+  const discussions = new Map();
+  for (const post of posts) {
+    if (!discussions.has(post.discussionId)) discussions.set(post.discussionId, { discussionId: post.discussionId, posts: [] });
+    discussions.get(post.discussionId).posts.push(post);
+  }
+  return { forum, matches: [], discussions: [...discussions.values()], postsSynced: true };
+}
+
 export function pvaAssignment(userId = LOCAL_USER_ID, { assignmentId = null, cmid = null, query = null } = {}) {
   if (!hasTable('pva_assignment')) return { assignment: null, matches: [] };
 
