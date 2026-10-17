@@ -306,7 +306,15 @@ export function assignmentsNeedingStatus(userId, { now = Date.now(), limit = 25 
        FROM pva_assignment a
        LEFT JOIN pva_submission s ON s.assignment_id = a.assignment_id AND s.is_latest = 1
        WHERE a.user_id = ?
-       ORDER BY CASE WHEN a.duedate IS NULL THEN 1 ELSE 0 END, a.duedate`
+       -- Primero las que tienen un aviso esperando subir a Kino: el barrido
+       -- hacia Kino no sube una tarea sin su estado, y con 25 por vuelta y las
+       -- tareas de semestres viejos ocupando turno por fecha, las nuevas
+       -- llegarían a esperar sin fin.
+       ORDER BY CASE WHEN EXISTS (
+                  SELECT 1 FROM pva_alert al
+                  WHERE al.user_id = a.user_id AND al.kino_at IS NULL AND al.subject_key = 'assign:' || a.assignment_id
+                ) THEN 0 ELSE 1 END,
+                CASE WHEN a.duedate IS NULL THEN 1 ELSE 0 END, a.duedate`
     )
     .all(userId);
 

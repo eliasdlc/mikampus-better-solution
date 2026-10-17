@@ -194,8 +194,8 @@ async function aulaAKino() {
   console.log(`aula-a-kino: ${keys.length - fallidas.length}/${keys.length} fuentes al día${fallidas.length ? ` · fallaron: ${fallidas.join(', ')}` : ''}`);
 
   if (dryRun) {
-    const { items } = previewBatch(LOCAL_USER_ID);
-    console.log(`aula-a-kino: ${pendingCount(LOCAL_USER_ID)} pendiente(s), ${items.length} en el próximo envío`);
+    const { items, entregadas, huerfanas, enEspera } = previewBatch(LOCAL_USER_ID);
+    console.log(`aula-a-kino: ${pendingCount(LOCAL_USER_ID)} pendiente(s), ${items.length} en el próximo envío, ${entregadas.length} ya entregada(s), ${huerfanas.length} sin tarea en curso, ${enEspera.length} esperando su estado`);
     console.log(JSON.stringify(items, null, 2));
     return;
   }
@@ -210,7 +210,7 @@ async function aulaAKino() {
     console.log(`aula-a-kino: ${res.skipped}`);
     return;
   }
-  console.log(`aula-a-kino: ${res.sent} subido(s), ${res.marked ?? 0} asentado(s)${res.kino ? ` · Kino: ${res.kino.creadas ?? 0} nueva(s), ${res.kino.actualizadas ?? 0} actualizada(s)` : ''}`);
+  console.log(`aula-a-kino: ${res.sent} subido(s), ${res.marked ?? 0} asentado(s), ${res.enEspera ?? 0} esperando su estado${res.kino ? ` · Kino: ${res.kino.creadas ?? 0} nueva(s), ${res.kino.actualizadas ?? 0} actualizada(s)` : ''}`);
   for (const materia of res.kino?.sinCarpeta ?? []) console.log(`aula-a-kino: sin carpeta en Kino para "${materia}"`);
 }
 

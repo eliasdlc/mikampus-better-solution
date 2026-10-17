@@ -18,7 +18,7 @@ process.env.MIKAMPUS_SILENT = '1';
 const { db } = await import('../src/db.js');
 const { saveIdentity } = await import('../src/moodle/identity.js');
 const { saveCourses, saveCourseContents } = await import('../src/moodle/courses.js');
-const { saveAssignments, saveSubmissionStatus } = await import('../src/moodle/assignments.js');
+const { saveAssignments, saveSubmissionStatus, assignmentsNeedingStatus } = await import('../src/moodle/assignments.js');
 const { recordAlert, deliverAlerts, pendingForKino, markKinoSent, isMaterialModname, readAlerts, ALERT_KINDS } = await import('../src/moodle/alerts.js');
 const { itemOf, previewBatch, pushToKino, kinoConfig, pendingCount } = await import('../src/moodle/kinoSync.js');
 
@@ -174,6 +174,39 @@ try {
   assert.equal(previewBatch(USER).entregadas.length, 1, 'calificada sin entrega es hecha');
   const calificada = await pushToKino(USER, { env, now: NOW, fetchImpl: () => assert.fail('lo calificado no sube') });
   assert.equal(calificada.marked, 1);
+  assert.equal(pendingForKino(USER).length, 0);
+
+  // ── Un aviso sin tarea en curso se asienta sin subir ──
+  //
+  // Un «por vence» de una materia oculta o de otro ciclo no tiene fila de tarea
+  // después de sincronizar: subirlo sería una tarea sin materia, fecha ni
+  // enlace, y esperarlo sería esperar siempre.
+  alerta('tarea_por_vencer', 'cmid:999999');
+  const huerfana = previewBatch(USER);
+  assert.equal(huerfana.items.length, 0, 'sin tarea en la base no sube');
+  assert.equal(huerfana.huerfanas.length, 1);
+  const asentada = await pushToKino(USER, { env, now: NOW, fetchImpl: () => assert.fail('un aviso huérfano no toca la red') });
+  assert.equal(asentada.marked, 1, 'y se asienta para no bloquear la cola');
+  assert.equal(pendingForKino(USER).length, 0);
+
+  // ── Una tarea sin entrega en línea no espera un estado que no existe ──
+  const presencial = { id: primera.id + 2_000_000 };
+  db.prepare(
+    `INSERT INTO pva_assignment (${columnas.join(', ')})
+     SELECT ${columnas.map((c) => (c === 'assignment_id' ? '?' : c === 'cmid' ? 'cmid + 2000000' : c === 'nosubmissions' ? '1' : c)).join(', ')}
+     FROM pva_assignment WHERE assignment_id = ?`
+  ).run(presencial.id, primera.id);
+  alerta('tarea_nueva', `assign:${presencial.id}`);
+  assert.equal(previewBatch(USER).items.length, 1, 'presencial y sin nota: sube como pendiente');
+
+  // ── La consulta de entregas sirve primero lo que espera subir ──
+  //
+  // Con 25 consultas por vuelta ordenadas por fecha, las tareas viejas ocupan
+  // turno y una nueva con su aviso esperando no llegaría nunca.
+  const cola = assignmentsNeedingStatus(USER, { now: NOW + 7 * 86_400_000, limit: 1 });
+  assert.deepEqual(cola, [presencial.id], 'la tarea con un aviso esperando va primero');
+  const subida = await pushToKino(USER, { env, now: NOW, fetchImpl: async () => new Response('{}', { status: 200 }) });
+  assert.equal(subida.sent, 1);
   assert.equal(pendingForKino(USER).length, 0);
 
   // ── El material nuevo sale del árbol del curso ──

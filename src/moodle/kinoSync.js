@@ -77,13 +77,16 @@ const assignmentIdOf = (alert, userId) => {
  *     que quizá se entregó en septiembre.
  */
 export function estadoDeEntrega(userId, assignmentId) {
+  // Una tarea sin entrega en línea (presencial) no tiene estado que consultar:
+  // Moodle no devuelve intento, así que esperar su estado sería esperar siempre.
+  const sinEntrega = db.prepare('SELECT nosubmissions FROM pva_assignment WHERE user_id = ? AND assignment_id = ?').get(userId, assignmentId);
   const row = db
     .prepare(
       `SELECT status, grading_status AS gradingStatus FROM pva_submission
        WHERE user_id = ? AND assignment_id = ? AND is_latest = 1 ORDER BY attemptnumber DESC LIMIT 1`
     )
     .get(userId, assignmentId);
-  if (!row) return 'desconocida';
+  if (!row) return sinEntrega?.nosubmissions ? 'pendiente' : 'desconocida';
   return row.status === 'submitted' || row.gradingStatus === 'graded' ? 'entregada' : 'pendiente';
 }
 
@@ -148,11 +151,21 @@ export function previewBatch(userId, { limit = KINO_BATCH_MAX } = {}) {
   // Y una tarea ya entregada no viaja: sus avisos se asientan sin crear nada.
   const items = new Map();
   const entregadas = [];
+  const huerfanas = [];
   const enEspera = [];
   const listos = [];
   for (const alert of alerts) {
     const assignmentId = assignmentIdOf(alert, userId);
-    const estado = assignmentId ? estadoDeEntrega(userId, assignmentId) : 'pendiente';
+    // Un aviso de tarea cuya tarea no está en la base después de sincronizar
+    // las tareas no es de una materia en curso (oculta, de otro ciclo): subirlo
+    // sería una tarea sin materia, sin fecha y sin enlace. Se asienta sin subir,
+    // como lo entregado; esperarlo sería esperar siempre.
+    const exists = assignmentId && db.prepare('SELECT 1 FROM pva_assignment WHERE user_id = ? AND assignment_id = ?').get(userId, assignmentId);
+    const estado = !assignmentId || !exists ? 'huerfana' : estadoDeEntrega(userId, assignmentId);
+    if (estado === 'huerfana') {
+      huerfanas.push(alert);
+      continue;
+    }
     if (estado === 'entregada') {
       entregadas.push(alert);
       continue;
@@ -165,7 +178,7 @@ export function previewBatch(userId, { limit = KINO_BATCH_MAX } = {}) {
     const item = itemOf(userId, alert);
     if (!items.has(item.externalId)) items.set(item.externalId, item);
   }
-  return { alerts: listos, items: [...items.values()], entregadas, enEspera };
+  return { alerts: listos, items: [...items.values()], entregadas, huerfanas, enEspera };
 }
 
 /**
@@ -180,11 +193,12 @@ export async function pushToKino(userId, { fetchImpl = fetch, env = process.env,
   const config = kinoConfig(env);
   if (!config) return { skipped: 'no-configurado', sent: 0 };
 
-  const { alerts, items, entregadas, enEspera } = previewBatch(userId, { limit });
+  const { alerts, items, entregadas, huerfanas, enEspera } = previewBatch(userId, { limit });
+  // Lo que se asienta sin subir: lo entregado y los avisos sin tarea en curso.
+  const sinSubir = [...entregadas, ...huerfanas];
   if (!items.length) {
-    // Sólo había avisos de tareas ya entregadas: se asientan y no se sube nada.
-    const marked = markKinoSent(entregadas.map((alert) => alert.alertId), { now });
-    return { skipped: null, sent: 0, pending: enEspera.length, marked, entregadas: entregadas.length, enEspera: enEspera.length };
+    const marked = markKinoSent(sinSubir.map((alert) => alert.alertId), { now });
+    return { skipped: null, sent: 0, pending: enEspera.length, marked, entregadas: entregadas.length, huerfanas: huerfanas.length, enEspera: enEspera.length };
   }
 
   let response;
@@ -205,10 +219,10 @@ export async function pushToKino(userId, { fetchImpl = fetch, env = process.env,
 
   const result = await response.json().catch(() => ({}));
   const marked = markKinoSent(
-    [...alerts, ...entregadas].map((alert) => alert.alertId),
+    [...alerts, ...sinSubir].map((alert) => alert.alertId),
     { now }
   );
-  return { skipped: null, sent: items.length, marked, entregadas: entregadas.length, enEspera: enEspera.length, kino: result };
+  return { skipped: null, sent: items.length, marked, entregadas: entregadas.length, huerfanas: huerfanas.length, enEspera: enEspera.length, kino: result };
 }
 
 /** Cuántos avisos esperan turno, por si alguien quiere mirarlo sin subir nada. */
