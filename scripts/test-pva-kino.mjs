@@ -18,7 +18,7 @@ process.env.MIKAMPUS_SILENT = '1';
 const { db } = await import('../src/db.js');
 const { saveIdentity } = await import('../src/moodle/identity.js');
 const { saveCourses, saveCourseContents } = await import('../src/moodle/courses.js');
-const { saveAssignments } = await import('../src/moodle/assignments.js');
+const { saveAssignments, saveSubmissionStatus } = await import('../src/moodle/assignments.js');
 const { recordAlert, deliverAlerts, pendingForKino, markKinoSent, isMaterialModname, readAlerts, ALERT_KINDS } = await import('../src/moodle/alerts.js');
 const { itemOf, previewBatch, pushToKino, kinoConfig, pendingCount } = await import('../src/moodle/kinoSync.js');
 
@@ -74,23 +74,33 @@ try {
     assert.equal(tarea.dueDate, primera.duedate * 1000, 'Moodle guarda segundos y Kino espera milisegundos');
   }
   assert.equal(items.find((item) => item.externalId === 'cmid:4242'), undefined, 'el material no viaja a Kino');
+  // El cmid viaja: es el número que la clase cita, y con él Kino adopta la
+  // tarea que la clase ya escribió en vez de crear otra.
+  const cmidPrimera = db.prepare('SELECT cmid FROM pva_assignment WHERE assignment_id = ?').get(primera.id).cmid;
+  assert.equal(tarea.cmid, cmidPrimera, 'la tarea viaja con su cmid');
+  assert.match(tarea.url, new RegExp(`/mod/assign/view\\.php\\?id=${cmidPrimera}$`), 'y con el enlace a su actividad');
+
+  // Dos avisos de la misma tarea son un solo item.
+  alerta('tarea_por_vencer', `assign:${primera.id}`);
+  const repetida = previewBatch(USER).items.filter((item) => item.externalId === `assign:${primera.id}`);
+  assert.equal(repetida.length, 1, 'la misma tarea no viaja dos veces en un envío');
 
   // ── Apagado por defecto ──
   assert.equal(kinoConfig({}), null);
   const apagado = await pushToKino(USER, { env: {}, fetchImpl: () => assert.fail('apagado no puede tocar la red') });
   assert.equal(apagado.skipped, 'no-configurado');
-  assert.equal(pendingForKino(USER).length, 1, 'apagado no marca nada');
+  assert.equal(pendingForKino(USER).length, 2, 'apagado no marca nada');
 
   // ── Un fallo de red no asienta nada ──
   const caido = await pushToKino(USER, { env, fetchImpl: async () => { throw new Error('ECONNREFUSED'); } });
   assert.equal(caido.sent, 0);
   assert.match(caido.error, /ECONNREFUSED/);
-  assert.equal(pendingForKino(USER).length, 1, 'lo que no subió se reintenta solo');
+  assert.equal(pendingForKino(USER).length, 2, 'lo que no subió se reintenta solo');
 
   // Un 403 tampoco: la respuesta del servidor manda sobre el optimismo.
   const rechazado = await pushToKino(USER, { env, fetchImpl: async () => new Response('FORBIDDEN', { status: 403 }) });
   assert.equal(rechazado.status, 403);
-  assert.equal(pendingForKino(USER).length, 1);
+  assert.equal(pendingForKino(USER).length, 2);
 
   // ── La subida buena asienta, y solo una vez ──
   let enviado = null;
@@ -106,12 +116,29 @@ try {
   assert.equal(enviado.headers.Authorization, 'Bearer secreto');
   assert.equal(enviado.body.source, 'pva');
   assert.equal(ok.sent, 1);
-  assert.equal(ok.marked, 1);
+  assert.equal(ok.marked, 2, 'se asientan los dos avisos de la misma tarea');
+  assert.equal(enviado.body.items.length, 1);
   assert.equal(pendingForKino(USER).length, 0);
 
   const segunda = await pushToKino(USER, { env, fetchImpl: () => assert.fail('no queda nada que subir') });
   assert.equal(segunda.sent, 0);
   assert.equal(markKinoSent([]), 0);
+
+  // ── Una tarea ya entregada no sube ──
+  //
+  // Subirla la pondría en Kino como pendiente y a avisar de algo hecho. Sus
+  // avisos se asientan igual, para no volver a mirarlos cada seis horas.
+  const otra = db.prepare('SELECT assignment_id AS id FROM pva_assignment WHERE assignment_id <> ? ORDER BY assignment_id LIMIT 1').get(primera.id);
+  assert.ok(otra, 'el fixture de tareas tiene que dejar una segunda');
+  const entregada = await fixture('pva-submission-graded.json');
+  saveSubmissionStatus(USER, otra.id, entregada, { now: NOW });
+  alerta('tarea_nueva', `assign:${otra.id}`);
+  const vista = previewBatch(USER);
+  assert.equal(vista.items.length, 0, 'lo entregado no viaja');
+  assert.equal(vista.entregadas.length, 1);
+  const soloEntregadas = await pushToKino(USER, { env, now: NOW, fetchImpl: () => assert.fail('nada que subir si todo está entregado') });
+  assert.equal(soloEntregadas.marked, 1, 'y sus avisos se asientan sin tocar la red');
+  assert.equal(pendingForKino(USER).length, 0);
 
   // ── El material nuevo sale del árbol del curso ──
   //

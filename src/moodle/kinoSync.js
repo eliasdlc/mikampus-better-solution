@@ -47,7 +47,24 @@ const courseRow = (userId, courseId) =>
   db.prepare('SELECT shortname, fullname FROM pva_course WHERE user_id = ? AND course_id = ?').get(userId, courseId) ?? null;
 
 const assignmentRow = (userId, assignmentId) =>
-  db.prepare('SELECT name, duedate FROM pva_assignment WHERE user_id = ? AND assignment_id = ?').get(userId, assignmentId) ?? null;
+  db.prepare('SELECT name, duedate, cmid FROM pva_assignment WHERE user_id = ? AND assignment_id = ?').get(userId, assignmentId) ?? null;
+
+const siteUrl = (userId) => db.prepare('SELECT siteurl FROM pva_identity WHERE user_id = ?').get(userId)?.siteurl ?? null;
+
+/** El id de la asignación detrás de un aviso de tarea, o null si el aviso no es de una tarea. */
+const assignmentIdOf = (alert) => (alert.subjectKey.startsWith('assign:') ? int(alert.subjectKey.slice('assign:'.length)) : null);
+
+/**
+ * Si la última entrega de esta tarea ya está enviada. Una tarea entregada no es
+ * algo que hacer: subirla a Kino como pendiente la pondría a avisar de algo
+ * que ya está hecho, que es justo lo contrario de lo que el barrido promete.
+ */
+export function yaEntregada(userId, assignmentId) {
+  const row = db
+    .prepare('SELECT status FROM pva_submission WHERE user_id = ? AND assignment_id = ? AND is_latest = 1 ORDER BY attemptnumber DESC LIMIT 1')
+    .get(userId, assignmentId);
+  return row?.status === 'submitted';
+}
 
 /**
  * El título que Elias va a leer en su lista de tareas.
@@ -58,7 +75,7 @@ const assignmentRow = (userId, assignmentId) =>
  * recorta el prefijo del aviso.
  */
 export function titleOf(userId, alert) {
-  const assignmentId = alert.subjectKey.startsWith('assign:') ? int(alert.subjectKey.slice('assign:'.length)) : null;
+  const assignmentId = assignmentIdOf(alert);
   if (assignmentId) {
     const row = assignmentRow(userId, assignmentId);
     if (row?.name) return text(row.name);
@@ -87,6 +104,15 @@ export function itemOf(userId, alert) {
   if (course?.fullname) item.courseName = text(course.fullname);
   const dueDate = dueDateOf(userId, alert);
   if (dueDate) item.dueDate = dueDate;
+  // El cmid es el número que la clase cita al escribir la tarea («PVA cmid:…»):
+  // con él, Kino reconoce la tarea que ya existía en vez de crear otra.
+  const assignmentId = assignmentIdOf(alert);
+  const cmid = assignmentId ? int(assignmentRow(userId, assignmentId)?.cmid) : null;
+  if (cmid) {
+    item.cmid = cmid;
+    const site = siteUrl(userId);
+    if (site) item.url = `${site.replace(/\/$/, '')}/mod/assign/view.php?id=${cmid}`;
+  }
   return item;
 }
 
@@ -97,7 +123,21 @@ export function itemOf(userId, alert) {
  */
 export function previewBatch(userId, { limit = KINO_BATCH_MAX } = {}) {
   const alerts = pendingForKino(userId, { limit });
-  return { alerts, items: alerts.map((alert) => itemOf(userId, alert)) };
+  // Dos avisos de la misma tarea (`tarea_nueva` y `tarea_por_vencer`) son un
+  // solo item: Kino los resolvería igual por su llave, pero viajarían dos veces.
+  // Y una tarea ya entregada no viaja: sus avisos se asientan sin crear nada.
+  const items = new Map();
+  const entregadas = [];
+  for (const alert of alerts) {
+    const assignmentId = assignmentIdOf(alert);
+    if (assignmentId && yaEntregada(userId, assignmentId)) {
+      entregadas.push(alert);
+      continue;
+    }
+    const item = itemOf(userId, alert);
+    if (!items.has(item.externalId)) items.set(item.externalId, item);
+  }
+  return { alerts, items: [...items.values()], entregadas };
 }
 
 /**
@@ -112,8 +152,12 @@ export async function pushToKino(userId, { fetchImpl = fetch, env = process.env,
   const config = kinoConfig(env);
   if (!config) return { skipped: 'no-configurado', sent: 0 };
 
-  const { alerts, items } = previewBatch(userId, { limit });
-  if (!items.length) return { skipped: null, sent: 0, pending: 0 };
+  const { alerts, items, entregadas } = previewBatch(userId, { limit });
+  if (!items.length) {
+    // Sólo había avisos de tareas ya entregadas: se asientan y no se sube nada.
+    const marked = markKinoSent(entregadas.map((alert) => alert.alertId), { now });
+    return { skipped: null, sent: 0, pending: 0, marked, entregadas: entregadas.length };
+  }
 
   let response;
   try {
@@ -136,7 +180,7 @@ export async function pushToKino(userId, { fetchImpl = fetch, env = process.env,
     alerts.map((alert) => alert.alertId),
     { now }
   );
-  return { skipped: null, sent: items.length, marked, kino: result };
+  return { skipped: null, sent: items.length, marked, entregadas: entregadas.length, kino: result };
 }
 
 /** Cuántos avisos esperan turno, por si alguien quiere mirarlo sin subir nada. */
