@@ -80,6 +80,7 @@ const {
   pvaSectionsEnvelopeSchema,
   pvaSearchEnvelopeSchema,
   pvaFileEnvelopeSchema,
+  pvaForumEnvelopeSchema,
 } = await import('../src/shared/mcp.ts');
 
 const tool = (name) => {
@@ -104,7 +105,7 @@ const parseEstricto = (schema, payload, name) =>
   assert.equal(estable(schema.parse(payload)), estable(payload), `${name} no devuelve claves fuera de su contrato`);
 
 try {
-  // ── Las ocho existen y declaran su contrato ──
+  // ── Las nueve existen y declaran su contrato ──
   {
     const nombres = READ_TOOLS.map((entry) => entry.name).filter((name) => /pva/.test(name));
     assert.deepEqual(nombres.sort(), [
@@ -113,6 +114,7 @@ try {
       'get_pva_courses',
       'get_pva_due',
       'get_pva_file',
+      'get_pva_forum',
       'get_pva_grades',
       'get_pva_section',
       'search_pva_files',
@@ -462,7 +464,7 @@ try {
     assert.deepEqual(fechas, [...fechas].sort(), 'una sola línea de tiempo, ordenada');
   }
 
-  // ── Nada identificatorio sale por ninguna de las ocho ──
+  // ── Nada identificatorio sale por ninguna de las nueve ──
   {
     const nombres = READ_TOOLS.map((entry) => entry.name).filter((name) => /pva/.test(name));
     const args = {
@@ -471,6 +473,7 @@ try {
       get_pva_assignment: { assignmentId: 900001 },
       search_pva_files: { query: 'integral' },
       get_pva_file: { query: 'lectura-01' },
+      get_pva_forum: { forumId: 950002 },
     };
     const schemas = {
       search_pva_files: pvaSearchEnvelopeSchema,
@@ -481,6 +484,7 @@ try {
       get_pva_announcements: pvaAnnouncementsEnvelopeSchema,
       get_pva_section: pvaSectionsEnvelopeSchema,
       get_pva_file: pvaFileEnvelopeSchema,
+      get_pva_forum: pvaForumEnvelopeSchema,
     };
     for (const name of nombres) {
       const payload = sanitize(call(name, args[name] ?? {}).payload);
@@ -509,4 +513,4 @@ function porIdIncluye(result, kind) {
   return result.payload.unknown.some((entry) => entry.kind === kind);
 }
 
-console.log('✓ MCP de la PVA: ocho herramientas con su contrato, el libro oculto se declara en vez de contestar cero, y la identidad no sale');
+console.log('✓ MCP de la PVA: nueve herramientas con su contrato, el libro oculto se declara en vez de contestar cero, y la identidad no sale');
