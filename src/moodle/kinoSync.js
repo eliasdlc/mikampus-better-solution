@@ -51,19 +51,40 @@ const assignmentRow = (userId, assignmentId) =>
 
 const siteUrl = (userId) => db.prepare('SELECT siteurl FROM pva_identity WHERE user_id = ?').get(userId)?.siteurl ?? null;
 
-/** El id de la asignación detrás de un aviso de tarea, o null si el aviso no es de una tarea. */
-const assignmentIdOf = (alert) => (alert.subjectKey.startsWith('assign:') ? int(alert.subjectKey.slice('assign:'.length)) : null);
+/**
+ * El id de la asignación detrás de un aviso de tarea, o null si no es de una
+ * tarea. Un aviso de «por vencer» sin id de instancia viene con la llave
+ * `cmid:<n>` (alerts.js); se traduce por `pva_assignment.cmid`.
+ */
+const assignmentIdOf = (alert, userId) => {
+  if (alert.subjectKey.startsWith('assign:')) return int(alert.subjectKey.slice('assign:'.length));
+  if (userId != null && alert.subjectKey.startsWith('cmid:')) {
+    const cmid = int(alert.subjectKey.slice('cmid:'.length));
+    return cmid ? int(db.prepare('SELECT assignment_id FROM pva_assignment WHERE user_id = ? AND cmid = ?').get(userId, cmid)?.assignment_id) : null;
+  }
+  return null;
+};
 
 /**
- * Si la última entrega de esta tarea ya está enviada. Una tarea entregada no es
- * algo que hacer: subirla a Kino como pendiente la pondría a avisar de algo
- * que ya está hecho, que es justo lo contrario de lo que el barrido promete.
+ * En qué estado está la entrega de esta tarea, según la última consulta.
+ *
+ *   - `entregada`: la última entrega está enviada, o la profesora ya la
+ *     calificó sin entrega (una tarea presencial). No es algo que hacer:
+ *     subirla la pondría a avisar de algo hecho.
+ *   - `pendiente`: hay estado y no está entregada.
+ *   - `desconocida`: todavía no se consultó. No sube ni se asienta: espera al
+ *     barrido siguiente, porque subirla a ciegas es subir como pendiente lo
+ *     que quizá se entregó en septiembre.
  */
-export function yaEntregada(userId, assignmentId) {
+export function estadoDeEntrega(userId, assignmentId) {
   const row = db
-    .prepare('SELECT status FROM pva_submission WHERE user_id = ? AND assignment_id = ? AND is_latest = 1 ORDER BY attemptnumber DESC LIMIT 1')
+    .prepare(
+      `SELECT status, grading_status AS gradingStatus FROM pva_submission
+       WHERE user_id = ? AND assignment_id = ? AND is_latest = 1 ORDER BY attemptnumber DESC LIMIT 1`
+    )
     .get(userId, assignmentId);
-  return row?.status === 'submitted';
+  if (!row) return 'desconocida';
+  return row.status === 'submitted' || row.gradingStatus === 'graded' ? 'entregada' : 'pendiente';
 }
 
 /**
@@ -75,7 +96,7 @@ export function yaEntregada(userId, assignmentId) {
  * recorta el prefijo del aviso.
  */
 export function titleOf(userId, alert) {
-  const assignmentId = assignmentIdOf(alert);
+  const assignmentId = assignmentIdOf(alert, userId);
   if (assignmentId) {
     const row = assignmentRow(userId, assignmentId);
     if (row?.name) return text(row.name);
@@ -86,8 +107,9 @@ export function titleOf(userId, alert) {
 
 /** El cierre publicado, en epoch ms, o undefined si la plataforma no publica ninguno. */
 export function dueDateOf(userId, alert) {
-  if (!alert.subjectKey.startsWith('assign:')) return undefined;
-  const row = assignmentRow(userId, int(alert.subjectKey.slice('assign:'.length)));
+  const assignmentId = assignmentIdOf(alert, userId);
+  if (!assignmentId) return undefined;
+  const row = assignmentRow(userId, assignmentId);
   // Moodle guarda segundos y Kino espera milisegundos. `duedate` NULL es una
   // tarea sin fecha límite, que no es lo mismo que una fecha desconocida.
   return row?.duedate ? row.duedate * 1000 : undefined;
@@ -104,15 +126,13 @@ export function itemOf(userId, alert) {
   if (course?.fullname) item.courseName = text(course.fullname);
   const dueDate = dueDateOf(userId, alert);
   if (dueDate) item.dueDate = dueDate;
-  // El cmid es el número que la clase cita al escribir la tarea («PVA cmid:…»):
-  // con él, Kino reconoce la tarea que ya existía en vez de crear otra.
-  const assignmentId = assignmentIdOf(alert);
+  // El enlace a la actividad lleva su cmid, que es el número que la clase cita
+  // al escribir la tarea («PVA cmid:…»). Con él, la revisión de la mañana
+  // reconoce cuándo una tarea de la PVA y una de la clase son la misma entrega.
+  const assignmentId = assignmentIdOf(alert, userId);
   const cmid = assignmentId ? int(assignmentRow(userId, assignmentId)?.cmid) : null;
-  if (cmid) {
-    item.cmid = cmid;
-    const site = siteUrl(userId);
-    if (site) item.url = `${site.replace(/\/$/, '')}/mod/assign/view.php?id=${cmid}`;
-  }
+  const site = cmid ? siteUrl(userId) : null;
+  if (site) item.url = `${site.replace(/\/$/, '')}/mod/assign/view.php?id=${cmid}`;
   return item;
 }
 
@@ -128,16 +148,24 @@ export function previewBatch(userId, { limit = KINO_BATCH_MAX } = {}) {
   // Y una tarea ya entregada no viaja: sus avisos se asientan sin crear nada.
   const items = new Map();
   const entregadas = [];
+  const enEspera = [];
+  const listos = [];
   for (const alert of alerts) {
-    const assignmentId = assignmentIdOf(alert);
-    if (assignmentId && yaEntregada(userId, assignmentId)) {
+    const assignmentId = assignmentIdOf(alert, userId);
+    const estado = assignmentId ? estadoDeEntrega(userId, assignmentId) : 'pendiente';
+    if (estado === 'entregada') {
       entregadas.push(alert);
       continue;
     }
+    if (estado === 'desconocida') {
+      enEspera.push(alert);
+      continue;
+    }
+    listos.push(alert);
     const item = itemOf(userId, alert);
     if (!items.has(item.externalId)) items.set(item.externalId, item);
   }
-  return { alerts, items: [...items.values()], entregadas };
+  return { alerts: listos, items: [...items.values()], entregadas, enEspera };
 }
 
 /**
@@ -152,11 +180,11 @@ export async function pushToKino(userId, { fetchImpl = fetch, env = process.env,
   const config = kinoConfig(env);
   if (!config) return { skipped: 'no-configurado', sent: 0 };
 
-  const { alerts, items, entregadas } = previewBatch(userId, { limit });
+  const { alerts, items, entregadas, enEspera } = previewBatch(userId, { limit });
   if (!items.length) {
     // Sólo había avisos de tareas ya entregadas: se asientan y no se sube nada.
     const marked = markKinoSent(entregadas.map((alert) => alert.alertId), { now });
-    return { skipped: null, sent: 0, pending: 0, marked, entregadas: entregadas.length };
+    return { skipped: null, sent: 0, pending: enEspera.length, marked, entregadas: entregadas.length, enEspera: enEspera.length };
   }
 
   let response;
@@ -177,10 +205,10 @@ export async function pushToKino(userId, { fetchImpl = fetch, env = process.env,
 
   const result = await response.json().catch(() => ({}));
   const marked = markKinoSent(
-    alerts.map((alert) => alert.alertId),
+    [...alerts, ...entregadas].map((alert) => alert.alertId),
     { now }
   );
-  return { skipped: null, sent: items.length, marked, entregadas: entregadas.length, kino: result };
+  return { skipped: null, sent: items.length, marked, entregadas: entregadas.length, enEspera: enEspera.length, kino: result };
 }
 
 /** Cuántos avisos esperan turno, por si alguien quiere mirarlo sin subir nada. */

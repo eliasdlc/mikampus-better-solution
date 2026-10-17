@@ -185,7 +185,10 @@ async function aulaAKino() {
 
   // Solo las fuentes del aula: el portal de MiCampus no tiene nada que ver acá
   // y su sesión de Playwright es la que no se puede ocupar por gusto.
-  const keys = ['pvaIdentity', 'pvaConfig', 'pvaCourses', 'pvaAssignments', 'pvaContents', 'pvaNotifications', 'pvaAlerts'];
+  // `pvaSubmissions` va porque el barrido no sube una tarea cuyo estado de
+  // entrega no conoce: sin esta fuente, la tabla de entregas de agentbox estaría
+  // vacía y todo esperaría para siempre.
+  const keys = ['pvaIdentity', 'pvaConfig', 'pvaCourses', 'pvaAssignments', 'pvaSubmissions', 'pvaContents', 'pvaNotifications', 'pvaAlerts'];
   const results = await runSync(LOCAL_USER_ID, { keys, emit: () => {} });
   const fallidas = (results ?? []).filter((r) => r?.ok === false).map((r) => r.key);
   console.log(`aula-a-kino: ${keys.length - fallidas.length}/${keys.length} fuentes al día${fallidas.length ? ` · fallaron: ${fallidas.join(', ')}` : ''}`);

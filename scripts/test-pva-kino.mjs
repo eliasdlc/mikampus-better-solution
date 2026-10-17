@@ -36,6 +36,14 @@ try {
   const primera = db.prepare('SELECT assignment_id AS id, course_id AS courseId, name, duedate FROM pva_assignment ORDER BY assignment_id LIMIT 1').get();
   assert.ok(primera, 'el fixture de tareas tiene que dejar al menos una');
 
+  // Un estado de entrega derivado del fixture real: sin enviar y sin nota.
+  const conEstado = async (status, gradingstatus) => {
+    const base = await fixture('pva-submission-notgraded.json');
+    return { ...base, lastattempt: { ...base.lastattempt, gradingstatus, submission: { ...base.lastattempt.submission, status } } };
+  };
+  // La primera tarea tiene su estado consultado y está pendiente: sube.
+  saveSubmissionStatus(USER, primera.id, await conEstado('new', 'notgraded'), { now: NOW });
+
   // ── Qué sube y qué no ──
   //
   // Una nota publicada no es algo que hacer, y un anuncio casi nunca lo es. Si
@@ -74,10 +82,10 @@ try {
     assert.equal(tarea.dueDate, primera.duedate * 1000, 'Moodle guarda segundos y Kino espera milisegundos');
   }
   assert.equal(items.find((item) => item.externalId === 'cmid:4242'), undefined, 'el material no viaja a Kino');
-  // El cmid viaja: es el número que la clase cita, y con él Kino adopta la
-  // tarea que la clase ya escribió en vez de crear otra.
+  // El enlace viaja con el cmid, que es el número que la clase cita: con él la
+  // revisión de la mañana une la tarea de la PVA con la que escribió la clase.
   const cmidPrimera = db.prepare('SELECT cmid FROM pva_assignment WHERE assignment_id = ?').get(primera.id).cmid;
-  assert.equal(tarea.cmid, cmidPrimera, 'la tarea viaja con su cmid');
+  assert.equal(tarea.cmid, undefined, 'Kino no conoce un campo cmid: viaja dentro del enlace');
   assert.match(tarea.url, new RegExp(`/mod/assign/view\\.php\\?id=${cmidPrimera}$`), 'y con el enlace a su actividad');
 
   // Dos avisos de la misma tarea son un solo item.
@@ -138,6 +146,34 @@ try {
   assert.equal(vista.entregadas.length, 1);
   const soloEntregadas = await pushToKino(USER, { env, now: NOW, fetchImpl: () => assert.fail('nada que subir si todo está entregado') });
   assert.equal(soloEntregadas.marked, 1, 'y sus avisos se asientan sin tocar la red');
+  assert.equal(pendingForKino(USER).length, 0);
+
+  // ── Una tarea cuyo estado no se conoce espera ──
+  //
+  // Sin consulta de entrega no se sabe si ya se hizo: subirla a ciegas sería
+  // subir como pendiente lo que quizá se entregó hace un mes. Espera, sin
+  // asentarse, al barrido que traiga su estado.
+  // El fixture trae dos tareas: la tercera es la primera con otro id.
+  const sinEstado = { id: primera.id + 1_000_000 };
+  const columnas = db.prepare('PRAGMA table_info(pva_assignment)').all().map((c) => c.name);
+  db.prepare(
+    `INSERT INTO pva_assignment (${columnas.join(', ')})
+     SELECT ${columnas.map((c) => (c === 'assignment_id' ? '?' : c === 'cmid' ? 'cmid + 1000000' : c)).join(', ')}
+     FROM pva_assignment WHERE assignment_id = ?`
+  ).run(sinEstado.id, primera.id);
+  alerta('tarea_nueva', `assign:${sinEstado.id}`);
+  const espera = previewBatch(USER);
+  assert.equal(espera.items.length, 0, 'sin estado no sube');
+  assert.equal(espera.enEspera.length, 1);
+  const enEspera = await pushToKino(USER, { env, now: NOW, fetchImpl: () => assert.fail('nada sube sin estado') });
+  assert.equal(enEspera.marked, 0, 'y no se asienta');
+  assert.equal(pendingForKino(USER).length, 1, 'se queda para el barrido siguiente');
+
+  // Una tarea calificada sin entrega (presencial) cuenta como hecha.
+  saveSubmissionStatus(USER, sinEstado.id, await conEstado('new', 'graded'), { now: NOW });
+  assert.equal(previewBatch(USER).entregadas.length, 1, 'calificada sin entrega es hecha');
+  const calificada = await pushToKino(USER, { env, now: NOW, fetchImpl: () => assert.fail('lo calificado no sube') });
+  assert.equal(calificada.marked, 1);
   assert.equal(pendingForKino(USER).length, 0);
 
   // ── El material nuevo sale del árbol del curso ──
