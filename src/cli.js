@@ -185,14 +185,19 @@ async function aulaAKino() {
 
   // Solo las fuentes del aula: el portal de MiCampus no tiene nada que ver acá
   // y su sesión de Playwright es la que no se puede ocupar por gusto.
-  const keys = ['pvaIdentity', 'pvaConfig', 'pvaCourses', 'pvaAssignments', 'pvaContents', 'pvaNotifications', 'pvaAlerts'];
+  // `pvaSubmissions` va porque el barrido no sube una tarea cuyo estado de
+  // entrega no conoce: sin esta fuente, la tabla de entregas de agentbox estaría
+  // vacía y todo esperaría para siempre.
+  const keys = ['pvaIdentity', 'pvaConfig', 'pvaCourses', 'pvaAssignments', 'pvaSubmissions', 'pvaContents', 'pvaNotifications', 'pvaAlerts'];
   const results = await runSync(LOCAL_USER_ID, { keys, emit: () => {} });
-  const fallidas = (results ?? []).filter((r) => r?.ok === false).map((r) => r.key);
+  // Una fuente al día terminó como `updated` o `fresh`; `error`, `blocked` o
+  // `paused` no trajeron nada, y el resumen tiene que decirlo.
+  const fallidas = (results ?? []).filter((r) => r && !['updated', 'fresh', 'skipped'].includes(r.status)).map((r) => r.key);
   console.log(`aula-a-kino: ${keys.length - fallidas.length}/${keys.length} fuentes al día${fallidas.length ? ` · fallaron: ${fallidas.join(', ')}` : ''}`);
 
   if (dryRun) {
-    const { items } = previewBatch(LOCAL_USER_ID);
-    console.log(`aula-a-kino: ${pendingCount(LOCAL_USER_ID)} pendiente(s), ${items.length} en el próximo envío`);
+    const { items, entregadas, huerfanas, enEspera } = previewBatch(LOCAL_USER_ID);
+    console.log(`aula-a-kino: ${pendingCount(LOCAL_USER_ID)} pendiente(s), ${items.length} en el próximo envío, ${entregadas.length} ya entregada(s), ${huerfanas.length} sin tarea en curso, ${enEspera.length} esperando su estado`);
     console.log(JSON.stringify(items, null, 2));
     return;
   }
@@ -207,7 +212,7 @@ async function aulaAKino() {
     console.log(`aula-a-kino: ${res.skipped}`);
     return;
   }
-  console.log(`aula-a-kino: ${res.sent} subido(s), ${res.marked ?? 0} asentado(s)${res.kino ? ` · Kino: ${res.kino.creadas ?? 0} nueva(s), ${res.kino.actualizadas ?? 0} actualizada(s)` : ''}`);
+  console.log(`aula-a-kino: ${res.sent} subido(s), ${res.marked ?? 0} asentado(s), ${res.enEspera ?? 0} esperando su estado${res.kino ? ` · Kino: ${res.kino.creadas ?? 0} nueva(s), ${res.kino.actualizadas ?? 0} actualizada(s)` : ''}`);
   for (const materia of res.kino?.sinCarpeta ?? []) console.log(`aula-a-kino: sin carpeta en Kino para "${materia}"`);
 }
 
